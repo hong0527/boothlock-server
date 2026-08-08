@@ -1,0 +1,22 @@
+# 빌드 산출물
+build/
+.gradle/
+
+# IDE 개인 설정
+.idea/
+*.iml
+out/
+
+# 로컬 DB 파일 (H2) — 절대 커밋 금지
+data/
+
+# 로그
+*.log
+
+# OS
+.DS_Store
+
+# 환경 변수·비밀값
+.env
+*.pem
+*.key

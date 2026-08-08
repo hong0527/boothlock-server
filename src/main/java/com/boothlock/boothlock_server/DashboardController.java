@@ -1,0 +1,68 @@
+package com.boothlock.boothlock_server;
+
+import org.springframework.web.bind.annotation.*;
+
+/**
+ * [담당: 김재원] 운영자 대시보드·결제 처리·직원 호출 — API 명세서 O10~O15·O21·C6
+ * 핵심 규칙: 상태 전이는 §2 상태 머신만 허용(위반 시 409), 돈 관련 처리는 누가·언제 기록.
+ */
+@RestController
+@RequestMapping("/api/v1")
+public class DashboardController {
+
+    /** O10 실시간 대시보드 (Must) — 주문+미확인 호출 한 번에, 폴링 3~5초, q=주문번호 검색 */
+    @GetMapping("/admin/orders")
+    public Object getDashboard() {
+        // TODO(김재원): 명세서 O10 — 필터: status, paymentStatus, businessDate, q
+        throw new NotImplementedException("O10 대시보드");
+    }
+
+    /** O11 입금 확인 (Must) — UNPAID→PAID, 승인자·승인시각 자동 기록 */
+    @PatchMapping("/admin/orders/{orderId}/payment")
+    public Object confirmPayment(@PathVariable Long orderId) {
+        // TODO(김재원): 명세서 O11 — method: BANK_TRANSFER|CASH, 409 ALREADY_PAID. Order 엔티티(홍화수 첫 PR) 머지 후 착수
+        throw new NotImplementedException("O11 입금 확인");
+    }
+
+    /** O12 완료 처리 (Must) — RECEIVED→DONE. 미결제여도 가능하나 '미결제 완료' 뱃지 */
+    @PatchMapping("/admin/orders/{orderId}/complete")
+    public Object complete(@PathVariable Long orderId) {
+        // TODO(김재원): 명세서 O12
+        throw new NotImplementedException("O12 완료 처리");
+    }
+
+    /** O13 운영자 취소 (Should) — 전 단계 가능, 사유 필수, 취소자 기록, PAID면 REFUND_NEEDED 전환 */
+    @PostMapping("/admin/orders/{orderId}/cancel")
+    public Object cancelByStaff(@PathVariable Long orderId) {
+        // TODO(김재원): 명세서 O13
+        throw new NotImplementedException("O13 운영자 취소");
+    }
+
+    /** O14 수기 주문 (Should) — 검증은 소비자 주문(C3)과 동일, isManual 표시, 미지정 시 M-{통산} */
+    @PostMapping("/admin/orders")
+    public Object manualOrder() {
+        // TODO(김재원): 명세서 O14 — 홍화수의 OrderService 재사용 (복붙 금지). C3 주문 생성이 머지된 뒤 착수
+        throw new NotImplementedException("O14 수기 주문");
+    }
+
+    /** O21 환불 완료 (Should·ADMIN 전용) — REFUND_NEEDED→REFUNDED, 처리자 기록 */
+    @PostMapping("/admin/orders/{orderId}/refund-done")
+    public Object refundDone(@PathVariable Long orderId) {
+        // TODO(김재원): 명세서 O21
+        throw new NotImplementedException("O21 환불 완료");
+    }
+
+    /** C6 직원 호출 (Should) — reason: HELP|WATER|ETC, 같은 세션 30초 재호출 제한(429) */
+    @PostMapping("/calls")
+    public Object call() {
+        // TODO(김재원): 명세서 C6
+        throw new NotImplementedException("C6 직원 호출");
+    }
+
+    /** O15 호출 확인 (Should) — 멱등 */
+    @PatchMapping("/admin/calls/{callId}/ack")
+    public Object ackCall(@PathVariable Long callId) {
+        // TODO(김재원): 명세서 O15
+        throw new NotImplementedException("O15 호출 확인");
+    }
+}
