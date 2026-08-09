@@ -131,8 +131,10 @@ refactor: 메뉴 조회 로직 서비스 계층으로 이동
 
 ## 6. 공용 파일 (수정 전 팀 채팅 공지 필수)
 
-- `GlobalExceptionHandler.java` — 명세서 §1.4 에러 코드 전부의 핸들러가 이미 있음. 새로 처리할 스프링 예외(500으로 떨어지는 것)를 발견했을 때만 공지 후 핸들러 추가
-- `ErrorResponse.java`, `OrderStatus.java`, `PaymentStatus.java`, `*Exception.java` 전부(공용 13개 + 스텁 전용 NotImplementedException) — 공용 계약. 예외는 새로 만들지 말고 있는 것을 골라 쓸 것
+- `global/error/GlobalExceptionHandler.java` — 명세서 §1.4 에러 코드 전부의 핸들러가 이미 있음. 새로 처리할 스프링 예외(500으로 떨어지는 것)를 발견했을 때만 공지 후 핸들러 추가
+- `global/error/` 전부 — `ErrorResponse.java`와 `*Exception.java`(공용 13개 + 스텁 전용 NotImplementedException). 공용 계약. 예외는 새로 만들지 말고 있는 것을 골라 쓸 것
+- `global/domain/` 전부 — `OrderStatus.java`, `PaymentStatus.java`
+- 파트 폴더(`order/`·`booth/`·`dashboard/`·`tableqr/`·`menu/`·`settle/`)는 담당자 소유 — 남의 파트 폴더 수정은 0번 3항 절차
 - `application.properties`, `build.gradle`, `settings.gradle`, `.gitignore` — 설정·의존성
 - `CONTRIBUTING.md`, `README.md`, `.github/` 아래 전부 — 규칙·템플릿·CI
 - 공통 레이아웃·공통 CSS(`templates/layout.html`, `static/common.css` 등이 생기면) — 화면 공용

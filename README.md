@@ -78,25 +78,31 @@ JDK 21이 없어도 된다 — Gradle 툴체인이 처음 빌드할 때 자동�
 src/main/java/com/boothlock/boothlock_server/
 ├── BoothlockServerApplication.java     # 진입점
 │
-│  # 공용 (전원 공유 — 수정 시 팀 공지)
-├── ErrorResponse.java                  # 에러 응답 형식 {"error":{code,message,details}}
-├── GlobalExceptionHandler.java         # 전역 예외 → 에러 응답 변환
-├── OrderStatus.java / PaymentStatus.java   # 주문·결제 상태 (두 축 독립)
-├── *Exception.java                     # 명세서 §1.4 에러 코드 전부에 대응하는 공용 예외 13종 + 스텁 전용 NotImplementedException — 새로 만들지 말고 골라 쓸 것
+├── global/                             # 공용 (전원 공유 — 수정 시 팀 공지)
+│   ├── error/                          #   ErrorResponse, GlobalExceptionHandler,
+│   │                                   #   명세서 §1.4 에러 코드 전부에 대응하는 공용 예외 13종
+│   │                                   #   + 스텁 전용 NotImplementedException — 새로 만들지 말고 골라 쓸 것
+│   └── domain/                         #   OrderStatus, PaymentStatus (주문·결제 상태 — 두 축 독립)
 │
-│  # 파트별 컨트롤러 (담당자가 스텁을 구현으로 교체)
-├── OrderController.java                # 주문 (홍화수)
-├── DashboardController.java            # 대시보드·결제 처리·호출 (김재원)
-├── TableController.java                # 테이블·QR·세션 (정원준)
-├── MenuController.java                 # 메뉴 (권희원)
-├── SettleController.java               # 정산·통계 (백지연)
-└── BoothController.java                # 로그인·부스 설정 (황대겸)
+│  # 파트별 폴더 — 자기 파트 폴더 안에서만 작업한다 (담당자가 스텁을 구현으로 교체)
+├── order/                              # 주문 (홍화수)
+├── dashboard/                          # 대시보드·결제 처리·호출 (김재원)
+├── tableqr/                            # 테이블·QR·세션 (정원준)
+├── menu/                               # 메뉴 (권희원)
+├── settle/                             # 정산·통계 (백지연)
+└── booth/                              # 로그인·부스 설정 (황대겸) — 파트 폴더 내부 규칙(전 파트 공통):
+    ├── controller/                     #   HTTP 창구 (BoothController.java)
+    ├── service/                        #   검증·계산 규칙 (첫 서비스 만들 때 폴더 생성)
+    ├── repository/                     #   DB 조회·저장 (BoothRepository.java 등)
+    ├── domain/                         #   엔티티·파트 전용 enum (BoothEntity.java 등)
+    └── dto/                            #   요청·응답 record (첫 DTO 만들 때 폴더 생성)
 
 src/main/resources/
 └── application.properties              # 서버·DB 설정 (공용 — 수정 시 팀 공지)
 
 src/test/java/com/boothlock/boothlock_server/
-└── BoothlockServerApplicationTests.java   # 컨텍스트 기동 테스트 — CI가 매 PR마다 실행
+├── BoothlockServerApplicationTests.java   # 컨텍스트 기동 테스트 — CI가 매 PR마다 실행
+└── booth/…                                # 파트 테스트는 자기 파트 패키지에 (예: booth/BoothDomainRepositoryTests)
 ```
 
 각 스텁에는 담당 API의 명세서 ID와 핵심 규칙이 주석으로 달려 있다. `throw` 한 줄을 구현으로 바꾸는 것이 작업 단위다.
@@ -106,10 +112,11 @@ src/test/java/com/boothlock/boothlock_server/
 스텁을 실제 구현으로 바꿀 때 파일 서너 개가 한 세트다. 메뉴를 예로 들면:
 
 ```
-MenuEntity.java      — @Entity. 테이블 구조(필드 = 컬럼). 정본은 docs/DB스키마_v1.2.md
-MenuRepository.java  — JpaRepository<MenuEntity, Long> 상속 인터페이스. DB 조회·저장 담당
-MenuService.java     — 검증·계산 등 규칙 처리. 컨트롤러는 얇게, 로직은 여기로
-MenuController.java  — 요청을 받아 서비스에 넘기고 응답을 만든다 (스텁이 이미 있음)
+menu/domain/MenuEntity.java          — @Entity. 테이블 구조(필드 = 컬럼). 정본은 docs/DB스키마_v1.2.md
+menu/repository/MenuRepository.java  — JpaRepository<MenuEntity, Long> 상속 인터페이스. DB 조회·저장 담당
+menu/service/MenuService.java        — 검증·계산 등 규칙 처리. 컨트롤러는 얇게, 로직은 여기로
+menu/controller/MenuController.java  — 요청을 받아 서비스에 넘기고 응답을 만든다 (스텁이 이미 있음)
+menu/dto/MenuCreateRequest.java 등   — 요청·응답 record
 ```
 
 - 엔티티에는 `@Table(name = "...")`로 스키마 문서의 테이블명을 그대로 명시한다 (예약어 사고 방지)
