@@ -58,7 +58,7 @@ public class BoothInfoService {
                 booth.isOpen());
     }
 
-    private StaffAccountEntity authenticate(Jwt jwt) {
+    StaffAccountEntity authenticate(Jwt jwt) {
         Long staffId = numberClaim(jwt, "staffId");
         if (staffId == null || !staffId.toString().equals(jwt.getSubject())) {
             throw new UnauthorizedException();

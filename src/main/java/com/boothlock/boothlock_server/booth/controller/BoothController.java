@@ -4,9 +4,11 @@ import com.boothlock.boothlock_server.booth.dto.BoothInfoDto;
 import com.boothlock.boothlock_server.booth.dto.LoginDto;
 import com.boothlock.boothlock_server.booth.service.BoothAuthService;
 import com.boothlock.boothlock_server.booth.service.BoothInfoService;
+import com.boothlock.boothlock_server.booth.service.BoothSettingsService;
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
 
 import org.springframework.web.bind.annotation.*;
+import tools.jackson.databind.JsonNode;
 
 /**
  * [담당: 황대겸] 계정·부스 설정 — API 명세서 O1·O16·O17 (+/super/*는 파일럿 DB 시딩 대체)
@@ -19,10 +21,13 @@ public class BoothController {
 
     private final BoothAuthService boothAuthService;
     private final BoothInfoService boothInfoService;
+    private final BoothSettingsService boothSettingsService;
 
-    public BoothController(BoothAuthService boothAuthService, BoothInfoService boothInfoService) {
+    public BoothController(BoothAuthService boothAuthService, BoothInfoService boothInfoService,
+            BoothSettingsService boothSettingsService) {
         this.boothAuthService = boothAuthService;
         this.boothInfoService = boothInfoService;
+        this.boothSettingsService = boothSettingsService;
     }
 
     /** O1 운영진 로그인 (Must) — JWT 발급. 실패 5회 백오프 잠금, 남은 횟수 미노출 */
@@ -39,8 +44,8 @@ public class BoothController {
 
     /** O17 부스 설정 변경 (Must) — isOpen은 STAFF 가능, bankAccount만 ADMIN+감사 로그+웹훅 */
     @PatchMapping("/admin/booth")
-    public Object updateBooth() {
-        // TODO(황대겸): 명세서 O17
-        throw new NotImplementedException("O17 부스 설정");
+    public BoothInfoDto.Response updateBooth(@RequestHeader("Authorization") String authorization,
+            @RequestBody JsonNode request) {
+        return boothSettingsService.update(authorization, request);
     }
 }

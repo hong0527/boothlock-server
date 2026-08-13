@@ -55,4 +55,9 @@ public class BoothEntity {
     public String getOperatingHours() {
         return operatingHours;
     }
+
+    public void updateName(String name) { this.name = name; }
+    public void updateBankAccount(String bankAccount) { this.bankAccount = bankAccount; }
+    public void updateOpen(boolean open) { this.open = open; }
+    public void updateOperatingHours(String operatingHours) { this.operatingHours = operatingHours; }
 }
