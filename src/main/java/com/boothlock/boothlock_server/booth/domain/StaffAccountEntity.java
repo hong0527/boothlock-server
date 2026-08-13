@@ -100,4 +100,24 @@ public class StaffAccountEntity {
     public LocalDateTime getLockedUntil() {
         return lockedUntil;
     }
+
+    public boolean isLockedAt(LocalDateTime now) {
+        return lockedUntil != null && lockedUntil.isAfter(now);
+    }
+
+    public long recordLoginFailure(LocalDateTime now) {
+        failedLoginCount++;
+        if (failedLoginCount < 5) {
+            return 0;
+        }
+
+        long lockSeconds = Math.min(30L << Math.min(failedLoginCount - 5, 5), 600L);
+        lockedUntil = now.plusSeconds(lockSeconds);
+        return lockSeconds;
+    }
+
+    public void resetLoginFailures() {
+        failedLoginCount = 0;
+        lockedUntil = null;
+    }
 }

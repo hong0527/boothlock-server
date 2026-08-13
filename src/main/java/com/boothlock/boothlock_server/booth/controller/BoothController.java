@@ -1,5 +1,7 @@
 package com.boothlock.boothlock_server.booth.controller;
 
+import com.boothlock.boothlock_server.booth.dto.LoginDto;
+import com.boothlock.boothlock_server.booth.service.BoothAuthService;
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
 
 import org.springframework.web.bind.annotation.*;
@@ -13,11 +15,16 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1")
 public class BoothController {
 
+    private final BoothAuthService boothAuthService;
+
+    public BoothController(BoothAuthService boothAuthService) {
+        this.boothAuthService = boothAuthService;
+    }
+
     /** O1 운영진 로그인 (Must) — JWT 발급. 실패 5회 백오프 잠금, 남은 횟수 미노출 */
     @PostMapping("/admin/auth/login")
-    public Object login() {
-        // TODO(황대겸): 명세서 O1 — bcrypt, 401 LOGIN_FAILED / 429 LOGIN_LOCKED
-        throw new NotImplementedException("O1 로그인");
+    public LoginDto.Response login(@RequestBody LoginDto.Request request) {
+        return boothAuthService.login(request);
     }
 
     /** O16 부스 정보 조회 (Must) — 부스명·계좌·운영시간·접수 스위치·테이블 수 */
