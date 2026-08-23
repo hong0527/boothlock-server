@@ -12,6 +12,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 @Entity
 @Table(
@@ -51,6 +52,21 @@ public class TableSessionEntity {
         this.sessionToken = sessionToken;
         this.startedAt = startedAt;
         this.lastActivityAt = startedAt;
+    }
+
+    /**
+     * Ends this persisted session and releases the table's active-session slot.
+     */
+    public void end(LocalDateTime endedAt) {
+        if (id == null) {
+            throw new IllegalStateException("A session must be persisted before it can be ended.");
+        }
+        if (endedAtKey != 0) {
+            throw new IllegalStateException("A session that has already ended cannot be ended again.");
+        }
+
+        this.endedAt = Objects.requireNonNull(endedAt, "endedAt must not be null");
+        this.endedAtKey = id;
     }
 
     public Long getId() {
