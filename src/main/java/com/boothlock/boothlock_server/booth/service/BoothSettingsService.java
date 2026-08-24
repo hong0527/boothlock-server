@@ -41,11 +41,16 @@ public class BoothSettingsService {
 
     @Transactional
     public BoothInfoDto.Response update(String authorization, JsonNode request) {
+        // 인증을 맨 앞에 — 만료·위조 토큰에 본문 검증 규칙이 노출되지 않게 한다
+        StaffAccountEntity staff = boothInfoService.authenticate(jwtProvider.verify(authorization));
+        // booth_id는 NULL 허용 컬럼 — 무소속 계정은 부스 설정을 만질 수 없다 (O16과 동일 처리)
+        BoothEntity staffBooth = staff.getBooth();
+        if (staffBooth == null) throw new ForbiddenException();
+
         if (request == null || !request.isObject() || request.isEmpty())
             throw new InvalidRequestException("변경할 필드를 1개 이상 보내야 합니다.");
         validateFields(request);
-        StaffAccountEntity staff = boothInfoService.authenticate(jwtProvider.verify(authorization));
-        BoothEntity booth = boothRepository.findById(staff.getBooth().getId())
+        BoothEntity booth = boothRepository.findById(staffBooth.getId())
                 .orElseThrow(() -> new NotFoundException("부스를 찾을 수 없습니다."));
 
         if (request.has("name")) booth.updateName(requiredText(request, "name", 50));
