@@ -12,6 +12,9 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.LocalDateTime;
 
 @Entity
@@ -35,7 +38,9 @@ public class StaffAccountEntity {
     @Column(name = "password_changed_at", nullable = false)
     private LocalDateTime passwordChangedAt;
 
+    // JdbcTypeCode(VARCHAR): Hibernate 6 기본은 DB 네이티브 ENUM 타입 — 정본은 VARCHAR(20) (DB스키마 §1)
     @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
     @Column(nullable = false, length = 20)
     private StaffRole role;
 
