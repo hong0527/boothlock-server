@@ -23,6 +23,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -163,6 +164,20 @@ class OrderQueryServiceTests {
         assertTrue(json.contains("\"menuName\":\"김치전\""));
         assertTrue(json.contains("\"canCancel\":true"));
         assertTrue(json.contains("\"createdAt\":\"2026-08-22T18:30:00+09:00\""));
+    }
+
+    @Test
+    void keepsOffsetSuffixForNowBasedCreatedAt() {
+        // 운영의 createdAt은 now() 기반이라 나노초가 붙고 timestamp(6)를 거치며 자릿수가 바뀐다
+        // — 소수점 자리까지 고정하면 실제로 나가는 형태를 못 잡으므로 오프셋 표기만 검증한다
+        newOrder(1L, 18, LocalDateTime.now());
+
+        entityManager.flush();
+        entityManager.clear();
+
+        String json = objectMapper.writeValueAsString(orderQueryService.getOrders(1L));
+
+        assertTrue(Pattern.compile("\"createdAt\":\"[^\"]+\\+09:00\"").matcher(json).find());
     }
 
     @Test
