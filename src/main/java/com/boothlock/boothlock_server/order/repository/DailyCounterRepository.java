@@ -19,7 +19,10 @@ public interface DailyCounterRepository extends JpaRepository<DailyCounterEntity
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<DailyCounterEntity> findWithLockByBoothIdAndBusinessDate(Long boothId, LocalDate businessDate);
 
-    /** 카운터 행 선점 — 같은 부스 첫 주문 2건이 동시에 와도 복합 PK 충돌 없이 통과 (있으면 무시) */
+    /**
+     * 카운터 행 선점 — 같은 부스 첫 주문 2건이 동시에 와도 복합 PK 충돌 없이 통과 (있으면 무시).
+     * MySQL 전용 문법(on duplicate key update) — 레포에서 유일한 네이티브 쿼리이며 H2는 MODE=MySQL로 동작
+     */
     @Modifying
     @Query(value = "insert into daily_counter (booth_id, business_date, last_seq) "
             + "values (:boothId, :businessDate, 0) "

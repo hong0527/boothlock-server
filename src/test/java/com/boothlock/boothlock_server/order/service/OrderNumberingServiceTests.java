@@ -70,6 +70,16 @@ class OrderNumberingServiceTests {
     }
 
     @Test
+    void refusesToRunInReadOnlyTransaction() {
+        // readOnly는 flush를 하지 않아 증가분이 조용히 사라진다 — MANDATORY로는 못 막으므로 별도 가드
+        TransactionTemplate readOnlyTx = new TransactionTemplate(transactionManager);
+        readOnlyTx.setReadOnly(true);
+
+        assertThrows(IllegalStateException.class, () ->
+                readOnlyTx.execute(status -> numberingService.nextSeq(1L, BUSINESS_DATE)));
+    }
+
+    @Test
     void issuesSequentialNumbersFromOne() {
         Integer first = tx.execute(status -> numberingService.nextSeq(1L, BUSINESS_DATE));
         Integer second = tx.execute(status -> numberingService.nextSeq(1L, BUSINESS_DATE));
