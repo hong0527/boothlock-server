@@ -3,6 +3,7 @@ package com.boothlock.boothlock_server.order.domain;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 
+import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -18,6 +19,7 @@ import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -27,11 +29,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/**
- * 주문 (DB스키마 §1 orders — `ORDER`는 SQL 예약어라 테이블명 orders).
- * 4개 파트(주문·대시보드·테이블·정산)가 함께 쓰는 교차점 — 필드 추가는 CONTRIBUTING 0-3 절차로.
- */
 @Entity
+@DynamicUpdate
 @Table(
         name = "orders",
         uniqueConstraints = @UniqueConstraint(
@@ -41,6 +40,8 @@ import java.util.List;
                 name = "idx_orders_search",
                 columnList = "booth_id, business_date, order_no"))
 public class OrderEntity {
+
+    private static final String CANCELED_BY_CUSTOMER = "CUSTOMER";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -137,6 +138,19 @@ public class OrderEntity {
 
     public void addItem(OrderItemEntity item) {
         items.add(item);
+    }
+
+    public void cancelByCustomer(LocalDateTime canceledAt)
+    {
+        if (status != OrderStatus.RECEIVED || paymentStatus != PaymentStatus.UNPAID) {
+            throw new InvalidStateException("취소할 수 없는 주문 상태입니다");
+        }
+
+        this.status = OrderStatus.CANCELED;              // 주문 축만 전이
+        this.canceledBy = CANCELED_BY_CUSTOMER;          // 누가 (1강 감사 필드)
+        this.canceledAt = canceledAt;
+
+
     }
 
     public Long getId() {
