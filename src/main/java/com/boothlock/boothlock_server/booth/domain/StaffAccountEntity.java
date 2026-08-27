@@ -12,6 +12,9 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.time.LocalDateTime;
 
 @Entity
@@ -35,7 +38,9 @@ public class StaffAccountEntity {
     @Column(name = "password_changed_at", nullable = false)
     private LocalDateTime passwordChangedAt;
 
+    // JdbcTypeCode(VARCHAR): Hibernate 6 기본은 DB 네이티브 ENUM 타입 — 정본은 VARCHAR(20) (DB스키마 §1)
     @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
     @Column(nullable = false, length = 20)
     private StaffRole role;
 
@@ -99,5 +104,25 @@ public class StaffAccountEntity {
 
     public LocalDateTime getLockedUntil() {
         return lockedUntil;
+    }
+
+    public boolean isLockedAt(LocalDateTime now) {
+        return lockedUntil != null && lockedUntil.isAfter(now);
+    }
+
+    public long recordLoginFailure(LocalDateTime now) {
+        failedLoginCount++;
+        if (failedLoginCount < 5) {
+            return 0;
+        }
+
+        long lockSeconds = Math.min(30L << Math.min(failedLoginCount - 5, 5), 600L);
+        lockedUntil = now.plusSeconds(lockSeconds);
+        return lockSeconds;
+    }
+
+    public void resetLoginFailures() {
+        failedLoginCount = 0;
+        lockedUntil = null;
     }
 }
