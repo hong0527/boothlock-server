@@ -13,6 +13,10 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     /** C3 멱등키 재요청 판정 — 같은 키면 새 주문 대신 기존 주문 200 (명세서 §6) */
     Optional<OrderEntity> findByIdempotencyKey(String idempotencyKey);
 
+    @EntityGraph(attributePaths = "items")
+    Optional<OrderEntity> findByIdAndSessionId(Long id, Long sessionId);
+
+
     /** C4 내 주문 조회 — 최신순 (동시각 대비 id 보조 정렬). EntityGraph: 폴링 N+1 방지 — items를 조인으로 한 번에 */
     @EntityGraph(attributePaths = "items")
     List<OrderEntity> findBySessionIdOrderByCreatedAtDescIdDesc(Long sessionId);
