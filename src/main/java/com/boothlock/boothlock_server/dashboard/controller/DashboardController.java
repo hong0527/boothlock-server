@@ -1,22 +1,40 @@
 package com.boothlock.boothlock_server.dashboard.controller;
 
+import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
+import com.boothlock.boothlock_server.dashboard.service.DashboardQueryService;
+import com.boothlock.boothlock_server.global.domain.OrderStatus;
+import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
 
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+
 /**
- * [담당: 김재원] 운영자 대시보드·결제 처리·직원 호출 — API 명세서 O10~O15·O21·C6
+ * [담당: 김재원] 운영자 대시보드·결제 처리·직원 호출 — API 명세서 O10~O15·C6·O21
  * 핵심 규칙: 상태 전이는 §2 상태 머신만 허용(위반 시 409), 돈 관련 처리는 누가·언제 기록.
  */
 @RestController
 @RequestMapping("/api/v1")
 public class DashboardController {
 
+    private final DashboardQueryService dashboardQueryService;
+
+    public DashboardController(DashboardQueryService dashboardQueryService) {
+        this.dashboardQueryService = dashboardQueryService;
+    }
+
     /** O10 실시간 대시보드 (Must) — 주문+미확인 호출 한 번에, 폴링 3~5초, q=주문번호 검색 */
     @GetMapping("/admin/orders")
-    public Object getDashboard() {
-        // TODO(김재원): 명세서 O10 — 필터: status, paymentStatus, businessDate, q
-        throw new NotImplementedException("O10 대시보드");
+    public DashboardResponse getDashboard(
+            // TODO(김재원): boothId는 로그인(황대겸 O1) JWT 연동 전까지 임시 쿼리 파라미터 — 연동되면 인증 정보에서 추출하도록 교체
+            @RequestParam Long boothId,
+            @RequestParam(required = false) OrderStatus status,
+            @RequestParam(required = false) PaymentStatus paymentStatus,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDate,
+            @RequestParam(required = false) String q) {
+        return dashboardQueryService.getDashboard(boothId, status, paymentStatus, businessDate, q);
     }
 
     /** O11 입금 확인 (Must) — UNPAID→PAID, 승인자·승인시각 자동 기록 */
