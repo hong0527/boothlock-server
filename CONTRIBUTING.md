@@ -93,7 +93,7 @@ git push
 | --- | --- | --- |
 | order | 홍화수 | `feat/order-create` |
 | dashboard | 김재원 | `feat/dashboard-payment` |
-| table | 정원준 | `feat/table-session` |
+| table | 전형준 | `feat/table-session` |
 | menu | 권희원 | `feat/menu-crud` |
 | settle | 백지연 | `feat/settle-csv` |
 | booth | 황대겸 | `feat/booth-login` |
@@ -122,7 +122,7 @@ refactor: 메뉴 조회 로직 서비스 계층으로 이동
     | --- | --- |
     | 홍화수 ↔ 황대겸 | 서로 |
     | 김재원 ↔ 백지연 | 서로 |
-    | 정원준 ↔ 권희원 | 서로 |
+| 전형준 ↔ 권희원 | 서로 |
 
 3. **PR 본문은 템플릿 4칸을 모두 채운다** (무엇을/왜·명세서 근거/테스트 확인/봐줄 곳). "테스트 확인" 칸에는 **실제로 실행해본 결과**를 적는다 — 안 돌려봤으면 PR을 올리지 않는다
 4. **자기 PR 자가 승인 금지** (깃허브가 시스템으로 막는다) — 버디의 승인 1개를 받은 뒤, 머지 버튼은 **작성자 본인이** "Squash and merge"로 누른다
