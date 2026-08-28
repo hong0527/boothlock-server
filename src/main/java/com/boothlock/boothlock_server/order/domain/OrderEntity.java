@@ -29,8 +29,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * 주문 (DB스키마 §1 orders — `ORDER`는 SQL 예약어라 테이블명 orders).
+ * 4개 파트(주문·대시보드·테이블·정산)가 함께 쓰는 교차점 — 필드 추가는 CONTRIBUTING 0-3 절차로.
+ */
 @Entity
-@DynamicUpdate
+@DynamicUpdate   // 변경된 컬럼만 UPDATE — 전체 컬럼을 쓰면 동시 입금확인(O11)의 승인 기록을 덮는다 (DB스키마 §3-9)
 @Table(
         name = "orders",
         uniqueConstraints = @UniqueConstraint(
@@ -41,6 +45,7 @@ import java.util.List;
                 columnList = "booth_id, business_date, order_no"))
 public class OrderEntity {
 
+    /** 소비자 취소의 canceled_by 표기 — 운영자 취소는 운영자 loginId를 넣는다 (DB스키마 §1) */
     private static final String CANCELED_BY_CUSTOMER = "CUSTOMER";
 
     @Id
@@ -140,17 +145,19 @@ public class OrderEntity {
         items.add(item);
     }
 
-    public void cancelByCustomer(LocalDateTime canceledAt)
-    {
-        if (status != OrderStatus.RECEIVED || paymentStatus != PaymentStatus.UNPAID) {
+    /** 취소 가능 판정 — C4 응답의 canCancel과 C5 실행 조건이 같은 곳에서 나오게 한다 (명세서 C4·C5) */
+    public boolean canCancel() {
+        return status == OrderStatus.RECEIVED && paymentStatus == PaymentStatus.UNPAID;
+    }
+
+    public void cancelByCustomer(LocalDateTime canceledAt) {
+        if (!canCancel()) {
             throw new InvalidStateException("취소할 수 없는 주문 상태입니다");
         }
-
         this.status = OrderStatus.CANCELED;              // 주문 축만 전이
         this.canceledBy = CANCELED_BY_CUSTOMER;          // 누가 (1강 감사 필드)
         this.canceledAt = canceledAt;
-
-
+        // paymentStatus는 건드리지 않는다 — 미입금 취소는 환불 대상이 아님 (2축 상태)
     }
 
     public Long getId() {

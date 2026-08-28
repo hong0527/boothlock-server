@@ -2,8 +2,6 @@ package com.boothlock.boothlock_server.order.service;
 
 import com.boothlock.boothlock_server.booth.domain.BoothEntity;
 import com.boothlock.boothlock_server.booth.repository.BoothRepository;
-import com.boothlock.boothlock_server.global.domain.OrderStatus;
-import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
 import com.boothlock.boothlock_server.order.dto.OrderListResponse;
@@ -35,18 +33,13 @@ public class OrderSummaryAssembler {
                 order.getTotalAmount(),
                 items,
                 new OrderListResponse.PaymentInfo(bankAccount, depositorNameRule(order.getOrderNo())),
-                canCancel(order),
+                order.canCancel(),   // 판정은 엔티티가 — C5 실행 조건과 어긋나지 않게 한 곳에서 계산
                 order.getCreatedAt().atOffset(KST));
     }
 
     private OrderListResponse.OrderItemSummary toItemSummary(OrderItemEntity item) {
         return new OrderListResponse.OrderItemSummary(
                 item.getMenuId(), item.getMenuName(), item.getUnitPrice(), item.getQty());
-    }
-
-    private boolean canCancel(OrderEntity order) {
-        return order.getStatus() == OrderStatus.RECEIVED
-                && order.getPaymentStatus() == PaymentStatus.UNPAID;
     }
 
     private String depositorNameRule(String orderNo) {
