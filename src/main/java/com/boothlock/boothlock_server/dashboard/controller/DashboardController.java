@@ -6,6 +6,10 @@ import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,6 +19,7 @@ import java.time.LocalDate;
  * [담당: 김재원] 운영자 대시보드·결제 처리·직원 호출 — API 명세서 O10~O15·C6·O21
  * 핵심 규칙: 상태 전이는 §2 상태 머신만 허용(위반 시 409), 돈 관련 처리는 누가·언제 기록.
  */
+@Tag(name = "대시보드·결제·호출", description = "운영자 대시보드·결제 처리·직원 호출 (명세서 O10~O15·C6·O21, 담당: 김재원)")
 @RestController
 @RequestMapping("/api/v1")
 public class DashboardController {
@@ -26,13 +31,19 @@ public class DashboardController {
     }
 
     /** O10 실시간 대시보드 (Must) — 주문+미확인 호출 한 번에, 폴링 3~5초, q=주문번호 검색 */
+    @Operation(summary = "O10 실시간 대시보드", description = "주문 목록과 미확인 호출을 한 번에 조회한다. 폴링 주기 3~5초 권장.")
     @GetMapping("/admin/orders")
     public DashboardResponse getDashboard(
             // TODO(김재원): boothId는 로그인(황대겸 O1) JWT 연동 전까지 임시 쿼리 파라미터 — 연동되면 인증 정보에서 추출하도록 교체
+            @Parameter(description = "부스 ID (임시: 로그인 연동 전까지 직접 지정)", required = true)
             @RequestParam Long boothId,
+            @Parameter(description = "주문 상태 필터")
             @RequestParam(required = false) OrderStatus status,
+            @Parameter(description = "결제 상태 필터")
             @RequestParam(required = false) PaymentStatus paymentStatus,
+            @Parameter(description = "영업일 필터 (YYYY-MM-DD)")
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDate,
+            @Parameter(description = "주문번호 부분 검색 (예: A3-17)")
             @RequestParam(required = false) String q) {
         return dashboardQueryService.getDashboard(boothId, status, paymentStatus, businessDate, q);
     }
