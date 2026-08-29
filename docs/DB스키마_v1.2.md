@@ -246,6 +246,7 @@ CREATE TABLE orders (
   id              BIGINT AUTO_INCREMENT PRIMARY KEY,
   booth_id        BIGINT       NOT NULL,
   session_id      BIGINT       NULL,
+  table_label     VARCHAR(20)  NULL,
   order_no        VARCHAR(20)  NOT NULL,
   business_date   DATE         NOT NULL,
   order_seq       INT          NOT NULL,
