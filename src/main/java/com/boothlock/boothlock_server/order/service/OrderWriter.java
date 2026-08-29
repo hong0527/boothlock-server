@@ -38,16 +38,17 @@ public class OrderWriter {
         int orderSeq = numberingService.nextSeq(spec.boothId(), businessDate);
         OrderEntity order = new OrderEntity(
                 spec.boothId(), spec.sessionId(), spec.label() + "-" + orderSeq, businessDate,
-                orderSeq, spec.idempotencyKey(), spec.totalAmount(), false, spec.createdAt());
+                orderSeq, spec.idempotencyKey(), spec.totalAmount(), false,
+                spec.tableLabel(), spec.createdAt());
         spec.items().forEach(order::addItem);
         return orderRepository.saveAndFlush(order);
 
     }
 
 
-    /** 저장에 필요한 값 묶음 — 파라미터가 길어져 record로 모았다 */
-    public record OrderSpec(Long boothId, Long sessionId, String label, String idempotencyKey,
-                            int totalAmount, List<OrderItemEntity> items,
+    /** 저장에 필요한 값 묶음 — label은 정규화본(orderNo용), tableLabel은 원본 스냅샷(O10 표시용) */
+    public record OrderSpec(Long boothId, Long sessionId, String label, String tableLabel,
+                            String idempotencyKey, int totalAmount, List<OrderItemEntity> items,
                             LocalDateTime createdAt) {
     }
 

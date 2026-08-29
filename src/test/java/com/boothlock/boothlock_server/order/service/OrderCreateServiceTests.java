@@ -162,6 +162,8 @@ class OrderCreateServiceTests {
         assertEquals(PaymentMethod.BANK_TRANSFER, response.payment().method());
         assertEquals("카카오뱅크 3333-01-1234567 (홍길동)", response.payment().bankAccount());
         assertTrue(response.payment().depositorNameRule().contains("A3-1"));
+        // 라벨 원본 스냅샷 — orderNo는 정규화본("A3")이지만 저장 라벨은 원본("A-3") (O10 표시·O19 CSV용)
+        assertEquals("A-3", orderRepository.findById(response.orderId()).orElseThrow().getTableLabel());
         assertEquals(ZoneOffset.ofHours(9), response.createdAt().getOffset());
     }
 
@@ -295,6 +297,14 @@ class OrderCreateServiceTests {
                 orderCreateService.create(boothId, MY_SESSION, "<B>", "idem-2", request(3L, 1)));
         assertThrows(InvalidRequestException.class, () ->
                 orderCreateService.create(boothId, MY_SESSION, "A#3", "idem-3", request(3L, 1)));
+    }
+
+    @Test
+    void rejectsRawLabelLongerThanColumn() {
+        // 정규화하면 "A3" 2자라 6자 검사는 통과하지만 원본은 table_label VARCHAR(20)을 넘는다 — 저장 전에 400으로 걸러야 500이 안 난다
+        String longRaw = "A" + "-".repeat(30) + "3";
+        assertThrows(InvalidRequestException.class, () ->
+                orderCreateService.create(boothId, MY_SESSION, longRaw, "idem-1", request(3L, 1)));
     }
 
     @Test

@@ -108,6 +108,7 @@ erDiagram
 | booth_id | BIGINT | FK→booth, NOT NULL | |
 | session_id | BIGINT | FK→table_session, **NULL 허용** | 수기 주문(테이블 미지정)은 NULL |
 | order_no | VARCHAR(20) | NOT NULL | 사람용 번호 "A3-17" — **영업일 내에서만 유일** |
+| table_label | VARCHAR(20) | **NULL 허용** | **스냅샷** — 주문 시점 테이블 라벨 원본(예 "A-3"). orders가 세션을 ID로만 참조해 조인 경로가 없으므로 O10 주문 카드 표시·O19 정산 CSV의 `테이블` 컬럼용으로 저장. 수기 주문(O14)은 NULL (v1.2.1 추가) |
 | business_date | DATE | NOT NULL | 영업일 = (생성시각−6h)의 날짜 |
 | order_seq | INT | NOT NULL | 부스 영업일 통산 순번 |
 | idempotency_key | VARCHAR(64) | **NULL 허용**, UNIQUE, `COLLATE utf8mb4_bin` | 멱등 장부 — 더블탭 방지. **수기 주문(O14)은 멱등키가 없으므로 NULL** — NOT NULL로 바꾸면 수기 주문 INSERT가 물리적으로 실패하고, 반대로 UNIQUE를 제거하면 C3 더블탭 방지가 통째로 사라진다. 이 조합 그대로 유지할 것. bin: 기본 ai_ci는 `abc`와 `ABC`를 같은 키로 취급(실측) |

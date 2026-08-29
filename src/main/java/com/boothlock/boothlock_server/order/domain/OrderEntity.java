@@ -59,6 +59,10 @@ public class OrderEntity {
     @Column(name = "session_id")
     private Long sessionId;
 
+    // 주문 시점 테이블 라벨 원본 스냅샷(예 "A-3") — 세션이 ID 참조라 조인 경로가 없어 O10 표시·O19 CSV용으로 저장. 수기 주문은 NULL
+    @Column(name = "table_label", length = 20)
+    private String tableLabel;
+
     @Column(name = "order_no", nullable = false, length = 20)
     private String orderNo;
 
@@ -141,6 +145,14 @@ public class OrderEntity {
         this.createdAt = createdAt;
     }
 
+    /** C3용 — 테이블 라벨 스냅샷까지 받는다. 기존 생성자는 라벨 없는 경로(수기 주문·타 파트 테스트)를 위해 유지 */
+    public OrderEntity(Long boothId, Long sessionId, String orderNo, LocalDate businessDate,
+                       int orderSeq, String idempotencyKey, int totalAmount, boolean manual,
+                       String tableLabel, LocalDateTime createdAt) {
+        this(boothId, sessionId, orderNo, businessDate, orderSeq, idempotencyKey, totalAmount, manual, createdAt);
+        this.tableLabel = tableLabel;
+    }
+
     public void addItem(OrderItemEntity item) {
         items.add(item);
     }
@@ -170,6 +182,10 @@ public class OrderEntity {
 
     public Long getSessionId() {
         return sessionId;
+    }
+
+    public String getTableLabel() {
+        return tableLabel;
     }
 
     public String getOrderNo() {
