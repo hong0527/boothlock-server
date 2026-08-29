@@ -1,6 +1,7 @@
 # 빌드 산출물
 build/
 .gradle/
+bin/
 
 # IDE 개인 설정
 .idea/
