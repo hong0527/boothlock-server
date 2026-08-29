@@ -47,6 +47,7 @@ public class OrderCreateService {
     private static final int MAX_QTY = 30;
     private static final int MAX_UNPAID_ORDERS = 8;
     private static final int MAX_LABEL_LENGTH = 6;
+    private static final int MAX_RAW_LABEL_LENGTH = 20;   // table_label VARCHAR(20) — 원본 스냅샷 저장 한도
     private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 64;
     private static final int MAX_NUMBERING_ATTEMPTS = 3;
 
@@ -108,7 +109,7 @@ public class OrderCreateService {
                 .toList();
 
         OrderWriter.OrderSpec spec = new OrderWriter.OrderSpec(
-                boothId, sessionId, label, idempotencyKey,
+                boothId, sessionId, label, tableLabel.trim(), idempotencyKey,
                 totalAmount(request, menus), items, LocalDateTime.now(KST_ZONE));
         return saveWithRetry(spec, booth.getBankAccount());
     }
@@ -154,6 +155,10 @@ public class OrderCreateService {
     private String normalizeLabel(String tableLabel) {
         if (tableLabel == null || tableLabel.isBlank()) {
             throw new InvalidRequestException("테이블 정보가 없습니다");
+        }
+        // 원본도 컬럼(VARCHAR(20))에 스냅샷으로 저장한다 — 정규화본 6자 검사만으로는 하이픈·공백 범벅 원본이 통과해 저장 단계에서 500이 난다
+        if (tableLabel.trim().length() > MAX_RAW_LABEL_LENGTH) {
+            throw new InvalidRequestException("사용할 수 없는 테이블 라벨입니다 label=" + tableLabel);
         }
         // \p{Z}까지 지운다 — 자바 \s는 전각 공백(U+3000)·NBSP를 잡지 못해 orderNo에 그대로 남는다
         String label = tableLabel.replaceAll("[\\p{Z}\\s-]", "").toUpperCase(Locale.ROOT);
