@@ -61,4 +61,36 @@ public class FeedbackEntity {
     public Long getId() {
         return id;
     }
+
+    public Long getBoothId() {
+        return boothId;
+    }
+
+    public Long getStaffId() {
+        return staffId;
+    }
+
+    public Integer getRating() {
+        return rating;
+    }
+
+    public Boolean getEasySetup() {
+        return easySetup;
+    }
+
+    public Boolean getEasyOrders() {
+        return easyOrders;
+    }
+
+    public Boolean getWouldReuse() {
+        return wouldReuse;
+    }
+
+    public String getComment() {
+        return comment;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
 }
