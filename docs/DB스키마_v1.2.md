@@ -61,7 +61,7 @@ erDiagram
 | failed_login_count | INT | NOT NULL DEFAULT 0 | 지수 백오프 잠금용 |
 | locked_until | DATETIME | NULL | 잠금 해제 시각 |
 
-### booth_table — 테이블 (담당: 정원준) — 주의: `TABLE`은 SQL 예약어라 이름을 booth_table로
+### booth_table — 테이블 (담당: 전형준) — 주의: `TABLE`은 SQL 예약어라 이름을 booth_table로
 
 | 컬럼 | 타입 | 제약 | 설명 |
 |---|---|---|---|
@@ -72,7 +72,7 @@ erDiagram
 | status | VARCHAR(20) | NOT NULL DEFAULT 'EMPTY' | EMPTY / OCCUPIED — 사용중 전환 자동, 빈자리 전환 수동 |
 | _UNIQUE_ | | **(booth_id, label)** | 부스 내 라벨 중복 금지 |
 
-### table_session — 테이블 세션 (담당: 정원준)
+### table_session — 테이블 세션 (담당: 전형준)
 
 | 컬럼 | 타입 | 제약 | 설명 |
 |---|---|---|---|
@@ -85,7 +85,7 @@ erDiagram
 | ended_at_key | BIGINT | NOT NULL DEFAULT 0 | 활성=0, **종료 시 자기 id를 기록** — id는 유일하고 0이 될 수 없어 충돌이 원천 불가. (epoch초 방식은 같은 테이블의 두 세션이 같은 초에 종료되면 UNIQUE 충돌로 퇴실이 실패함 — 실측) |
 | _UNIQUE_ | | **(table_id, ended_at_key)** | 테이블당 활성 세션 1개를 DB가 물리적으로 강제 |
 
-(주의) **"테이블당 활성 세션 최대 1개" 제약**: MySQL은 부분 UNIQUE 인덱스(`WHERE ended_at IS NULL`)를 지원하지 않고, 트랜잭션으로 묶는 것만으로는 부족하다 — InnoDB의 일반 SELECT는 비잠금 읽기라 일행이 같은 QR을 동시에 스캔하면 두 요청 모두 "활성 세션 없음"으로 판정해 세션이 2개 생긴다. → **`ended_at_key` 방식이 기본안**: 동시 생성 2건 중 1건을 DB가 거부하고, 퇴실 후 재생성은 정상 허용됨(실행 검증 완료). 세션 생성 진입점이 C1(정원준)·O14(홍화수) 두 곳이라 코드 규율만으로는 지켜지기 어렵다.
+(주의) **"테이블당 활성 세션 최대 1개" 제약**: MySQL은 부분 UNIQUE 인덱스(`WHERE ended_at IS NULL`)를 지원하지 않고, 트랜잭션으로 묶는 것만으로는 부족하다 — InnoDB의 일반 SELECT는 비잠금 읽기라 일행이 같은 QR을 동시에 스캔하면 두 요청 모두 "활성 세션 없음"으로 판정해 세션이 2개 생긴다. → **`ended_at_key` 방식이 기본안**: 동시 생성 2건 중 1건을 DB가 거부하고, 퇴실 후 재생성은 정상 허용됨(실행 검증 완료). 세션 생성 진입점이 C1(전형준)·O14(홍화수) 두 곳이라 코드 규율만으로는 지켜지기 어렵다.
 
 ### menu — 메뉴 (담당: 권희원)
 

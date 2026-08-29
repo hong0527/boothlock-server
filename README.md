@@ -87,7 +87,7 @@ src/main/java/com/boothlock/boothlock_server/
 │  # 파트별 폴더 — 자기 파트 폴더 안에서만 작업한다 (담당자가 스텁을 구현으로 교체)
 ├── order/                              # 주문 (홍화수)
 ├── dashboard/                          # 대시보드·결제 처리·호출 (김재원)
-├── tableqr/                            # 테이블·QR·세션 (정원준)
+├── tableqr/                            # 테이블·QR·세션 (전형준)
 ├── menu/                               # 메뉴 (권희원)
 ├── settle/                             # 정산·통계 (백지연)
 └── booth/                              # 로그인·부스 설정 (황대겸) — 파트 폴더 내부 규칙(전 파트 공통):
@@ -130,7 +130,7 @@ menu/dto/MenuCreateRequest.java 등   — 요청·응답 record
 |---|---|---|---|
 | 홍화수 | 주문 | C3 · C4 · C5 | OrderController.java |
 | 김재원 | 대시보드·결제 처리 | O10~O15 · O21 · C6 | DashboardController.java |
-| 정원준 | 테이블·QR·세션 | C1 · O2~O6 · O4b | TableController.java |
+| 전형준 | 테이블·QR·세션 | C1 · O2~O6 · O4b | TableController.java |
 | 권희원 | 메뉴 | C2 · O7~O9 | MenuController.java |
 | 백지연 | 정산·통계·피드백 | O18~O20 | SettleController.java |
 | 황대겸 | 계정·부스 설정 | O1 · O16 · O17 | BoothController.java |
