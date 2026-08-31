@@ -6,6 +6,9 @@ import com.boothlock.boothlock_server.global.error.UnauthorizedException;
 import com.boothlock.boothlock_server.settle.dto.FeedbackRequest;
 import com.boothlock.boothlock_server.settle.service.FeedbackService;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
  * [담당: 백지연] 정산·통계·피드백 — API 명세서 O18·O19·O20
  * 핵심 규칙: 매출은 PAID 기준, date=영업일(06:00~익일05:59), CSV는 행=주문항목·BOM·수식주입 방지.
  */
+@Tag(name = "정산·통계·피드백", description = "운영자 정산·통계·피드백 (명세서 O18·O19·O20, 담당: 백지연)")
 @RestController
 @RequestMapping("/api/v1")
 public class SettleController {
@@ -42,6 +46,7 @@ public class SettleController {
     }
 
     /** O20 운영자 피드백 (Should) — 부스락 서비스 평가 (소비자 설문 아님) */
+    @Operation(summary = "O20 운영자 피드백 저장", description = "운영자가 부스락 서비스에 대한 평가와 의견을 저장한다.")
     @PostMapping("/admin/feedback")
     @ResponseStatus(HttpStatus.CREATED)
     public Long feedback(
