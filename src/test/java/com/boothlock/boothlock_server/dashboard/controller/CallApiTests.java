@@ -123,6 +123,39 @@ class CallApiTests {
     }
 
     @Test
+    void rejectsMissingReason() throws Exception {
+        mockMvc.perform(post("/api/v1/calls")
+                        .param("sessionId", sessionId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+
+        assertEquals(0, staffCallRepository.count());
+    }
+
+    @Test
+    void rejectsInvalidReasonValue() throws Exception {
+        mockMvc.perform(post("/api/v1/calls")
+                        .param("sessionId", sessionId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"URGENT\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+
+        assertEquals(0, staffCallRepository.count());
+    }
+
+    @Test
+    void rejectsMissingSessionIdParam() throws Exception {
+        mockMvc.perform(post("/api/v1/calls")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"HELP\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
     void acksCallAndIsIdempotent() throws Exception {
         TableSessionEntity session = tableSessionRepository.findById(sessionId).orElseThrow();
         StaffCallEntity call = staffCallRepository.save(
