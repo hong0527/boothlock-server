@@ -69,6 +69,11 @@ public class StaffCallEntity {
         return acked;
     }
 
+    /** O15 호출 확인 — 멱등, 이미 확인된 호출을 다시 불러도 그대로 둔다 */
+    public void ack() {
+        this.acked = true;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }

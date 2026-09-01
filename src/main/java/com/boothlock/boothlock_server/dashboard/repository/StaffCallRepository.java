@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface StaffCallRepository extends JpaRepository<StaffCallEntity, Long> {
 
@@ -19,4 +20,7 @@ public interface StaffCallRepository extends JpaRepository<StaffCallEntity, Long
             order by c.createdAt asc
             """)
     List<StaffCallEntity> findUnackedByBoothId(@Param("boothId") Long boothId);
+
+    /** C6 30초 재호출 제한 — 같은 세션의 가장 최근 호출 1건 (사유 무관) */
+    Optional<StaffCallEntity> findFirstBySession_IdOrderByCreatedAtDesc(Long sessionId);
 }

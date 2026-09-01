@@ -1,6 +1,9 @@
 package com.boothlock.boothlock_server.dashboard.controller;
 
+import com.boothlock.boothlock_server.dashboard.dto.CallRequest;
+import com.boothlock.boothlock_server.dashboard.dto.CallResponse;
 import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
+import com.boothlock.boothlock_server.dashboard.service.CallService;
 import com.boothlock.boothlock_server.dashboard.service.DashboardQueryService;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
@@ -10,7 +13,9 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
+import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -25,9 +30,11 @@ import java.time.LocalDate;
 public class DashboardController {
 
     private final DashboardQueryService dashboardQueryService;
+    private final CallService callService;
 
-    public DashboardController(DashboardQueryService dashboardQueryService) {
+    public DashboardController(DashboardQueryService dashboardQueryService, CallService callService) {
         this.dashboardQueryService = dashboardQueryService;
+        this.callService = callService;
     }
 
     /** O10 실시간 대시보드 (Must) — 주문+미확인 호출 한 번에, 폴링 3~5초, q=주문번호 검색 */
@@ -84,16 +91,22 @@ public class DashboardController {
     }
 
     /** C6 직원 호출 (Should) — reason: HELP|WATER|ETC, 같은 세션 30초 재호출 제한(429) */
+    @Operation(summary = "C6 직원 호출", description = "테이블에서 직원을 호출한다. 같은 세션 30초 내 재호출은 429.")
     @PostMapping("/calls")
-    public Object call() {
-        // TODO(김재원): 명세서 C6
-        throw new NotImplementedException("C6 직원 호출");
+    @ResponseStatus(HttpStatus.CREATED)
+    public CallResponse call(
+            // TODO(김재원): sessionId는 세션 인증(전형준 C1) 연동 전까지 임시 쿼리 파라미터 — 연동되면 토큰에서 추출하도록 교체
+            @Parameter(description = "세션 ID (임시: 세션 인증 연동 전까지 직접 지정)", required = true)
+            @RequestParam Long sessionId,
+            @Valid @RequestBody CallRequest request) {
+        return callService.create(sessionId, request);
     }
 
     /** O15 호출 확인 (Should) — 멱등 */
+    @Operation(summary = "O15 호출 확인", description = "직원 호출을 확인 처리한다. 이미 확인된 호출도 200.")
     @PatchMapping("/admin/calls/{callId}/ack")
-    public Object ackCall(@PathVariable Long callId) {
-        // TODO(김재원): 명세서 O15
-        throw new NotImplementedException("O15 호출 확인");
+    @ResponseStatus(HttpStatus.OK)
+    public void ackCall(@PathVariable Long callId) {
+        callService.ack(callId);
     }
 }
