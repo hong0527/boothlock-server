@@ -1,8 +1,6 @@
 package com.boothlock.boothlock_server.settle.controller;
 
-import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
-import com.boothlock.boothlock_server.global.error.UnauthorizedException;
 import com.boothlock.boothlock_server.settle.dto.FeedbackRequest;
 import com.boothlock.boothlock_server.settle.service.FeedbackService;
 
@@ -11,7 +9,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -24,11 +21,9 @@ import org.springframework.web.bind.annotation.*;
 public class SettleController {
 
     private final FeedbackService feedbackService;
-    private final BoothJwtProvider jwtProvider;
 
-    public SettleController(FeedbackService feedbackService, BoothJwtProvider jwtProvider) {
+    public SettleController(FeedbackService feedbackService) {
         this.feedbackService = feedbackService;
-        this.jwtProvider = jwtProvider;
     }
 
     /** O18 매출 집계 (Should) — 수단별 분리, 환불필요·환불됨 별도 집계 */
@@ -52,17 +47,6 @@ public class SettleController {
     public Long feedback(
             @RequestHeader("Authorization") String authorization,
             @Valid @RequestBody FeedbackRequest request) {
-        Jwt jwt = jwtProvider.verify(authorization);
-        Long boothId = numberClaim(jwt, "boothId");
-        Long staffId = numberClaim(jwt, "staffId");
-        if (boothId == null || staffId == null) {
-            throw new UnauthorizedException();
-        }
-        return feedbackService.saveFeedback(boothId, staffId, request);
-    }
-
-    private Long numberClaim(Jwt jwt, String name) {
-        Object value = jwt.getClaims().get(name);
-        return value instanceof Number number ? number.longValue() : null;
+        return feedbackService.saveFeedback(authorization, request);
     }
 }
