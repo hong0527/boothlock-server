@@ -4,7 +4,10 @@ import com.boothlock.boothlock_server.booth.domain.BoothEntity;
 import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.dashboard.domain.CallReason;
 import com.boothlock.boothlock_server.dashboard.domain.StaffCallEntity;
+import com.boothlock.boothlock_server.dashboard.dto.CallRequest;
 import com.boothlock.boothlock_server.dashboard.repository.StaffCallRepository;
+import com.boothlock.boothlock_server.dashboard.service.CallService;
+import com.boothlock.boothlock_server.global.error.CallCooldownException;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
@@ -21,6 +24,14 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -40,6 +51,7 @@ class CallApiTests {
     @Autowired TableSessionRepository tableSessionRepository;
     @Autowired TableRepository tableRepository;
     @Autowired BoothRepository boothRepository;
+    @Autowired CallService callService;
 
     private Long sessionId;
 
@@ -120,6 +132,42 @@ class CallApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"HELP\"}"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void serializesConcurrentCallsForSameSession() throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        Callable<String> attempt = () -> {
+            ready.countDown();
+            start.await();
+            try {
+                callService.create(sessionId, new CallRequest(CallReason.HELP));
+                return "CREATED";
+            } catch (CallCooldownException e) {
+                return "COOLDOWN";
+            }
+        };
+
+        List<Future<String>> futures = List.of(executor.submit(attempt), executor.submit(attempt));
+        ready.await();
+        start.countDown();
+        List<String> results = futures.stream()
+                .map(f -> {
+                    try {
+                        return f.get(5, TimeUnit.SECONDS);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .collect(Collectors.toList());
+        executor.shutdown();
+
+        assertEquals(1, results.stream().filter("CREATED"::equals).count());
+        assertEquals(1, results.stream().filter("COOLDOWN"::equals).count());
+        assertEquals(1, staffCallRepository.count());
     }
 
     @Test

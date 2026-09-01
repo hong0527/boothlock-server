@@ -34,7 +34,8 @@ public class CallService {
 
     @Transactional
     public CallResponse create(Long sessionId, CallRequest request) {
-        TableSessionEntity session = tableSessionRepository.findById(sessionId)
+        // FOR UPDATE로 세션 row를 잠가 동시 요청을 직렬화한다 — 아래 쿨다운 조회→저장 사이 레이스 방지
+        TableSessionEntity session = tableSessionRepository.findByIdForUpdate(sessionId)
                 .orElseThrow(() -> new NotFoundException("세션을 찾을 수 없습니다."));
         if (session.getEndedAt() != null) {
             throw new SessionExpiredException();
