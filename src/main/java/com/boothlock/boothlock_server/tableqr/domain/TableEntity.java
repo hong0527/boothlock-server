@@ -67,4 +67,9 @@ public class TableEntity {
     public TableStatus getStatus() {
         return status;
     }
+
+    /** O5 QR 재발급 — 기존 토큰을 즉시 폐기한다. 활성 세션은 table_id로만 연결돼 있어 그대로 유지된다 */
+    public void regenerateToken(String newTableToken) {
+        this.tableToken = newTableToken;
+    }
 }

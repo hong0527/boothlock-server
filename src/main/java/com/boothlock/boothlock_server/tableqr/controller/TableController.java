@@ -1,6 +1,10 @@
 package com.boothlock.boothlock_server.tableqr.controller;
 
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
+import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
+import com.boothlock.boothlock_server.tableqr.service.TableAdminService;
+
+import io.swagger.v3.oas.annotations.Operation;
 
 import org.springframework.web.bind.annotation.*;
 
@@ -11,6 +15,12 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1")
 public class TableController {
+
+    private final TableAdminService tableAdminService;
+
+    public TableController(TableAdminService tableAdminService) {
+        this.tableAdminService = tableAdminService;
+    }
 
     /** C1 세션 발급 (Must) — QR 토큰 검증, 활성 세션 있으면 복원(restored:true), 없으면 생성+OCCUPIED */
     @PostMapping("/table-sessions")
@@ -48,10 +58,11 @@ public class TableController {
     }
 
     /** O5 QR 재발급 (Must) — 기존 토큰 즉시 폐기, 활성 세션은 유지 */
+    @Operation(summary = "O5 QR 재발급", description = "테이블의 tableToken을 새로 발급해 기존 QR을 즉시 폐기한다. 활성 세션은 유지된다.")
     @PostMapping("/admin/tables/{tableId}/regenerate-token")
-    public Object regenerateToken(@PathVariable Long tableId) {
-        // TODO(전형준): 명세서 O5
-        throw new NotImplementedException("O5 QR 재발급");
+    public TableAdminResponse regenerateToken(@RequestHeader("Authorization") String authorization,
+                                               @PathVariable Long tableId) {
+        return tableAdminService.regenerateToken(authorization, tableId);
     }
 
     /** O6 퇴실·초기화 (Should) — 세션 무효(410), 멱등, 미결제 시 warning */
