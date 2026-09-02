@@ -67,4 +67,9 @@ public class TableEntity {
     public TableStatus getStatus() {
         return status;
     }
+
+    /** C1 세션 발급 — 활성 세션이 없어 새로 만들 때 테이블을 사용중으로 전환한다 */
+    public void occupy() {
+        this.status = TableStatus.OCCUPIED;
+    }
 }

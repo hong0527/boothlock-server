@@ -1,22 +1,36 @@
 package com.boothlock.boothlock_server.tableqr.controller;
 
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
+import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableSessionResponse;
+import com.boothlock.boothlock_server.tableqr.service.TableSessionService;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 /**
  * [담당: 전형준] 테이블·QR·세션 — API 명세서 C1·O2~O6
  * 핵심 규칙: 토큰 2종 분리(tableToken=QR용/sessionToken=세션용, CSPRNG 128bit), 세션은 테이블 단위.
  */
+@Tag(name = "테이블·QR·세션", description = "테이블·QR·세션 (명세서 C1·O2~O6·O4b, 담당: 전형준)")
 @RestController
 @RequestMapping("/api/v1")
 public class TableController {
 
+    private final TableSessionService tableSessionService;
+
+    public TableController(TableSessionService tableSessionService) {
+        this.tableSessionService = tableSessionService;
+    }
+
     /** C1 세션 발급 (Must) — QR 토큰 검증, 활성 세션 있으면 복원(restored:true), 없으면 생성+OCCUPIED */
+    @Operation(summary = "C1 세션 발급", description = "QR의 테이블 토큰을 검증해 세션 토큰을 발급한다. 활성 세션이 있으면 복원(restored:true)한다.")
     @PostMapping("/table-sessions")
-    public Object createSession() {
-        // TODO(전형준): 명세서 C1
-        throw new NotImplementedException("C1 세션 발급");
+    public TableSessionResponse createSession(@Valid @RequestBody TableSessionCreateRequest request) {
+        return tableSessionService.createOrRestore(request);
     }
 
     /** O2 테이블 일괄 등록 (Must) — count≤300, 라벨 정규화 후 6자·단독 M 금지, 토큰 자동 발급 */
