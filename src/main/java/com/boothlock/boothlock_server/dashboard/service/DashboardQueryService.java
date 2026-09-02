@@ -6,7 +6,6 @@ import com.boothlock.boothlock_server.dashboard.repository.StaffCallRepository;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
-import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
 
 import org.springframework.stereotype.Service;
@@ -26,10 +25,13 @@ public class DashboardQueryService {
 
     private final OrderRepository orderRepository;
     private final StaffCallRepository staffCallRepository;
+    private final OrderSummaryMapper orderSummaryMapper;
 
-    public DashboardQueryService(OrderRepository orderRepository, StaffCallRepository staffCallRepository) {
+    public DashboardQueryService(OrderRepository orderRepository, StaffCallRepository staffCallRepository,
+            OrderSummaryMapper orderSummaryMapper) {
         this.orderRepository = orderRepository;
         this.staffCallRepository = staffCallRepository;
+        this.orderSummaryMapper = orderSummaryMapper;
     }
 
     @Transactional(readOnly = true)
@@ -39,26 +41,8 @@ public class DashboardQueryService {
         List<StaffCallEntity> calls = staffCallRepository.findUnackedByBoothId(boothId);
 
         return new DashboardResponse(
-                orders.stream().map(this::toOrderSummary).toList(),
+                orders.stream().map(orderSummaryMapper::toOrderSummary).toList(),
                 calls.stream().map(this::toCallSummary).toList());
-    }
-
-    private DashboardResponse.OrderSummary toOrderSummary(OrderEntity o) {
-        List<DashboardResponse.OrderItemSummary> items = o.getItems().stream()
-                .map(this::toItemSummary)
-                .toList();
-        return new DashboardResponse.OrderSummary(
-                o.getId(), o.getOrderNo(), o.getStatus(), o.getPaymentStatus(), o.getPaymentMethod(),
-                o.isManual(), o.getTotalAmount(), items,
-                o.getCanceledBy(), atKst(o.getCanceledAt()), o.getCancelReason(),
-                o.getApprovedBy(), atKst(o.getApprovedAt()),
-                o.getRefundedBy(), atKst(o.getRefundedAt()),
-                atKst(o.getCreatedAt()));
-    }
-
-    private DashboardResponse.OrderItemSummary toItemSummary(OrderItemEntity item) {
-        return new DashboardResponse.OrderItemSummary(
-                item.getMenuId(), item.getMenuName(), item.getUnitPrice(), item.getQty());
     }
 
     private DashboardResponse.CallSummary toCallSummary(StaffCallEntity c) {
