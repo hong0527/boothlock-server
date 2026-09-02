@@ -68,6 +68,11 @@ public class TableEntity {
         return status;
     }
 
+    /** C1 세션 발급 — 활성 세션이 없어 새로 만들 때 테이블을 사용중으로 전환한다 */
+    public void occupy() {
+        this.status = TableStatus.OCCUPIED;
+    }
+
     /** O5 QR 재발급 — 기존 토큰을 즉시 폐기한다. 활성 세션은 table_id로만 연결돼 있어 그대로 유지된다 */
     public void regenerateToken(String newTableToken) {
         this.tableToken = newTableToken;
