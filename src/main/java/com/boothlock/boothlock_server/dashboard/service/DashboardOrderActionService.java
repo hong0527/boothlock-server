@@ -1,6 +1,7 @@
 package com.boothlock.boothlock_server.dashboard.service;
 
 import com.boothlock.boothlock_server.booth.domain.StaffAccountEntity;
+import com.boothlock.boothlock_server.booth.domain.StaffRole;
 import com.boothlock.boothlock_server.booth.service.BoothInfoService;
 import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
 import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
@@ -66,6 +67,39 @@ public class DashboardOrderActionService {
         if (updated == 0) {
             requireExisting(orderId, boothId);   // 없으면 여기서 404, 있으면 RECEIVED가 아닌 상태라 409
             throw new InvalidStateException("완료 처리할 수 없는 주문 상태입니다.");
+        }
+        return mapper.toOrderSummary(requireExisting(orderId, boothId));
+    }
+
+    /** O13 운영자 취소 — 전 단계 가능(이미 취소된 것 제외), PAID였으면 REFUND_NEEDED로 함께 전환 (명세서 O13) */
+    @Transactional
+    public DashboardResponse.OrderSummary cancelByStaff(String authorization, Long orderId, String reason) {
+        StaffAccountEntity staff = authenticate(authorization);
+        Long boothId = staff.getBooth().getId();
+        LocalDateTime now = LocalDateTime.now(KST);
+
+        int updated = orderRepository.cancelByStaff(orderId, boothId, reason, staff.getLoginId(), now);
+        if (updated == 0) {
+            requireExisting(orderId, boothId);   // 없으면 여기서 404, 있으면 이미 취소된 주문이라 409
+            throw new InvalidStateException("이미 취소된 주문입니다.");
+        }
+        return mapper.toOrderSummary(requireExisting(orderId, boothId));
+    }
+
+    /** O21 환불 완료 — ADMIN 전용, REFUND_NEEDED만 REFUNDED로 전환 (명세서 O21) */
+    @Transactional
+    public DashboardResponse.OrderSummary refundDone(String authorization, Long orderId) {
+        StaffAccountEntity staff = authenticate(authorization);
+        if (staff.getRole() != StaffRole.ADMIN) {
+            throw new ForbiddenException();
+        }
+        Long boothId = staff.getBooth().getId();
+        LocalDateTime now = LocalDateTime.now(KST);
+
+        int updated = orderRepository.markRefunded(orderId, boothId, staff.getLoginId(), now);
+        if (updated == 0) {
+            requireExisting(orderId, boothId);   // 없으면 여기서 404, 있으면 REFUND_NEEDED가 아니라 409
+            throw new InvalidStateException("환불 대상 주문이 아닙니다.");
         }
         return mapper.toOrderSummary(requireExisting(orderId, boothId));
     }
