@@ -39,10 +39,11 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** O11 입금 확인·O12 완료 처리 API 테스트 (명세서 O11·O12) */
+/** O11 입금 확인·O12 완료 처리·O13 운영자 취소 API 테스트 (명세서 O11·O12·O13) */
 @SpringBootTest
 @AutoConfigureMockMvc
 class DashboardOrderActionApiTests {
@@ -57,6 +58,7 @@ class DashboardOrderActionApiTests {
     private Long boothId;
     private StaffAccountEntity staff;
     private String token;
+    private String adminToken;
 
     @BeforeEach
     void setUp() {
@@ -70,6 +72,10 @@ class DashboardOrderActionApiTests {
         staff = staffAccountRepository.save(new StaffAccountEntity(
                 booth, "dashboard-staff", hash, LocalDateTime.of(2026, 9, 1, 12, 0), StaffRole.STAFF));
         token = jwtProvider.issue(staff, Instant.now());
+
+        StaffAccountEntity admin = staffAccountRepository.save(new StaffAccountEntity(
+                booth, "dashboard-admin", hash, LocalDateTime.of(2026, 9, 1, 12, 0), StaffRole.ADMIN));
+        adminToken = jwtProvider.issue(admin, Instant.now());
     }
 
     @AfterEach
@@ -294,6 +300,233 @@ class DashboardOrderActionApiTests {
         Long orderId = newOrder(boothId, 11);
 
         mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/complete", orderId))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    // ── O13 운영자 취소 ──────────────────────────────────────
+
+    @Test
+    void cancelsOrderAndRecordsStaffAsCanceler() throws Exception {
+        Long orderId = newOrder(boothId, 13);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", orderId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"재료 소진\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELED"))
+                .andExpect(jsonPath("$.cancelReason").value("재료 소진"))
+                .andExpect(jsonPath("$.canceledBy").value("dashboard-staff"))
+                .andExpect(jsonPath("$.canceledAt").exists());
+
+        OrderEntity saved = orderRepository.findById(orderId).orElseThrow();
+        assertEquals(OrderStatus.CANCELED, saved.getStatus());
+        assertEquals("dashboard-staff", saved.getCanceledBy());   // 소비자 취소의 "CUSTOMER"와 구분
+    }
+
+    @Test
+    void cancelingPaidOrderMovesToRefundNeeded() throws Exception {
+        Long orderId = newOrder(boothId, 14);
+        setPaymentStatus(orderId, PaymentStatus.PAID);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", orderId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"손님 요청\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentStatus").value("REFUND_NEEDED"));
+
+        assertEquals(PaymentStatus.REFUND_NEEDED, orderRepository.findById(orderId).orElseThrow().getPaymentStatus());
+    }
+
+    @Test
+    void cancelingUnpaidOrderKeepsUnpaid() throws Exception {
+        Long orderId = newOrder(boothId, 15);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", orderId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"손님 요청\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentStatus").value("UNPAID"));
+    }
+
+    @Test
+    void staffCanCancelDoneOrder() throws Exception {
+        // 소비자(C5)는 RECEIVED만 취소 가능하지만 운영자는 전달 완료분도 취소한다 (명세서 O13)
+        Long orderId = newOrder(boothId, 16);
+        setOrderStatus(orderId, OrderStatus.DONE);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", orderId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"음식 문제\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELED"));
+    }
+
+    @Test
+    void rejectsCancelOnAlreadyCanceledOrder() throws Exception {
+        Long orderId = newOrder(boothId, 17);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", orderId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"중복 시도\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+    }
+
+    @Test
+    void rejectsCancelForUnknownOrder() throws Exception {
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", 999999L)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"손님 요청\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void hidesOtherBoothOrderAsNotFoundOnCancel() throws Exception {
+        BoothEntity otherBooth = boothRepository.save(new BoothEntity("다른 부스", "국민은행 5678", null));
+        Long otherOrderId = newOrder(otherBooth.getId(), 1);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", otherOrderId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"남의 부스\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void rejectsMissingReason() throws Exception {
+        Long orderId = newOrder(boothId, 18);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", orderId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+
+        assertEquals(OrderStatus.RECEIVED, orderRepository.findById(orderId).orElseThrow().getStatus());
+    }
+
+    @Test
+    void rejectsReasonOver100Chars() throws Exception {
+        Long orderId = newOrder(boothId, 19);
+        String tooLong = "가".repeat(101);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", orderId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"" + tooLong + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
+    void rejectsCancelWithoutAuthorization() throws Exception {
+        Long orderId = newOrder(boothId, 20);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", orderId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"손님 요청\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    // ── O21 환불 완료 ────────────────────────────────────────
+
+    private Long newRefundNeededOrder(int orderSeq) {
+        Long orderId = newOrder(boothId, orderSeq);
+        setPaymentStatus(orderId, PaymentStatus.REFUND_NEEDED);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+        return orderId;
+    }
+
+    @Test
+    void refundDoneMarksRefundedAndRecordsHandler() throws Exception {
+        Long orderId = newRefundNeededOrder(21);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/refund-done", orderId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentStatus").value("REFUNDED"))
+                .andExpect(jsonPath("$.refundedBy").value("dashboard-admin"))
+                .andExpect(jsonPath("$.refundedAt").exists());
+
+        OrderEntity saved = orderRepository.findById(orderId).orElseThrow();
+        assertEquals(PaymentStatus.REFUNDED, saved.getPaymentStatus());
+        assertEquals("dashboard-admin", saved.getRefundedBy());
+        assertNotNull(saved.getRefundedAt());
+    }
+
+    @Test
+    void rejectsRefundDoneForStaffRole() throws Exception {
+        // ADMIN 전용 — STAFF가 취소부터 환불완료까지 혼자 끝내는 걸 막는다 (PR #27 리뷰 요구사항)
+        Long orderId = newRefundNeededOrder(22);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/refund-done", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+        assertEquals(PaymentStatus.REFUND_NEEDED, orderRepository.findById(orderId).orElseThrow().getPaymentStatus());
+    }
+
+    @Test
+    void rejectsRefundDoneWhenNotRefundNeeded() throws Exception {
+        Long orderId = newOrder(boothId, 23);   // UNPAID — 환불 대상 아님
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/refund-done", orderId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+    }
+
+    @Test
+    void rejectsDoubleRefundDone() throws Exception {
+        Long orderId = newRefundNeededOrder(24);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/refund-done", orderId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/refund-done", orderId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+
+        assertEquals("dashboard-admin", orderRepository.findById(orderId).orElseThrow().getRefundedBy());
+    }
+
+    @Test
+    void rejectsRefundDoneForUnknownOrder() throws Exception {
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/refund-done", 999999L)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void hidesOtherBoothOrderAsNotFoundOnRefund() throws Exception {
+        BoothEntity otherBooth = boothRepository.save(new BoothEntity("다른 부스", "국민은행 5678", null));
+        Long otherOrderId = newOrder(otherBooth.getId(), 1);
+        setPaymentStatus(otherOrderId, PaymentStatus.REFUND_NEEDED);
+        setOrderStatus(otherOrderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/refund-done", otherOrderId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void rejectsRefundDoneWithoutAuthorization() throws Exception {
+        Long orderId = newRefundNeededOrder(25);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/refund-done", orderId))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
