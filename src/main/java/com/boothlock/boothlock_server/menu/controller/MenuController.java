@@ -1,8 +1,7 @@
 package com.boothlock.boothlock_server.menu.controller;
 
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
-import com.boothlock.boothlock_server.menu.dto.MenuApiResponse;
-import com.boothlock.boothlock_server.menu.dto.MenuCreateResponse;
+import com.boothlock.boothlock_server.menu.dto.MenuResponse;
 import com.boothlock.boothlock_server.menu.service.MenuService;
 
 import org.springframework.http.HttpStatus;
@@ -33,22 +32,19 @@ public class MenuController {
 
     /** O7 메뉴 등록 (Must) — name(1~50자)·price(0 이상)·description(알레르기 표기)·imageUrl·visible */
     @PostMapping("/admin/menus")
-    public ResponseEntity<MenuApiResponse<MenuCreateResponse>> createMenu(
+    public ResponseEntity<MenuResponse> createMenu(
             @RequestHeader("Authorization") String authorization,
             @RequestBody JsonNode request) {
-        MenuCreateResponse response = menuService.create(authorization, request);
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(new MenuApiResponse<>(201, "메뉴가 등록되었습니다.", response));
+        return ResponseEntity.status(HttpStatus.CREATED).body(menuService.create(authorization, request));
     }
 
     /** O8 수정·숨김·품절 (Must) — PATCH 부분 수정, 품절 토글은 이 API 하나. DELETE 없음 */
     @PatchMapping("/admin/menus/{menuId}")
-    public MenuApiResponse<Void> updateMenu(
+    public MenuResponse updateMenu(
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long menuId,
             @RequestBody JsonNode request) {
-        menuService.update(authorization, menuId, request);
-        return new MenuApiResponse<>(200, "메뉴가 수정되었습니다.", null);
+        return menuService.update(authorization, menuId, request);
     }
 
     /** O9 사진 업로드 (Must) — multipart ≤5MB, 매직바이트 검증·SVG 거부·1080px 재인코딩 */

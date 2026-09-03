@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.test.web.servlet.MockMvc;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -70,7 +72,7 @@ class MenuAdminApiTests {
     }
 
     @Test
-    void createMenuReturnsNotionEnvelopeAndStartsNotSoldOut() throws Exception {
+    void createMenuReturnsMenuAndStartsNotSoldOut() throws Exception {
         String response = mockMvc.perform(post("/api/v1/admin/menus")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -82,12 +84,16 @@ class MenuAdminApiTests {
                                 "visible", false,
                                 "soldOut", true))))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value(201))
-                .andExpect(jsonPath("$.message").value("메뉴가 등록되었습니다."))
-                .andExpect(jsonPath("$.data.id").exists())
+                .andExpect(jsonPath("$.id").exists())
+                .andExpect(jsonPath("$.name").value("김치찌개"))
+                .andExpect(jsonPath("$.price").value(9000))
+                .andExpect(jsonPath("$.description").value("돼지고기 사용"))
+                .andExpect(jsonPath("$.imageUrl").value("https://cdn.example.com/menu/kimchi.jpg"))
+                .andExpect(jsonPath("$.visible").value(false))
+                .andExpect(jsonPath("$.soldOut").value(false))
                 .andReturn().getResponse().getContentAsString();
 
-        Long menuId = objectMapper.readTree(response).get("data").get("id").asLong();
+        Long menuId = objectMapper.readTree(response).get("id").asLong();
         MenuEntity saved = menuRepository.findById(menuId).orElseThrow();
         assertThat(saved.getBooth().getId()).isEqualTo(booth.getId());
         assertThat(saved.isVisible()).isFalse();
@@ -103,7 +109,7 @@ class MenuAdminApiTests {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
 
-        Long menuId = objectMapper.readTree(response).get("data").get("id").asLong();
+        Long menuId = objectMapper.readTree(response).get("id").asLong();
         assertThat(menuRepository.findById(menuId).orElseThrow().isVisible()).isTrue();
     }
 
@@ -116,8 +122,29 @@ class MenuAdminApiTests {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
 
-        Long menuId = objectMapper.readTree(response).get("data").get("id").asLong();
+        Long menuId = objectMapper.readTree(response).get("id").asLong();
         assertThat(menuRepository.findById(menuId).orElseThrow().getName()).isEqualTo("순대 국밥");
+    }
+
+    @Test
+    void createMenuTrimsNullableTextBeforeSaving() throws Exception {
+        String response = mockMvc.perform(post("/api/v1/admin/menus")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "name", "김치찌개",
+                                "price", 9000,
+                                "description", "  돼지고기 사용  ",
+                                "imageUrl", "  https://cdn.example.com/menu/kimchi.jpg  "))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.description").value("돼지고기 사용"))
+                .andExpect(jsonPath("$.imageUrl").value("https://cdn.example.com/menu/kimchi.jpg"))
+                .andReturn().getResponse().getContentAsString();
+
+        Long menuId = objectMapper.readTree(response).get("id").asLong();
+        MenuEntity saved = menuRepository.findById(menuId).orElseThrow();
+        assertThat(saved.getDescription()).isEqualTo("돼지고기 사용");
+        assertThat(saved.getImageUrl()).isEqualTo("https://cdn.example.com/menu/kimchi.jpg");
     }
 
     @Test
@@ -127,10 +154,11 @@ class MenuAdminApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("name", "", "price", -1))))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.status").value(400))
-                .andExpect(jsonPath("$.code").value("MENU_INVALID_INPUT"))
-                .andExpect(jsonPath("$.message").value("입력값이 올바르지 않습니다."))
-                .andExpect(jsonPath("$.errors.length()").value(2));
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("입력값이 올바르지 않습니다.")))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("name:")))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("price:")))
+                .andExpect(jsonPath("$.error.details").doesNotExist());
     }
 
     @Test
@@ -143,8 +171,8 @@ class MenuAdminApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("name", "김치찌개", "price", 9000))))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("MENU_NAME_DUPLICATED"))
-                .andExpect(jsonPath("$.errors.length()").value(0));
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"))
+                .andExpect(jsonPath("$.error.message").value("동일한 메뉴명이 이미 존재합니다."));
     }
 
     @Test
@@ -156,7 +184,16 @@ class MenuAdminApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("name", "  김치찌개  ", "price", 9000))))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("MENU_NAME_DUPLICATED"));
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+    }
+
+    @Test
+    void menuNameIsUniqueWithinBoothAtDatabaseLevel() {
+        menuRepository.saveAndFlush(new MenuEntity(booth, "김치찌개", 9000, null, null, true));
+
+        assertThatThrownBy(() -> menuRepository.saveAndFlush(
+                new MenuEntity(booth, "김치찌개", 10000, null, null, true)))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
@@ -165,7 +202,7 @@ class MenuAdminApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("name", "", "price", -1))))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.code").value("AUTH_TOKEN_INVALID"));
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
 
     @Test
@@ -180,9 +217,11 @@ class MenuAdminApiTests {
                                 "soldOut", true,
                                 "visible", false))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value(200))
-                .andExpect(jsonPath("$.message").value("메뉴가 수정되었습니다."))
-                .andExpect(jsonPath("$.data").doesNotExist());
+                .andExpect(jsonPath("$.id").value(menu.getId()))
+                .andExpect(jsonPath("$.name").value("김치찌개"))
+                .andExpect(jsonPath("$.price").value(10000))
+                .andExpect(jsonPath("$.soldOut").value(true))
+                .andExpect(jsonPath("$.visible").value(false));
 
         MenuEntity updated = menuRepository.findById(menu.getId()).orElseThrow();
         assertThat(updated.getName()).isEqualTo("김치찌개");
@@ -214,7 +253,7 @@ class MenuAdminApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("name", "  김치찌개  "))))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("MENU_NAME_DUPLICATED"));
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
     }
 
     @Test
@@ -241,8 +280,11 @@ class MenuAdminApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":null,\"price\":null,\"visible\":null,\"soldOut\":null}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("MENU_INVALID_INPUT"))
-                .andExpect(jsonPath("$.errors.length()").value(4));
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("name:")))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("price:")))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("visible:")))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("soldOut:")));
     }
 
     @Test
@@ -254,7 +296,8 @@ class MenuAdminApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("MENU_NO_UPDATE_FIELD"));
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.error.message").value("수정할 필드가 하나도 없습니다."));
     }
 
     @Test
@@ -266,8 +309,8 @@ class MenuAdminApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("unsupported", true))))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("MENU_INVALID_INPUT"))
-                .andExpect(jsonPath("$.errors[0].field").value("unsupported"));
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("unsupported:")));
     }
 
     @Test
@@ -279,8 +322,8 @@ class MenuAdminApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("price", -1))))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("MENU_INVALID_INPUT"))
-                .andExpect(jsonPath("$.errors[0].field").value("price"));
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("price:")));
     }
 
     @Test
@@ -290,19 +333,19 @@ class MenuAdminApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("visible", false))))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("MENU_NOT_FOUND"));
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }
 
     @Test
-    void updateMenuForbiddenForOtherBooth() throws Exception {
+    void updateMenuNotFoundForOtherBooth() throws Exception {
         MenuEntity menu = menuRepository.save(new MenuEntity(otherBooth, "타코", 7000, null, null, true));
 
         mockMvc.perform(patch("/api/v1/admin/menus/{menuId}", menu.getId())
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("visible", false))))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("MENU_FORBIDDEN"));
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }
 
     @Test
