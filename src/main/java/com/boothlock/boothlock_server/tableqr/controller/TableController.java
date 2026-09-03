@@ -1,19 +1,25 @@
 package com.boothlock.boothlock_server.tableqr.controller;
 
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
+import com.boothlock.boothlock_server.tableqr.dto.QrFile;
 import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionResponse;
 import com.boothlock.boothlock_server.tableqr.service.TableAdminService;
+import com.boothlock.boothlock_server.tableqr.service.TableQrService;
 import com.boothlock.boothlock_server.tableqr.service.TableSessionService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.validation.Valid;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -27,10 +33,14 @@ public class TableController {
 
     private final TableSessionService tableSessionService;
     private final TableAdminService tableAdminService;
+    private final TableQrService tableQrService;
 
-    public TableController(TableSessionService tableSessionService, TableAdminService tableAdminService) {
+    public TableController(TableSessionService tableSessionService,
+                            TableAdminService tableAdminService,
+                            TableQrService tableQrService) {
         this.tableSessionService = tableSessionService;
         this.tableAdminService = tableAdminService;
+        this.tableQrService = tableQrService;
     }
 
     /** C1 세션 발급 (Must) — QR 토큰 검증, 활성 세션 있으면 복원(restored:true), 없으면 생성+OCCUPIED */
@@ -59,17 +69,29 @@ public class TableController {
     }
 
     /** O4 QR 단건 다운로드 (Must) — ?format=png(기본)|pdf, 공식 도메인 문구 병기 */
+    @Operation(summary = "O4 QR 단건 다운로드",
+            description = "테이블 하나의 QR을 PNG(기본) 또는 PDF로 내려받는다. 이미지에는 공식 도메인 문구를 병기해 위조 QR을 가려낸다.")
     @GetMapping("/admin/tables/{tableId}/qr")
-    public Object downloadQr(@PathVariable Long tableId) {
-        // TODO(전형준): 명세서 O4
-        throw new NotImplementedException("O4 QR 다운로드");
+    public ResponseEntity<byte[]> downloadQr(@RequestHeader("Authorization") String authorization,
+                                              @PathVariable Long tableId,
+                                              @RequestParam(required = false) String format) {
+        return toResponse(tableQrService.downloadSingle(authorization, tableId, format));
     }
 
     /** O4b QR 전체 일괄 PDF (Must) — 행사 준비용 */
+    @Operation(summary = "O4b QR 전체 일괄 PDF",
+            description = "부스의 모든 테이블 QR을 라벨 순으로 한 PDF에 담아 내려받는다(카드 1장당 1페이지, 행사 준비용).")
     @GetMapping("/admin/tables/qr.pdf")
-    public Object downloadAllQr() {
-        // TODO(전형준): 명세서 O4b
-        throw new NotImplementedException("O4b QR 일괄 PDF");
+    public ResponseEntity<byte[]> downloadAllQr(@RequestHeader("Authorization") String authorization) {
+        return toResponse(tableQrService.downloadAll(authorization));
+    }
+
+    private ResponseEntity<byte[]> toResponse(QrFile file) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(file.contentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(file.filename()).build().toString())
+                .body(file.content());
     }
 
     /** O5 QR 재발급 (Must) — 기존 토큰 즉시 폐기, 활성 세션은 유지 */
