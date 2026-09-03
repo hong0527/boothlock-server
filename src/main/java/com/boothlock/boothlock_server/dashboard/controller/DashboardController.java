@@ -2,6 +2,7 @@ package com.boothlock.boothlock_server.dashboard.controller;
 
 import com.boothlock.boothlock_server.dashboard.dto.CallRequest;
 import com.boothlock.boothlock_server.dashboard.dto.CallResponse;
+import com.boothlock.boothlock_server.dashboard.dto.CancelRequest;
 import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
 import com.boothlock.boothlock_server.dashboard.dto.PaymentConfirmRequest;
 import com.boothlock.boothlock_server.dashboard.service.CallService;
@@ -80,10 +81,13 @@ public class DashboardController {
     }
 
     /** O13 운영자 취소 (Should) — 전 단계 가능, 사유 필수, 취소자 기록, PAID면 REFUND_NEEDED 전환 */
+    @Operation(summary = "O13 운영자 취소", description = "사유를 남기고 주문을 취소한다. 입금된 주문은 REFUND_NEEDED로 전환. 이미 취소된 주문은 409.")
     @PostMapping("/admin/orders/{orderId}/cancel")
-    public Object cancelByStaff(@PathVariable Long orderId) {
-        // TODO(김재원): 명세서 O13
-        throw new NotImplementedException("O13 운영자 취소");
+    public DashboardResponse.OrderSummary cancelByStaff(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId,
+            @Valid @RequestBody CancelRequest request) {
+        return orderActionService.cancelByStaff(authorization, orderId, request.reason());
     }
 
     /** O14 수기 주문 (Should) — 검증은 소비자 주문(C3)과 동일, isManual 표시, 미지정 시 M-{통산} */
@@ -94,10 +98,12 @@ public class DashboardController {
     }
 
     /** O21 환불 완료 (Should·ADMIN 전용) — REFUND_NEEDED→REFUNDED, 처리자 기록 */
+    @Operation(summary = "O21 환불 완료", description = "REFUND_NEEDED 상태의 주문을 환불 완료 처리한다. ADMIN 전용. REFUND_NEEDED가 아니면 409.")
     @PostMapping("/admin/orders/{orderId}/refund-done")
-    public Object refundDone(@PathVariable Long orderId) {
-        // TODO(김재원): 명세서 O21
-        throw new NotImplementedException("O21 환불 완료");
+    public DashboardResponse.OrderSummary refundDone(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId) {
+        return orderActionService.refundDone(authorization, orderId);
     }
 
     /** C6 직원 호출 (Should) — reason: HELP|WATER|ETC, 같은 세션 30초 재호출 제한(429) */
