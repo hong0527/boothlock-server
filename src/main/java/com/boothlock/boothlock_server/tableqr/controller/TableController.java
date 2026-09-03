@@ -2,6 +2,8 @@ package com.boothlock.boothlock_server.tableqr.controller;
 
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
 import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionResponse;
 import com.boothlock.boothlock_server.tableqr.service.TableAdminService;
@@ -11,6 +13,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -38,10 +41,14 @@ public class TableController {
     }
 
     /** O2 테이블 일괄 등록 (Must) — count≤300, 라벨 정규화 후 6자·단독 M 금지, 토큰 자동 발급 */
+    @Operation(summary = "O2 테이블 일괄 등록",
+            description = "count+labelPrefix 또는 labels 중 하나로 테이블을 일괄 등록한다(최대 300건). "
+                    + "라벨은 정규화 후 6자·단독 M 금지·부스 내 중복을 금지하고, tableToken은 추측 불가한 값으로 자동 발급한다.")
     @PostMapping("/admin/tables/bulk")
-    public Object bulkCreate() {
-        // TODO(전형준): 명세서 O2
-        throw new NotImplementedException("O2 테이블 일괄 등록");
+    @ResponseStatus(HttpStatus.CREATED)
+    public TableBulkCreateResponse bulkCreate(@RequestHeader("Authorization") String authorization,
+                                               @RequestBody TableBulkCreateRequest request) {
+        return tableAdminService.bulkCreate(authorization, request);
     }
 
     /** O3 좌석 현황 (Should) — OCCUPIED+session:null = '정리 필요' */
