@@ -60,12 +60,12 @@ public class TableAdminService {
         List<String> rawLabels = resolveRawLabels(request);
 
         Set<String> normalizedSoFar = tableRepository.findByBoothId(staffBooth.getId()).stream()
-                .map(t -> normalizeLabel(t.getLabel()))
+                .map(t -> normalize(t.getLabel()))
                 .collect(Collectors.toCollection(HashSet::new));
 
         List<TableEntity> newTables = new ArrayList<>();
         for (String rawLabel : rawLabels) {
-            String normalized = normalizeLabel(rawLabel);
+            String normalized = validateAndNormalizeLabel(rawLabel);
             if (!normalizedSoFar.add(normalized)) {
                 throw new InvalidRequestException("중복된 테이블 라벨입니다 label=" + rawLabel);
             }
@@ -108,15 +108,23 @@ public class TableAdminService {
         return generated;
     }
 
-    /** 라벨 정규화 — 하이픈·공백 제거 + 대문자, 영숫자만, 6자 이내, 단독 M 금지 (명세서 O2, DB스키마 §1) */
-    private String normalizeLabel(String rawLabel) {
+    /** 라벨 정규화 — 하이픈·공백 제거 + 대문자 (검증 없음, DB에서 불러온 기존 라벨용) */
+    private String normalize(String rawLabel) {
+        if (rawLabel == null) {
+            return "";
+        }
+        return rawLabel.replaceAll("[\\p{Z}\\s-]", "").toUpperCase(Locale.ROOT);
+    }
+
+    /** 신규 입력 라벨 검증 + 정규화 — 영숫자만, 6자 이내, 단독 M 금지 (명세서 O2, DB스키마 §1) */
+    private String validateAndNormalizeLabel(String rawLabel) {
         if (rawLabel == null || rawLabel.isBlank()) {
             throw new InvalidRequestException("사용할 수 없는 테이블 라벨입니다.");
         }
         if (rawLabel.trim().length() > MAX_RAW_LABEL_LENGTH) {
             throw new InvalidRequestException("사용할 수 없는 테이블 라벨입니다 label=" + rawLabel);
         }
-        String normalized = rawLabel.replaceAll("[\\p{Z}\\s-]", "").toUpperCase(Locale.ROOT);
+        String normalized = normalize(rawLabel);
         if (normalized.isEmpty() || normalized.length() > MAX_LABEL_LENGTH
                 || "M".equals(normalized) || !LABEL_PATTERN.matcher(normalized).matches()) {
             throw new InvalidRequestException("사용할 수 없는 테이블 라벨입니다 label=" + rawLabel);
