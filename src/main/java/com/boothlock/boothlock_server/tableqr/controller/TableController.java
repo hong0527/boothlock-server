@@ -5,6 +5,7 @@ import com.boothlock.boothlock_server.tableqr.dto.QrFile;
 import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionResponse;
 import com.boothlock.boothlock_server.tableqr.service.TableAdminService;
@@ -103,9 +104,12 @@ public class TableController {
     }
 
     /** O6 퇴실·초기화 (Should) — 세션 무효(410), 멱등, 미결제 시 warning */
+    @Operation(summary = "O6 퇴실·초기화",
+            description = "활성 세션을 종료해 세션 토큰을 무효화하고 테이블을 EMPTY로 되돌린다. 이미 퇴실 처리된 테이블에 다시 호출해도 그대로 성공한다(멱등). "
+                    + "미결제 주문이 남아있으면 warning으로 알려준다.")
     @PostMapping("/admin/tables/{tableId}/checkout")
-    public Object checkout(@PathVariable Long tableId) {
-        // TODO(전형준): 명세서 O6
-        throw new NotImplementedException("O6 퇴실");
+    public TableCheckoutResponse checkout(@RequestHeader("Authorization") String authorization,
+                                           @PathVariable Long tableId) {
+        return tableAdminService.checkout(authorization, tableId);
     }
 }

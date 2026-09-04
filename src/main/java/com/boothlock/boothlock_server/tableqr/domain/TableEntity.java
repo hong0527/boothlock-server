@@ -77,4 +77,9 @@ public class TableEntity {
     public void regenerateToken(String newTableToken) {
         this.tableToken = newTableToken;
     }
+
+    /** O6 퇴실·초기화 — 다음 손님을 받을 수 있게 빈 테이블로 되돌린다. 이미 EMPTY여도 그대로 두면 되므로 멱등 */
+    public void checkout() {
+        this.status = TableStatus.EMPTY;
+    }
 }

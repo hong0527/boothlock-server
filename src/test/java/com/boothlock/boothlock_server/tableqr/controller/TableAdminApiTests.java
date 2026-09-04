@@ -5,8 +5,12 @@ import com.boothlock.boothlock_server.booth.domain.StaffAccountEntity;
 import com.boothlock.boothlock_server.booth.domain.StaffRole;
 import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.booth.repository.StaffAccountRepository;
+import com.boothlock.boothlock_server.order.domain.OrderEntity;
+import com.boothlock.boothlock_server.order.domain.PaymentMethod;
+import com.boothlock.boothlock_server.order.repository.OrderRepository;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
+import com.boothlock.boothlock_server.tableqr.domain.TableStatus;
 import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
 import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
 
@@ -21,11 +25,13 @@ import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -42,12 +48,14 @@ class TableAdminApiTests {
     @Autowired StaffAccountRepository staffRepository;
     @Autowired TableRepository tableRepository;
     @Autowired TableSessionRepository tableSessionRepository;
+    @Autowired OrderRepository orderRepository;
 
     private BoothEntity booth;
     private TableEntity table;
 
     @BeforeEach
     void setUp() {
+        orderRepository.deleteAll();
         tableSessionRepository.deleteAll();
         tableRepository.deleteAll();
         staffRepository.deleteAll();
@@ -62,6 +70,7 @@ class TableAdminApiTests {
 
     @AfterEach
     void tearDown() {
+        orderRepository.deleteAll();
         tableSessionRepository.deleteAll();
         tableRepository.deleteAll();
         staffRepository.deleteAll();
@@ -249,6 +258,107 @@ class TableAdminApiTests {
         mockMvc.perform(post("/api/v1/admin/tables/bulk")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"count\":1,\"labelPrefix\":\"H\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void checkoutEndsSessionAndResetsTableWithoutWarningWhenNoOrders() throws Exception {
+        table.occupy();
+        tableRepository.save(table);
+        TableSessionEntity session = tableSessionRepository.save(
+                new TableSessionEntity(table, "session-token-1", LocalDateTime.now()));
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(table.getId()))
+                .andExpect(jsonPath("$.label").value("A-1"))
+                .andExpect(jsonPath("$.status").value("EMPTY"))
+                .andExpect(jsonPath("$.warning").doesNotExist());
+
+        assertEquals(TableStatus.EMPTY, tableRepository.findById(table.getId()).orElseThrow().getStatus());
+        assertNotNull(tableSessionRepository.findById(session.getId()).orElseThrow().getEndedAt());
+    }
+
+    @Test
+    void checkoutEndsSessionSoOldTokenNoLongerResolvesAsActive() throws Exception {
+        TableSessionEntity session = tableSessionRepository.save(
+                new TableSessionEntity(table, "session-token-2", LocalDateTime.now()));
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk());
+
+        assertTrue(tableSessionRepository.findByTableIdAndEndedAtIsNull(table.getId()).isEmpty());
+        assertNotNull(tableSessionRepository.findById(session.getId()).orElseThrow().getEndedAt());
+    }
+
+    @Test
+    void checkoutWarnsWhenUnpaidOrderRemains() throws Exception {
+        TableSessionEntity session = tableSessionRepository.save(
+                new TableSessionEntity(table, "session-token-3", LocalDateTime.now()));
+        orderRepository.save(new OrderEntity(booth.getId(), session.getId(), "A1-1", LocalDate.now(),
+                1, "idem-unpaid", 10_000, false, LocalDateTime.now()));
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.warning").value("미결제 주문이 남아있습니다."));
+    }
+
+    @Test
+    void checkoutOmitsWarningWhenOutstandingOrderIsPaid() throws Exception {
+        TableSessionEntity session = tableSessionRepository.save(
+                new TableSessionEntity(table, "session-token-4", LocalDateTime.now()));
+        OrderEntity order = orderRepository.save(new OrderEntity(booth.getId(), session.getId(), "A1-2", LocalDate.now(),
+                2, "idem-paid", 10_000, false, LocalDateTime.now()));
+        orderRepository.markPaid(order.getId(), booth.getId(), PaymentMethod.CASH, "admin", LocalDateTime.now());
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.warning").doesNotExist());
+    }
+
+    @Test
+    void checkoutIsIdempotentWhenNoActiveSession() throws Exception {
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("EMPTY"));
+
+        // 두 번째 호출도 에러 없이 그대로 성공(멱등)
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("EMPTY"));
+    }
+
+    @Test
+    void rejectsCheckoutForUnknownTableIdWithNotFound() throws Exception {
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", 999_999L)
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void hidesOtherBoothsTableFromCheckoutAsNotFound() throws Exception {
+        BoothEntity otherBooth = boothRepository.save(new BoothEntity("다른 부스", "은행 5678", null));
+        String hash = PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("password");
+        staffRepository.save(new StaffAccountEntity(otherBooth, "other-admin", hash,
+                LocalDateTime.of(2026, 8, 13, 12, 0), StaffRole.ADMIN));
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("other-admin")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void rejectsCheckoutMissingAuthorizationWithUnauthorized() throws Exception {
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId()))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }

@@ -4,30 +4,39 @@ import com.boothlock.boothlock_server.booth.domain.BoothEntity;
 import com.boothlock.boothlock_server.booth.domain.StaffAccountEntity;
 import com.boothlock.boothlock_server.booth.service.BoothInfoService;
 import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
+import com.boothlock.boothlock_server.global.domain.OrderStatus;
+import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.global.error.ForbiddenException;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
+import com.boothlock.boothlock_server.order.repository.OrderRepository;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
+import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
 import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
+import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
 import com.boothlock.boothlock_server.tableqr.support.SecureTokenGenerator;
 
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * O2 테이블 일괄 등록·O5 QR 재발급 (명세서 O2·O5) — JWT·STAFF 인증은 황대겸의 BoothJwtProvider·BoothInfoService를 그대로 재사용한다.
+ * O2 테이블 일괄 등록·O5 QR 재발급·O6 퇴실·초기화 (명세서 O2·O5·O6) — JWT·STAFF 인증은 황대겸의 BoothJwtProvider·BoothInfoService를 그대로 재사용한다.
  */
 @Service
 public class TableAdminService {
@@ -36,17 +45,24 @@ public class TableAdminService {
     private static final int MAX_LABEL_LENGTH = 6;
     private static final int MAX_RAW_LABEL_LENGTH = 20; // booth_table.label VARCHAR(20)
     private static final Pattern LABEL_PATTERN = Pattern.compile("[A-Z0-9]+");
+    private static final ZoneId KST_ZONE = ZoneId.of("Asia/Seoul");
 
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
     private final TableRepository tableRepository;
+    private final TableSessionRepository tableSessionRepository;
+    private final OrderRepository orderRepository;
 
     public TableAdminService(BoothJwtProvider jwtProvider,
                               BoothInfoService boothInfoService,
-                              TableRepository tableRepository) {
+                              TableRepository tableRepository,
+                              TableSessionRepository tableSessionRepository,
+                              OrderRepository orderRepository) {
         this.jwtProvider = jwtProvider;
         this.boothInfoService = boothInfoService;
         this.tableRepository = tableRepository;
+        this.tableSessionRepository = tableSessionRepository;
+        this.orderRepository = orderRepository;
     }
 
     /**
@@ -145,6 +161,41 @@ public class TableAdminService {
 
         table.regenerateToken(SecureTokenGenerator.generate());
         return toResponse(table);
+    }
+
+    /**
+     * O6 퇴실·초기화 — 활성 세션을 종료해 세션 토큰을 무효화(이후 호출은 410 SESSION_EXPIRED, TableSessionAuthService 참조)하고
+     * 테이블을 EMPTY로 되돌린다. 이미 퇴실 처리된 테이블에 다시 호출해도 에러 없이 그대로 EMPTY를 반환한다(멱등).
+     * 세션에 미결제(RECEIVED/DONE + UNPAID) 주문이 남아있으면 warning으로 알려준다 — 차단하지는 않는다(Should).
+     */
+    @Transactional
+    public TableCheckoutResponse checkout(String authorization, Long tableId) {
+        BoothEntity staffBooth = authenticatedBooth(authorization);
+
+        TableEntity table = tableRepository.findById(tableId)
+                .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다."));
+        if (!table.getBooth().getId().equals(staffBooth.getId())) {
+            throw new NotFoundException("테이블을 찾을 수 없습니다.");
+        }
+
+        Optional<TableSessionEntity> activeSession = tableSessionRepository.findByTableIdAndEndedAtIsNull(tableId);
+        String warning = null;
+        if (activeSession.isPresent()) {
+            TableSessionEntity session = activeSession.get();
+            if (hasUnpaidOrders(session.getId())) {
+                warning = "미결제 주문이 남아있습니다.";
+            }
+            session.end(LocalDateTime.now(KST_ZONE));
+        }
+
+        table.checkout();
+        return new TableCheckoutResponse(table.getId(), table.getLabel(), table.getStatus(), warning);
+    }
+
+    private boolean hasUnpaidOrders(Long sessionId) {
+        return orderRepository.findBySessionIdOrderByCreatedAtDescIdDesc(sessionId).stream()
+                .anyMatch(order -> order.getStatus() != OrderStatus.CANCELED
+                        && order.getPaymentStatus() == PaymentStatus.UNPAID);
     }
 
     private BoothEntity authenticatedBooth(String authorization) {
