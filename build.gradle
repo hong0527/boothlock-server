@@ -28,6 +28,11 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	runtimeOnly 'com.h2database:h2'
 	runtimeOnly 'org.springframework.boot:spring-boot-h2console'
+
+	// O4·O4b QR 다운로드(전형준) — QR 이미지 생성 + PDF 조립
+	implementation 'com.google.zxing:core:3.5.3'
+	implementation 'com.google.zxing:javase:3.5.3'
+	implementation 'com.github.librepdf:openpdf:1.3.42'
 }
 
 tasks.named('test') {
