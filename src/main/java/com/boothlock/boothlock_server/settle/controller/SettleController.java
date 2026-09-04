@@ -2,14 +2,19 @@ package com.boothlock.boothlock_server.settle.controller;
 
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
 import com.boothlock.boothlock_server.settle.dto.FeedbackRequest;
+import com.boothlock.boothlock_server.settle.dto.SalesStatsResponse;
 import com.boothlock.boothlock_server.settle.service.FeedbackService;
+import com.boothlock.boothlock_server.settle.service.SalesStatsService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
 
 /**
  * [담당: 백지연] 정산·통계·피드백 — API 명세서 O18·O19·O20
@@ -21,16 +26,21 @@ import org.springframework.web.bind.annotation.*;
 public class SettleController {
 
     private final FeedbackService feedbackService;
+    private final SalesStatsService salesStatsService;
 
-    public SettleController(FeedbackService feedbackService) {
+    public SettleController(FeedbackService feedbackService, SalesStatsService salesStatsService) {
         this.feedbackService = feedbackService;
+        this.salesStatsService = salesStatsService;
     }
 
     /** O18 매출 집계 (Should) — 수단별 분리, 환불필요·환불됨 별도 집계 */
+    @Operation(summary = "O18 매출 집계 조회", description = "영업일별 정상 매출과 결제 수단별 매출, 환불 현황을 조회한다.")
     @GetMapping("/admin/stats/sales")
-    public Object getSales() {
-        // TODO(백지연): 명세서 O18 — ?date=영업일 (생략 시 현재 영업일)
-        throw new NotImplementedException("O18 매출 집계");
+    public SalesStatsResponse getSales(
+            @RequestHeader("Authorization") String authorization,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return salesStatsService.getSales(authorization, date);
     }
 
     /** O19 정산 CSV (Should) — 전체 원장(승인·취소·환불 이력 컬럼), UTF-8 BOM */
