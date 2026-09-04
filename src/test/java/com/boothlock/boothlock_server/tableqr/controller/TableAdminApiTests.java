@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -249,6 +250,65 @@ class TableAdminApiTests {
         mockMvc.perform(post("/api/v1/admin/tables/bulk")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"count\":1,\"labelPrefix\":\"H\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void listsTableStatusesSortedByLabelWithNeedsCleanupFlag() throws Exception {
+        // setUp의 table("A-1")은 EMPTY
+        TableEntity occupiedWithSession = new TableEntity(booth, "B-1", "token-b1");
+        occupiedWithSession.occupy();
+        occupiedWithSession = tableRepository.save(occupiedWithSession);
+        tableSessionRepository.save(new TableSessionEntity(occupiedWithSession, "session-b1", LocalDateTime.now()));
+
+        TableEntity occupiedWithoutSession = new TableEntity(booth, "C-1", "token-c1");
+        occupiedWithoutSession.occupy();
+        tableRepository.save(occupiedWithoutSession);
+
+        mockMvc.perform(get("/api/v1/admin/tables")
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tables.length()").value(3))
+                .andExpect(jsonPath("$.tables[0].label").value("A-1"))
+                .andExpect(jsonPath("$.tables[0].status").value("EMPTY"))
+                .andExpect(jsonPath("$.tables[0].needsCleanup").value(false))
+                .andExpect(jsonPath("$.tables[1].label").value("B-1"))
+                .andExpect(jsonPath("$.tables[1].status").value("OCCUPIED"))
+                .andExpect(jsonPath("$.tables[1].needsCleanup").value(false))
+                .andExpect(jsonPath("$.tables[2].label").value("C-1"))
+                .andExpect(jsonPath("$.tables[2].status").value("OCCUPIED"))
+                .andExpect(jsonPath("$.tables[2].needsCleanup").value(true));
+    }
+
+    @Test
+    void listsEmptyTablesWhenBoothHasNone() throws Exception {
+        tableRepository.deleteAll();
+
+        mockMvc.perform(get("/api/v1/admin/tables")
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tables.length()").value(0));
+    }
+
+    @Test
+    void scopesTableStatusesToAuthenticatedBooth() throws Exception {
+        BoothEntity otherBooth = boothRepository.save(new BoothEntity("다른 부스", "은행 5678", null));
+        String hash = PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("password");
+        staffRepository.save(new StaffAccountEntity(otherBooth, "other-admin", hash,
+                LocalDateTime.of(2026, 8, 13, 12, 0), StaffRole.ADMIN));
+        tableRepository.save(new TableEntity(otherBooth, "Z-1", "token-z1"));
+
+        mockMvc.perform(get("/api/v1/admin/tables")
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tables.length()").value(1))
+                .andExpect(jsonPath("$.tables[0].label").value("A-1"));
+    }
+
+    @Test
+    void rejectsTableStatusesMissingAuthorizationWithUnauthorized() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/tables"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
