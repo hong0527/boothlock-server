@@ -2,6 +2,7 @@ package com.boothlock.boothlock_server.settle.service;
 
 import com.boothlock.boothlock_server.booth.domain.BoothEntity;
 import com.boothlock.boothlock_server.booth.domain.StaffAccountEntity;
+import com.boothlock.boothlock_server.booth.domain.StaffRole;
 import com.boothlock.boothlock_server.booth.service.BoothInfoService;
 import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
@@ -45,6 +46,9 @@ public class SalesStatsService {
         StaffAccountEntity staff = boothInfoService.authenticate(jwtProvider.verify(authorization));
         BoothEntity booth = staff.getBooth();
         if (booth == null) {
+            throw new ForbiddenException();
+        }
+        if (staff.getRole() != StaffRole.ADMIN) {
             throw new ForbiddenException();
         }
 

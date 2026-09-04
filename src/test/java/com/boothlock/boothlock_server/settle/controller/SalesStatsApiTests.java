@@ -50,6 +50,7 @@ class SalesStatsApiTests {
     private Long staffId;
     private StaffAccountEntity staff;
     private String token;
+    private String staffToken;
 
     @BeforeEach
     void setUp() {
@@ -59,11 +60,16 @@ class SalesStatsApiTests {
 
         BoothEntity booth = boothRepository.save(new BoothEntity("매출 부스", "은행 1234", null));
         String hash = PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("password");
+        // O18은 ADMIN 전용 — 매출은 계좌 변경(O17)·환불 완료(O21)와 같은 민감도로 취급한다
         staff = staffAccountRepository.save(new StaffAccountEntity(
-                booth, "sales-staff", hash, LocalDateTime.of(2026, 9, 1, 12, 0), StaffRole.STAFF));
+                booth, "sales-admin", hash, LocalDateTime.of(2026, 9, 1, 12, 0), StaffRole.ADMIN));
         boothId = booth.getId();
         staffId = staff.getId();
         token = jwtProvider.issue(staff, Instant.now());
+
+        StaffAccountEntity nonAdminStaff = staffAccountRepository.save(new StaffAccountEntity(
+                booth, "sales-staff", hash, LocalDateTime.of(2026, 9, 1, 12, 0), StaffRole.STAFF));
+        staffToken = jwtProvider.issue(nonAdminStaff, Instant.now());
     }
 
     @AfterEach
@@ -108,6 +114,12 @@ class SalesStatsApiTests {
         request(token, "2026-13-40")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+    }
+    @Test
+    void rejectsSalesStatsForStaffRole() throws Exception {
+        request(staffToken, EXPLICIT_DATE.toString())
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
     }
     @Test
     void rejectsRequestWithoutAuthorizationHeader() throws Exception { expectUnauthorized(null); }
