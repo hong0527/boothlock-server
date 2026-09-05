@@ -18,13 +18,13 @@ import com.boothlock.boothlock_server.tableqr.dto.TableStatusResponse;
 import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
 import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
 import com.boothlock.boothlock_server.tableqr.support.SecureTokenGenerator;
+import com.boothlock.boothlock_server.tableqr.support.TableLabelComparator;
 
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -147,7 +147,7 @@ public class TableAdminService {
         BoothEntity staffBooth = authenticatedBooth(authorization);
 
         List<TableEntity> tables = tableRepository.findByBoothId(staffBooth.getId()).stream()
-                .sorted(Comparator.comparing(TableEntity::getLabel))
+                .sorted(TableLabelComparator.BY_LABEL)
                 .toList();
         if (tables.isEmpty()) {
             return new TableStatusListResponse(List.of());

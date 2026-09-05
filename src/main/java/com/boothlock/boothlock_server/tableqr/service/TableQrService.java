@@ -11,6 +11,7 @@ import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.dto.QrFile;
 import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
 import com.boothlock.boothlock_server.tableqr.support.QrImageComposer;
+import com.boothlock.boothlock_server.tableqr.support.TableLabelComparator;
 
 import com.lowagie.text.Document;
 import com.lowagie.text.DocumentException;
@@ -76,7 +77,7 @@ public class TableQrService {
         BoothEntity staffBooth = authenticatedBooth(authorization);
 
         List<TableEntity> tables = tableRepository.findByBoothId(staffBooth.getId()).stream()
-                .sorted((a, b) -> a.getLabel().compareTo(b.getLabel()))
+                .sorted(TableLabelComparator.BY_LABEL)
                 .toList();
         if (tables.isEmpty()) {
             throw new NotFoundException("등록된 테이블이 없습니다.");

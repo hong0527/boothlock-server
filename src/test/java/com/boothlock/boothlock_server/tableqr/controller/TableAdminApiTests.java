@@ -282,6 +282,21 @@ class TableAdminApiTests {
     }
 
     @Test
+    void listsTableStatusesInNumericLabelOrderNotLexicographic() throws Exception {
+        // setUp의 table("A-1") 외 두 자리 접미사 라벨을 등록해 사전순이 아닌 숫자순 정렬을 검증한다
+        tableRepository.save(new TableEntity(booth, "A-10", "token-a10"));
+        tableRepository.save(new TableEntity(booth, "A-2", "token-a2"));
+
+        mockMvc.perform(get("/api/v1/admin/tables")
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tables.length()").value(3))
+                .andExpect(jsonPath("$.tables[0].label").value("A-1"))
+                .andExpect(jsonPath("$.tables[1].label").value("A-2"))
+                .andExpect(jsonPath("$.tables[2].label").value("A-10"));
+    }
+
+    @Test
     void listsEmptyTablesWhenBoothHasNone() throws Exception {
         tableRepository.deleteAll();
 
