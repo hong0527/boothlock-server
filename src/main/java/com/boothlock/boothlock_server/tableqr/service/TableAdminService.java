@@ -8,11 +8,17 @@ import com.boothlock.boothlock_server.global.error.ForbiddenException;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
+import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
+import com.boothlock.boothlock_server.tableqr.domain.TableStatus;
 import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableStatusListResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableStatusResponse;
 import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
+import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
 import com.boothlock.boothlock_server.tableqr.support.SecureTokenGenerator;
+import com.boothlock.boothlock_server.tableqr.support.TableLabelComparator;
 
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
@@ -27,7 +33,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * O2 테이블 일괄 등록·O5 QR 재발급 (명세서 O2·O5) — JWT·STAFF 인증은 황대겸의 BoothJwtProvider·BoothInfoService를 그대로 재사용한다.
+ * O2 테이블 일괄 등록·O3 좌석 현황·O5 QR 재발급 (명세서 O2·O3·O5) — JWT·STAFF 인증은 황대겸의 BoothJwtProvider·BoothInfoService를 그대로 재사용한다.
  */
 @Service
 public class TableAdminService {
@@ -40,13 +46,16 @@ public class TableAdminService {
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
     private final TableRepository tableRepository;
+    private final TableSessionRepository tableSessionRepository;
 
     public TableAdminService(BoothJwtProvider jwtProvider,
                               BoothInfoService boothInfoService,
-                              TableRepository tableRepository) {
+                              TableRepository tableRepository,
+                              TableSessionRepository tableSessionRepository) {
         this.jwtProvider = jwtProvider;
         this.boothInfoService = boothInfoService;
         this.tableRepository = tableRepository;
+        this.tableSessionRepository = tableSessionRepository;
     }
 
     /**
@@ -130,6 +139,34 @@ public class TableAdminService {
             throw new InvalidRequestException("사용할 수 없는 테이블 라벨입니다 label=" + rawLabel);
         }
         return normalized;
+    }
+
+    /** O3 좌석 현황 — 라벨 순으로 부스의 모든 테이블 상태를 반환한다. OCCUPIED인데 활성 세션이 없으면 needsCleanup=true('정리 필요') */
+    @Transactional(readOnly = true)
+    public TableStatusListResponse getTableStatuses(String authorization) {
+        BoothEntity staffBooth = authenticatedBooth(authorization);
+
+        List<TableEntity> tables = tableRepository.findByBoothId(staffBooth.getId()).stream()
+                .sorted(TableLabelComparator.BY_LABEL)
+                .toList();
+        if (tables.isEmpty()) {
+            return new TableStatusListResponse(List.of());
+        }
+
+        List<Long> tableIds = tables.stream().map(TableEntity::getId).toList();
+        Set<Long> tablesWithActiveSession = tableSessionRepository.findByTableIdInAndEndedAtIsNull(tableIds).stream()
+                .map(TableSessionEntity::getTable)
+                .map(TableEntity::getId)
+                .collect(Collectors.toSet());
+
+        List<TableStatusResponse> responses = tables.stream()
+                .map(table -> {
+                    boolean hasActiveSession = tablesWithActiveSession.contains(table.getId());
+                    boolean needsCleanup = table.getStatus() == TableStatus.OCCUPIED && !hasActiveSession;
+                    return new TableStatusResponse(table.getId(), table.getLabel(), table.getStatus(), needsCleanup);
+                })
+                .toList();
+        return new TableStatusListResponse(responses);
     }
 
     /** O5 QR 재발급 — 기존 tableToken 즉시 폐기, 활성 세션은 유지. 타 부스 테이블은 404로 존재를 숨긴다 */

@@ -7,6 +7,7 @@ import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableStatusListResponse;
 import com.boothlock.boothlock_server.tableqr.service.TableAdminService;
 import com.boothlock.boothlock_server.tableqr.service.TableQrService;
 import com.boothlock.boothlock_server.tableqr.service.TableSessionService;
@@ -62,10 +63,11 @@ public class TableController {
     }
 
     /** O3 좌석 현황 (Should) — OCCUPIED+session:null = '정리 필요' */
+    @Operation(summary = "O3 좌석 현황",
+            description = "부스의 모든 테이블 상태를 라벨 순으로 반환한다. OCCUPIED인데 활성 세션이 없으면 needsCleanup=true('정리 필요').")
     @GetMapping("/admin/tables")
-    public Object getTables() {
-        // TODO(전형준): 명세서 O3
-        throw new NotImplementedException("O3 좌석 현황");
+    public TableStatusListResponse getTables(@RequestHeader("Authorization") String authorization) {
+        return tableAdminService.getTableStatuses(authorization);
     }
 
     /** O4 QR 단건 다운로드 (Must) — ?format=png(기본)|pdf, 공식 도메인 문구 병기 */
