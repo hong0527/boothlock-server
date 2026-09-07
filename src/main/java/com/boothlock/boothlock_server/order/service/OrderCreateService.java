@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -110,7 +111,9 @@ public class OrderCreateService {
 
         OrderWriter.OrderSpec spec = new OrderWriter.OrderSpec(
                 boothId, sessionId, label, tableLabel.trim(), idempotencyKey,
-                totalAmount(request, menus), items, LocalDateTime.now(KST_ZONE));
+                // 컬럼이 timestamp(6)라 마이크로초로 잘라 넣는다 — 리눅스 now()는 나노초까지 나와서, 자르지 않으면
+                // 첫 응답(메모리 값)과 멱등 재요청 응답(DB 재조회 값)의 createdAt이 달라진다
+                totalAmount(request, menus), items, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS));
         return saveWithRetry(spec, booth.getBankAccount());
     }
 

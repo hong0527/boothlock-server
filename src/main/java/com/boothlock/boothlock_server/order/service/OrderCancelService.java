@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 
 /** C5 소비자 취소 — 내 세션의 RECEIVED+UNPAID 주문만 취소, 응답은 C4 단건 형태 (명세서 C5) */
 @Service
@@ -40,7 +41,8 @@ public class OrderCancelService {
                 .orElseThrow(() -> new NotFoundException("주문을 찾을 수 없습니다."));
 
         // JVM 기본 시간대에 기대지 않는다 — java -jar 배포에는 -Duser.timezone이 붙지 않아 UTC 서버에서 9시간 어긋난다
-        order.cancelByCustomer(LocalDateTime.now(KST_ZONE));
+        // 컬럼 정밀도(timestamp(6))에 맞춰 마이크로초로 — 응답과 재조회 값이 같아지도록 (OrderCreateService와 동일 이유)
+        order.cancelByCustomer(LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS));
         return assembler.assemble(order);
     }
 
