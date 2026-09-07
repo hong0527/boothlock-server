@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
 /**
  * C3 주문 생성 — 검증 6단계 → 서버 가격 재계산 → 채번 → 저장 (명세서 C3).
  * 클래스에 @Transactional을 걸지 않는다: 멱등키 동시 요청의 복구가 트랜잭션 밖에서만 가능하기 때문 (OrderWriter 주석 참조).
- * TODO(6강): 1단계 세션 유효성 검사(410 SESSION_EXPIRED)는 세션 인증 계층에서 처리한다 (명세서 C3)
+ * 1단계 세션 유효성 검사(410)는 컨트롤러 앞단의 TableSessionAuthService가 맡는다 — 여기 도달한 boothId·sessionId는 인증된 값이다 (명세서 C3)
  */
 @Service
 public class OrderCreateService {

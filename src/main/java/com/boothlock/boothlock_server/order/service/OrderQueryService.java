@@ -12,7 +12,7 @@ import java.util.List;
 
 /**
  * C4 내 주문 조회 — 현재 세션의 주문 전체를 최신순으로, canCancel은 서버가 계산.
- * TODO(6강): 폴링의 세션 활동 인정(last_activity_at 갱신)은 세션 인증 연결 시 처리 (명세서 C4)
+ * 폴링의 세션 활동 인정(last_activity_at 갱신)은 TableSessionAuthService.authenticate가 매 요청마다 touch로 처리한다 (명세서 C4)
  */
 @Service
 public class OrderQueryService {
