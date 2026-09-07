@@ -8,10 +8,15 @@ import com.boothlock.boothlock_server.global.error.ForbiddenException;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
+import com.boothlock.boothlock_server.global.error.SessionExpiredException;
+import com.boothlock.boothlock_server.global.error.UnauthorizedException;
 import com.boothlock.boothlock_server.menu.domain.MenuEntity;
+import com.boothlock.boothlock_server.menu.dto.MenuBoardResponse;
 import com.boothlock.boothlock_server.menu.dto.MenuResponse;
 import com.boothlock.boothlock_server.menu.repository.MenuRepository;
 import com.boothlock.boothlock_server.order.service.MenuLookup;
+import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
+import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,11 +35,30 @@ public class MenuService implements MenuLookup {
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
     private final MenuRepository menuRepository;
+    private final TableSessionRepository tableSessionRepository;
 
-    public MenuService(BoothJwtProvider jwtProvider, BoothInfoService boothInfoService, MenuRepository menuRepository) {
+    public MenuService(BoothJwtProvider jwtProvider, BoothInfoService boothInfoService, MenuRepository menuRepository,
+                       TableSessionRepository tableSessionRepository) {
         this.jwtProvider = jwtProvider;
         this.boothInfoService = boothInfoService;
         this.menuRepository = menuRepository;
+        this.tableSessionRepository = tableSessionRepository;
+    }
+
+    @Transactional(readOnly = true)
+    public MenuBoardResponse getMenuBoard(String sessionToken) {
+        TableSessionEntity session = tableSessionRepository.findBySessionToken(sessionToken)
+                .orElseThrow(() -> new UnauthorizedException("세션 토큰이 유효하지 않습니다."));
+        if (session.getEndedAt() != null) {
+            throw new SessionExpiredException();
+        }
+
+        BoothEntity booth = session.getTable().getBooth();
+        List<MenuBoardResponse.MenuItem> menus = menuRepository
+                .findByBooth_IdAndVisibleTrueOrderByIdAsc(booth.getId()).stream()
+                .map(MenuBoardResponse.MenuItem::from)
+                .toList();
+        return new MenuBoardResponse(booth.getName(), booth.isOpen(), menus);
     }
 
     @Transactional
@@ -121,7 +145,7 @@ public class MenuService implements MenuLookup {
     private BoothEntity authenticatedBooth(String authorization) {
         StaffAccountEntity staff = boothInfoService.authenticate(jwtProvider.verify(authorization));
         if (staff.getBooth() == null) {
-        throw new ForbiddenException();
+            throw new ForbiddenException();
         }
         return staff.getBooth();
     }
