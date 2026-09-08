@@ -5,6 +5,7 @@ import com.boothlock.boothlock_server.booth.domain.StaffAccountEntity;
 import com.boothlock.boothlock_server.booth.domain.StaffRole;
 import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.booth.repository.StaffAccountRepository;
+import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
 import com.boothlock.boothlock_server.settle.domain.FeedbackEntity;
 import com.boothlock.boothlock_server.settle.repository.FeedbackRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -14,10 +15,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,10 +38,13 @@ class FeedbackApiTests {
     @Autowired FeedbackRepository feedbackRepository;
     @Autowired StaffAccountRepository staffAccountRepository;
     @Autowired BoothRepository boothRepository;
+    @Autowired BoothJwtProvider jwtProvider;
+    @Autowired JdbcTemplate jdbcTemplate;
 
     private Long boothId;
     private Long staffId;
     private String token;
+    private StaffAccountEntity staff;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -48,7 +54,7 @@ class FeedbackApiTests {
 
         BoothEntity booth = boothRepository.save(new BoothEntity("피드백 부스", "은행 1234", null));
         String hash = PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("correct-password");
-        StaffAccountEntity staff = staffAccountRepository.save(new StaffAccountEntity(
+        staff = staffAccountRepository.save(new StaffAccountEntity(
                 booth, "feedback-admin", hash,
                 LocalDateTime.of(2026, 8, 29, 12, 0), StaffRole.ADMIN));
         boothId = booth.getId();
@@ -115,11 +121,69 @@ class FeedbackApiTests {
         assertEquals(0, feedbackRepository.count());
     }
 
+    @Test
+    void rejectsRequestWithoutAuthorizationHeader() throws Exception {
+        mockMvc.perform(post("/api/v1/admin/feedback")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validFeedback())))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+
+        assertEquals(0, feedbackRepository.count());
+    }
+
+    @Test
+    void rejectsExpiredToken() throws Exception {
+        String expiredToken = jwtProvider.issue(staff, Instant.now().minusSeconds(13 * 60 * 60));
+
+        submitWithToken(expiredToken, validFeedback())
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+
+        assertEquals(0, feedbackRepository.count());
+    }
+
+    @Test
+    void rejectsInactiveAccount() throws Exception {
+        jdbcTemplate.update("update staff_account set active = false where id = ?", staffId);
+
+        submitWithToken(token, validFeedback())
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+
+        assertEquals(0, feedbackRepository.count());
+    }
+
+    @Test
+    void rejectsTokenIssuedBeforePasswordChange() throws Exception {
+        jdbcTemplate.update(
+                "update staff_account set password_changed_at = ? where id = ?",
+                LocalDateTime.of(2026, 8, 30, 12, 0), staffId);
+
+        submitWithToken(token, validFeedback())
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+
+        assertEquals(0, feedbackRepository.count());
+    }
+
     private org.springframework.test.web.servlet.ResultActions submit(FeedbackBody body) throws Exception {
         return mockMvc.perform(post("/api/v1/admin/feedback")
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(body)));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions submitWithToken(
+            String accessToken, FeedbackBody body) throws Exception {
+        return mockMvc.perform(post("/api/v1/admin/feedback")
+                .header("Authorization", "Bearer " + accessToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body)));
+    }
+
+    private FeedbackBody validFeedback() {
+        return new FeedbackBody(5, true, true, true, "인증 테스트");
     }
 
     private String login() throws Exception {

@@ -96,4 +96,9 @@ public class TableSessionEntity {
     public long getEndedAtKey() {
         return endedAtKey;
     }
+
+    /** C1 세션 복원 — 활성 세션을 다시 찾은 시점을 활동 시각으로 기록한다(폴링도 활동으로 인정) */
+    public void touch(LocalDateTime at) {
+        this.lastActivityAt = Objects.requireNonNull(at, "at must not be null");
+    }
 }

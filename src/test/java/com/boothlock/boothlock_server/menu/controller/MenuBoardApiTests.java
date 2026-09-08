@@ -45,7 +45,7 @@ class MenuBoardApiTests {
         booth = boothRepository.save(new BoothEntity("메뉴판 부스", "은행 1234", "10:00~20:00"));
         TableEntity table = tableRepository.save(new TableEntity(booth, "A-1", "table-token-1"));
         sessionToken = "session-token-1";
-        tableSessionRepository.save(new TableSessionEntity(table, sessionToken, LocalDateTime.now()));
+        tableSessionRepository.save(new TableSessionEntity(table, sessionToken, LocalDateTime.now().minusMinutes(10)));
     }
 
     @AfterEach
@@ -101,10 +101,39 @@ class MenuBoardApiTests {
     }
 
     @Test
-    void rejectsUnknownSessionToken() throws Exception {
+    void rejectsUnknownSessionTokenWithGone() throws Exception {
+        // 모르는 토큰과 만료된 토큰 모두 410 — 손님이 할 일은 어느 쪽이든 QR 재스캔이라 소비자 API 전체가 같은 코드를 준다
         mockMvc.perform(get("/api/v1/menus").header("X-Session-Token", "unknown-token"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.error.code").value("SESSION_EXPIRED"));
+    }
+
+    @Test
+    void doesNotExposeOtherBoothMenus() throws Exception {
+        // 세션이 속한 부스의 메뉴만 보여야 한다 (명세서 §1.4 타 부스 리소스 은닉)
+        menuRepository.save(new MenuEntity(booth, "내 부스 김치전", 8000, null, null, true));
+        BoothEntity otherBooth = boothRepository.save(new BoothEntity("다른 부스", "은행 9999", "10:00~20:00"));
+        menuRepository.save(new MenuEntity(otherBooth, "남의 부스 파전", 9000, null, null, true));
+
+        mockMvc.perform(get("/api/v1/menus").header("X-Session-Token", sessionToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.boothName").value("메뉴판 부스"))
+                .andExpect(jsonPath("$.menus.length()").value(1))
+                .andExpect(jsonPath("$.menus[0].name").value("내 부스 김치전"));
+    }
+
+    @Test
+    void menuBoardCountsAsSessionActivity() throws Exception {
+        // 공용 인증 계층이 요청마다 활동 시각을 갱신한다
+        java.time.LocalDateTime before = tableSessionRepository.findBySessionToken(sessionToken)
+                .orElseThrow().getLastActivityAt();
+
+        mockMvc.perform(get("/api/v1/menus").header("X-Session-Token", sessionToken))
+                .andExpect(status().isOk());
+
+        java.time.LocalDateTime after = tableSessionRepository.findBySessionToken(sessionToken)
+                .orElseThrow().getLastActivityAt();
+        org.junit.jupiter.api.Assertions.assertTrue(after.isAfter(before));
     }
 
     @Test

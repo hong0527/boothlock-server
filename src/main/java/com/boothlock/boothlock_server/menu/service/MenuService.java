@@ -8,15 +8,14 @@ import com.boothlock.boothlock_server.global.error.ForbiddenException;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
-import com.boothlock.boothlock_server.global.error.SessionExpiredException;
-import com.boothlock.boothlock_server.global.error.UnauthorizedException;
 import com.boothlock.boothlock_server.menu.domain.MenuEntity;
 import com.boothlock.boothlock_server.menu.dto.MenuBoardResponse;
 import com.boothlock.boothlock_server.menu.dto.MenuResponse;
 import com.boothlock.boothlock_server.menu.repository.MenuRepository;
 import com.boothlock.boothlock_server.order.service.MenuLookup;
-import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
-import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
+import com.boothlock.boothlock_server.booth.repository.BoothRepository;
+import com.boothlock.boothlock_server.tableqr.dto.AuthenticatedSession;
+import com.boothlock.boothlock_server.tableqr.service.TableSessionAuthService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,25 +34,29 @@ public class MenuService implements MenuLookup {
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
     private final MenuRepository menuRepository;
-    private final TableSessionRepository tableSessionRepository;
+    private final BoothRepository boothRepository;
+    private final TableSessionAuthService sessionAuthService;
 
     public MenuService(BoothJwtProvider jwtProvider, BoothInfoService boothInfoService, MenuRepository menuRepository,
-                       TableSessionRepository tableSessionRepository) {
+                       BoothRepository boothRepository, TableSessionAuthService sessionAuthService) {
         this.jwtProvider = jwtProvider;
         this.boothInfoService = boothInfoService;
         this.menuRepository = menuRepository;
-        this.tableSessionRepository = tableSessionRepository;
+        this.boothRepository = boothRepository;
+        this.sessionAuthService = sessionAuthService;
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * C2 메뉴판 — 세션 판별은 공용 인증 계층에 맡긴다.
+     * 직접 조회하면 모르는 토큰에 401을 주게 되는데 C3·C4·C5는 같은 상황에서 410을 준다.
+     * 손님이 할 일은 어느 쪽이든 QR 재스캔이라 소비자 API 전체가 410으로 통일돼 있다 (명세서 §1.2).
+     * readOnly를 걸지 않는 이유는 인증 계층이 세션 활동 시각을 갱신하기 때문이다.
+     */
+    @Transactional
     public MenuBoardResponse getMenuBoard(String sessionToken) {
-        TableSessionEntity session = tableSessionRepository.findBySessionToken(sessionToken)
-                .orElseThrow(() -> new UnauthorizedException("세션 토큰이 유효하지 않습니다."));
-        if (session.getEndedAt() != null) {
-            throw new SessionExpiredException();
-        }
-
-        BoothEntity booth = session.getTable().getBooth();
+        AuthenticatedSession session = sessionAuthService.authenticate(sessionToken);
+        BoothEntity booth = boothRepository.findById(session.boothId())
+                .orElseThrow(() -> new NotFoundException("부스를 찾을 수 없습니다."));
         List<MenuBoardResponse.MenuItem> menus = menuRepository
                 .findByBooth_IdAndVisibleTrueOrderByIdAsc(booth.getId()).stream()
                 .map(MenuBoardResponse.MenuItem::from)

@@ -1,57 +1,107 @@
 package com.boothlock.boothlock_server.tableqr.controller;
 
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
+import com.boothlock.boothlock_server.tableqr.dto.QrFile;
+import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableSessionResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableStatusListResponse;
+import com.boothlock.boothlock_server.tableqr.service.TableAdminService;
+import com.boothlock.boothlock_server.tableqr.service.TableQrService;
+import com.boothlock.boothlock_server.tableqr.service.TableSessionService;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+import jakarta.validation.Valid;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 /**
  * [담당: 전형준] 테이블·QR·세션 — API 명세서 C1·O2~O6
  * 핵심 규칙: 토큰 2종 분리(tableToken=QR용/sessionToken=세션용, CSPRNG 128bit), 세션은 테이블 단위.
  */
+@Tag(name = "테이블·QR·세션", description = "테이블·QR·세션 (명세서 C1·O2~O6·O4b, 담당: 전형준)")
 @RestController
 @RequestMapping("/api/v1")
 public class TableController {
 
+    private final TableSessionService tableSessionService;
+    private final TableAdminService tableAdminService;
+    private final TableQrService tableQrService;
+
+    public TableController(TableSessionService tableSessionService,
+                            TableAdminService tableAdminService,
+                            TableQrService tableQrService) {
+        this.tableSessionService = tableSessionService;
+        this.tableAdminService = tableAdminService;
+        this.tableQrService = tableQrService;
+    }
+
     /** C1 세션 발급 (Must) — QR 토큰 검증, 활성 세션 있으면 복원(restored:true), 없으면 생성+OCCUPIED */
+    @Operation(summary = "C1 세션 발급", description = "QR의 테이블 토큰을 검증해 세션 토큰을 발급한다. 활성 세션이 있으면 복원(restored:true)한다.")
     @PostMapping("/table-sessions")
-    public Object createSession() {
-        // TODO(전형준): 명세서 C1
-        throw new NotImplementedException("C1 세션 발급");
+    public TableSessionResponse createSession(@Valid @RequestBody TableSessionCreateRequest request) {
+        return tableSessionService.createOrRestore(request);
     }
 
     /** O2 테이블 일괄 등록 (Must) — count≤300, 라벨 정규화 후 6자·단독 M 금지, 토큰 자동 발급 */
+    @Operation(summary = "O2 테이블 일괄 등록",
+            description = "count+labelPrefix 또는 labels 중 하나로 테이블을 일괄 등록한다(최대 300건). "
+                    + "라벨은 정규화 후 6자·단독 M 금지·부스 내 중복을 금지하고, tableToken은 추측 불가한 값으로 자동 발급한다.")
     @PostMapping("/admin/tables/bulk")
-    public Object bulkCreate() {
-        // TODO(전형준): 명세서 O2
-        throw new NotImplementedException("O2 테이블 일괄 등록");
+    @ResponseStatus(HttpStatus.CREATED)
+    public TableBulkCreateResponse bulkCreate(@RequestHeader("Authorization") String authorization,
+                                               @RequestBody TableBulkCreateRequest request) {
+        return tableAdminService.bulkCreate(authorization, request);
     }
 
     /** O3 좌석 현황 (Should) — OCCUPIED+session:null = '정리 필요' */
+    @Operation(summary = "O3 좌석 현황",
+            description = "부스의 모든 테이블 상태를 라벨 순으로 반환한다. OCCUPIED인데 활성 세션이 없으면 needsCleanup=true('정리 필요').")
     @GetMapping("/admin/tables")
-    public Object getTables() {
-        // TODO(전형준): 명세서 O3
-        throw new NotImplementedException("O3 좌석 현황");
+    public TableStatusListResponse getTables(@RequestHeader("Authorization") String authorization) {
+        return tableAdminService.getTableStatuses(authorization);
     }
 
     /** O4 QR 단건 다운로드 (Must) — ?format=png(기본)|pdf, 공식 도메인 문구 병기 */
+    @Operation(summary = "O4 QR 단건 다운로드",
+            description = "테이블 하나의 QR을 PNG(기본) 또는 PDF로 내려받는다. 이미지에는 공식 도메인 문구를 병기해 위조 QR을 가려낸다.")
     @GetMapping("/admin/tables/{tableId}/qr")
-    public Object downloadQr(@PathVariable Long tableId) {
-        // TODO(전형준): 명세서 O4
-        throw new NotImplementedException("O4 QR 다운로드");
+    public ResponseEntity<byte[]> downloadQr(@RequestHeader("Authorization") String authorization,
+                                              @PathVariable Long tableId,
+                                              @RequestParam(required = false) String format) {
+        return toResponse(tableQrService.downloadSingle(authorization, tableId, format));
     }
 
     /** O4b QR 전체 일괄 PDF (Must) — 행사 준비용 */
+    @Operation(summary = "O4b QR 전체 일괄 PDF",
+            description = "부스의 모든 테이블 QR을 라벨 순으로 한 PDF에 담아 내려받는다(카드 1장당 1페이지, 행사 준비용).")
     @GetMapping("/admin/tables/qr.pdf")
-    public Object downloadAllQr() {
-        // TODO(전형준): 명세서 O4b
-        throw new NotImplementedException("O4b QR 일괄 PDF");
+    public ResponseEntity<byte[]> downloadAllQr(@RequestHeader("Authorization") String authorization) {
+        return toResponse(tableQrService.downloadAll(authorization));
+    }
+
+    private ResponseEntity<byte[]> toResponse(QrFile file) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(file.contentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(file.filename()).build().toString())
+                .body(file.content());
     }
 
     /** O5 QR 재발급 (Must) — 기존 토큰 즉시 폐기, 활성 세션은 유지 */
+    @Operation(summary = "O5 QR 재발급", description = "테이블의 tableToken을 새로 발급해 기존 QR을 즉시 폐기한다. 활성 세션은 유지된다.")
     @PostMapping("/admin/tables/{tableId}/regenerate-token")
-    public Object regenerateToken(@PathVariable Long tableId) {
-        // TODO(전형준): 명세서 O5
-        throw new NotImplementedException("O5 QR 재발급");
+    public TableAdminResponse regenerateToken(@RequestHeader("Authorization") String authorization,
+                                               @PathVariable Long tableId) {
+        return tableAdminService.regenerateToken(authorization, tableId);
     }
 
     /** O6 퇴실·초기화 (Should) — 세션 무효(410), 멱등, 미결제 시 warning */
