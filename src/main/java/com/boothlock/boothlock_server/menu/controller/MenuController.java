@@ -1,13 +1,16 @@
 package com.boothlock.boothlock_server.menu.controller;
 
-import com.boothlock.boothlock_server.global.error.NotImplementedException;
 import com.boothlock.boothlock_server.menu.dto.MenuBoardResponse;
+import com.boothlock.boothlock_server.menu.dto.MenuUploadResponse;
 import com.boothlock.boothlock_server.menu.dto.MenuResponse;
+import com.boothlock.boothlock_server.menu.service.MenuImageUploadService;
 import com.boothlock.boothlock_server.menu.service.MenuService;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -19,9 +22,11 @@ import tools.jackson.databind.JsonNode;
 public class MenuController {
 
     private final MenuService menuService;
+    private final MenuImageUploadService menuImageUploadService;
 
-    public MenuController(MenuService menuService) {
+    public MenuController(MenuService menuService, MenuImageUploadService menuImageUploadService) {
         this.menuService = menuService;
+        this.menuImageUploadService = menuImageUploadService;
     }
 
     /** C2 메뉴판 조회 (Must) — visible=false 제외, soldOut 표시, 잔여 수량 필드 없음(팀 확정) */
@@ -48,9 +53,12 @@ public class MenuController {
     }
 
     /** O9 사진 업로드 (Must) — multipart ≤5MB, 매직바이트 검증·SVG 거부·1080px 재인코딩 */
-    @PostMapping("/admin/uploads")
-    public Object upload() {
-        // TODO(권희원): 명세서 O9
-        throw new NotImplementedException("O9 사진 업로드");
+    @PostMapping(value = "/admin/uploads", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<MenuUploadResponse> upload(
+            @RequestHeader("Authorization") String authorization,
+            @RequestPart(value = "file", required = false) MultipartFile file) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .header("X-Content-Type-Options", "nosniff")
+                .body(menuImageUploadService.upload(authorization, file));
     }
 }
