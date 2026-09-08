@@ -2,8 +2,11 @@ package com.boothlock.boothlock_server.dashboard.controller;
 
 import com.boothlock.boothlock_server.dashboard.dto.CallRequest;
 import com.boothlock.boothlock_server.dashboard.dto.CallResponse;
+import com.boothlock.boothlock_server.dashboard.dto.CancelRequest;
 import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
+import com.boothlock.boothlock_server.dashboard.dto.PaymentConfirmRequest;
 import com.boothlock.boothlock_server.dashboard.service.CallService;
+import com.boothlock.boothlock_server.dashboard.service.DashboardOrderActionService;
 import com.boothlock.boothlock_server.dashboard.service.DashboardQueryService;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
@@ -30,10 +33,13 @@ import java.time.LocalDate;
 public class DashboardController {
 
     private final DashboardQueryService dashboardQueryService;
+    private final DashboardOrderActionService orderActionService;
     private final CallService callService;
 
-    public DashboardController(DashboardQueryService dashboardQueryService, CallService callService) {
+    public DashboardController(DashboardQueryService dashboardQueryService,
+            DashboardOrderActionService orderActionService, CallService callService) {
         this.dashboardQueryService = dashboardQueryService;
+        this.orderActionService = orderActionService;
         this.callService = callService;
     }
 
@@ -56,24 +62,32 @@ public class DashboardController {
     }
 
     /** O11 입금 확인 (Must) — UNPAID→PAID, 승인자·승인시각 자동 기록 */
+    @Operation(summary = "O11 입금 확인", description = "주문의 입금을 확인해 결제 상태를 PAID로 전환한다. 이미 결제된 주문은 409.")
     @PatchMapping("/admin/orders/{orderId}/payment")
-    public Object confirmPayment(@PathVariable Long orderId) {
-        // TODO(김재원): 명세서 O11 — method: BANK_TRANSFER|CASH, 409 ALREADY_PAID. Order 엔티티(홍화수 첫 PR) 머지 후 착수
-        throw new NotImplementedException("O11 입금 확인");
+    public DashboardResponse.OrderSummary confirmPayment(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId,
+            @Valid @RequestBody PaymentConfirmRequest request) {
+        return orderActionService.confirmPayment(authorization, orderId, request.method());
     }
 
     /** O12 완료 처리 (Must) — RECEIVED→DONE. 미결제여도 가능하나 '미결제 완료' 뱃지 */
+    @Operation(summary = "O12 완료 처리", description = "조리·전달이 끝난 주문을 완료 처리한다. 결제 여부와 무관하게 가능.")
     @PatchMapping("/admin/orders/{orderId}/complete")
-    public Object complete(@PathVariable Long orderId) {
-        // TODO(김재원): 명세서 O12
-        throw new NotImplementedException("O12 완료 처리");
+    public DashboardResponse.OrderSummary complete(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId) {
+        return orderActionService.complete(authorization, orderId);
     }
 
     /** O13 운영자 취소 (Should) — 전 단계 가능, 사유 필수, 취소자 기록, PAID면 REFUND_NEEDED 전환 */
+    @Operation(summary = "O13 운영자 취소", description = "사유를 남기고 주문을 취소한다. 입금된 주문은 REFUND_NEEDED로 전환. 이미 취소된 주문은 409.")
     @PostMapping("/admin/orders/{orderId}/cancel")
-    public Object cancelByStaff(@PathVariable Long orderId) {
-        // TODO(김재원): 명세서 O13
-        throw new NotImplementedException("O13 운영자 취소");
+    public DashboardResponse.OrderSummary cancelByStaff(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId,
+            @Valid @RequestBody CancelRequest request) {
+        return orderActionService.cancelByStaff(authorization, orderId, request.reason());
     }
 
     /** O14 수기 주문 (Should) — 검증은 소비자 주문(C3)과 동일, isManual 표시, 미지정 시 M-{통산} */
@@ -84,10 +98,12 @@ public class DashboardController {
     }
 
     /** O21 환불 완료 (Should·ADMIN 전용) — REFUND_NEEDED→REFUNDED, 처리자 기록 */
+    @Operation(summary = "O21 환불 완료", description = "REFUND_NEEDED 상태의 주문을 환불 완료 처리한다. ADMIN 전용. REFUND_NEEDED가 아니면 409.")
     @PostMapping("/admin/orders/{orderId}/refund-done")
-    public Object refundDone(@PathVariable Long orderId) {
-        // TODO(김재원): 명세서 O21
-        throw new NotImplementedException("O21 환불 완료");
+    public DashboardResponse.OrderSummary refundDone(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId) {
+        return orderActionService.refundDone(authorization, orderId);
     }
 
     /** C6 직원 호출 (Should) — reason: HELP|WATER|ETC, 같은 세션 30초 재호출 제한(429) */
