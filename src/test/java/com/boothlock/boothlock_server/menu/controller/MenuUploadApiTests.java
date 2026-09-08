@@ -40,7 +40,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class MenuUploadApiTests {
 
-    private static final Path UPLOAD_DIR = Path.of("build", "uploads", "menu");
+    private static final Path UPLOAD_DIR = Path.of("data", "uploads", "menu");
 
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
@@ -177,5 +177,42 @@ class MenuUploadApiTests {
     }
 
     private record Credentials(String loginId, String password) {
+    }
+
+    @Test
+    void rejectsImageBombBeforeDecoding() throws Exception {
+        // 파일 크기는 작아도 픽셀 수가 크면 디코딩 순간 힙이 터진다 — 헤더만 읽고 먼저 거절해야 한다
+        byte[] bomb = hugePixelPng(12000, 12000);   // 파일은 작지만 1억4천만 화소
+        MockMultipartFile file = new MockMultipartFile("file", "bomb.png", "image/png", bomb);
+
+        mockMvc.perform(multipart("/api/v1/admin/uploads").file(file)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+        assertThat(Files.exists(UPLOAD_DIR)).isFalse();   // 저장까지 가지 않는다
+    }
+
+    @Test
+    void servedFileCarriesNosniffHeader() throws Exception {
+        // 브라우저가 MIME을 추측하는 시점은 파일을 내려받을 때다 — 업로드 응답이 아니라 서빙 응답에 헤더가 필요하다
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "menu.png", "image/png", imageBytes("png", 40, 40));
+        String response = mockMvc.perform(multipart("/api/v1/admin/uploads").file(file)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String url = objectMapper.readTree(response).get("url").asText();
+
+        mockMvc.perform(get(url))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"));
+    }
+
+    /** 픽셀 수만 크고 파일 크기는 작은 PNG — 단색이라 압축이 잘 된다 */
+    private byte[] hugePixelPng(int width, int height) throws Exception {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", out);
+        return out.toByteArray();
     }
 }
