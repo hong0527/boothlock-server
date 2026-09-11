@@ -147,6 +147,6 @@ menu/dto/MenuCreateRequest.java 등   — 요청·응답 record
 | 문서 | 위치 |
 |---|---|
 | 기능명세서 / API 명세서 v0.4.2 | 팀 노션 |
-| **DB 스키마 v1.2** (테이블 11개·설계 원칙 — 엔티티 만들 때 정본) | [docs/DB스키마_v1.2.md](docs/DB스키마_v1.2.md) + 팀 노션 |
+| **DB 스키마 v1.2** (테이블 11개·설계 원칙 — 엔티티 만들 때 정본) | [backend/docs/DB스키마_v1.2.md](backend/docs/DB스키마_v1.2.md) + 팀 노션 |
 | 협업 규칙 | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | 회의록 | 팀 노션 (매주 토요일) |
