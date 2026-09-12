@@ -62,7 +62,7 @@
 
 ```bash
 git clone https://github.com/hong0527/boothlock-server.git
-cd boothlock-server
+cd boothlock-server/backend
 ./gradlew bootRun          # 또는 IntelliJ에서 BoothlockServerApplication 실행
 ```
 
@@ -75,7 +75,7 @@ JDK 21이 없어도 된다 — Gradle 툴체인이 처음 빌드할 때 자동�
 ## 프로젝트 구조
 
 ```
-src/main/java/com/boothlock/boothlock_server/
+backend/src/main/java/com/boothlock/boothlock_server/
 ├── BoothlockServerApplication.java     # 진입점
 │
 ├── global/                             # 공용 (전원 공유 — 수정 시 팀 공지)
@@ -97,10 +97,10 @@ src/main/java/com/boothlock/boothlock_server/
     ├── domain/                         #   엔티티·파트 전용 enum (BoothEntity.java 등)
     └── dto/                            #   요청·응답 record (첫 DTO 만들 때 폴더 생성)
 
-src/main/resources/
+backend/src/main/resources/
 └── application.properties              # 서버·DB 설정 (공용 — 수정 시 팀 공지)
 
-src/test/java/com/boothlock/boothlock_server/
+backend/src/test/java/com/boothlock/boothlock_server/
 ├── BoothlockServerApplicationTests.java   # 컨텍스트 기동 테스트 — CI가 매 PR마다 실행
 └── booth/…                                # 파트 테스트는 자기 파트 패키지에 (예: booth/BoothDomainRepositoryTests)
 ```
@@ -147,6 +147,6 @@ menu/dto/MenuCreateRequest.java 등   — 요청·응답 record
 | 문서 | 위치 |
 |---|---|
 | 기능명세서 / API 명세서 v0.4.2 | 팀 노션 |
-| **DB 스키마 v1.2** (테이블 11개·설계 원칙 — 엔티티 만들 때 정본) | [docs/DB스키마_v1.2.md](docs/DB스키마_v1.2.md) + 팀 노션 |
+| **DB 스키마 v1.2** (테이블 11개·설계 원칙 — 엔티티 만들 때 정본) | [backend/docs/DB스키마_v1.2.md](backend/docs/DB스키마_v1.2.md) + 팀 노션 |
 | 협업 규칙 | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | 회의록 | 팀 노션 (매주 토요일) |

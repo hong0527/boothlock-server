@@ -31,11 +31,12 @@ git pull origin main
 git checkout -b feat/menu-crud      # ← 예시 값(메뉴 파트). 자기 파트의 {타입}/{파트}-{내용}으로 바꿔 쓴다
 
 # [2] 작업 — 구현 후 반드시 본인이 직접 실행·확인
+cd backend
 ./gradlew bootRun   # 서버 실행 (터미널을 점유한다 — 확인 끝나면 Ctrl+C로 종료)
 # 새 터미널에서 예:  curl -s http://localhost:8080/api/v1/menus   (구현 전이면 501이 정상)
 
 # [3] 커밋 — 의미 있는 단위마다 (이름 규칙은 4번)
-git add src/main/java/com/boothlock/boothlock_server/MenuController.java   # git add . 보다 파일 지정을 권장 (엉뚱한 파일 방지)
+git add backend/src/main/java/com/boothlock/boothlock_server/MenuController.java   # git add . 보다 파일 지정을 권장 (엉뚱한 파일 방지)
 git commit -m "feat: 메뉴 등록 API 구현"
 
 # [4] 올리기
@@ -148,13 +149,13 @@ refactor: 메뉴 조회 로직 서비스 계층으로 이동
 
 각자 자기 파트 화면까지 만든다(팀 결정). 충돌 예방을 위해:
 
-- 자기 파트 화면은 자기 폴더에만 만든다: `src/main/resources/templates/{파트}/`, `static/{파트}/` (예: `templates/menu/list.html`)
+- 자기 파트 화면은 자기 폴더에만 만든다: `backend/src/main/resources/templates/{파트}/`, `static/{파트}/` (예: `templates/menu/list.html`)
 - 공통 레이아웃·공통 CSS는 6번의 공용 파일 — 수정 전 채팅 공지 필수
 - 페이 등 사업자등록이 필요한 기능은 클래스·메서드 자리만 만들고 구현하지 않는다(팀 결정)
 
 ## 6-2. CI (자동 빌드 검사)
 
-PR을 올리면 깃허브가 `./gradlew build`를 자동 실행한다(`.github/workflows/build.yml`). 빌드가 깨진 PR은 머지하지 않는다 — push 전에 로컬에서 `./gradlew build` 통과를 확인할 것.
+PR을 올리면 깃허브가 `backend`에서 `./gradlew build`를 자동 실행한다(`.github/workflows/build.yml`). 빌드가 깨진 PR은 머지하지 않는다 — push 전에 로컬 `backend` 폴더에서 `./gradlew build` 통과를 확인할 것.
 
 ## 7. AI 사용 3책임
 
@@ -170,6 +171,6 @@ AI로 코드·커밋·PR을 만드는 것은 권장된다. 단:
 - [ ] 커밋 신원 설정 1회: `git config --global user.name "본명"` / `git config --global user.email "깃허브 가입 이메일"` — 안 하면 커밋이 내 깃허브 계정과 연결되지 않는다
 - [ ] 레포 초대 수락 → `git clone https://github.com/hong0527/boothlock-server.git`
 - [ ] `README.md`에서 내 파트·시작 파일 확인
-- [ ] `./gradlew bootRun`으로 서버 실행 확인 (내 파트 API 호출 시 501이 나오면 정상)
+- [ ] `backend`에서 `./gradlew bootRun`으로 서버 실행 확인 (내 파트 API 호출 시 501이 나오면 정상)
 - [ ] 노션에서 내 파트 API 명세서 상세 확인 (오류 발견 시 수정 후 팀 공유)
 - [ ] 위 1번 사이클대로 첫 브랜치를 만들어 스텁 하나를 구현하고 첫 PR 올리기
