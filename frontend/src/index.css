@@ -1,0 +1,34 @@
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Pretendard', system-ui, sans-serif;
+
+  /* Figma 색상 토큰 (fileKey OZSYaIZ3UgdVIAdzmq5R8y, node 1:155 스타일 가이드) */
+  --color-primary-50: #dcf0e8;
+  --color-primary-100: #00d696;
+  --color-primary-200: #00bd84;
+  --color-primary-300: #00a372;
+  --color-primary-400: #008a60;
+  --color-primary-500: #00704f;
+  --color-primary-600: #00573d;
+  --color-primary-700: #003d2b;
+  --color-primary-800: #002419;
+  --color-primary-900: #000a07;
+
+  --color-neutral-50: #fafaf8;
+  --color-neutral-100: #e7e7e7;
+  --color-neutral-200: #d1d1d1;
+  --color-neutral-300: #b0b0b0;
+  --color-neutral-400: #7c7c7c;
+  --color-neutral-500: #6d6d6d;
+  --color-neutral-600: #5d5d5d;
+  --color-neutral-700: #454545;
+  --color-neutral-800: #3d3d3d;
+  --color-neutral-900: #090909;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+}
