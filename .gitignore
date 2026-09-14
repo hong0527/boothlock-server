@@ -9,7 +9,8 @@ bin/
 out/
 
 # 로컬 DB 파일 (H2) — 절대 커밋 금지
-data/
+/data/
+backend/data/
 
 # 로그
 *.log
