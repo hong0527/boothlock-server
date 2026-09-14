@@ -112,7 +112,7 @@ backend/src/test/java/com/boothlock/boothlock_server/
 스텁을 실제 구현으로 바꿀 때 파일 서너 개가 한 세트다. 메뉴를 예로 들면:
 
 ```
-menu/domain/MenuEntity.java          — @Entity. 테이블 구조(필드 = 컬럼). 정본은 docs/DB스키마_v1.2.md
+menu/domain/MenuEntity.java          — @Entity. 테이블 구조(필드 = 컬럼). 정본은 docs/DB스키마_v1.3.md
 menu/repository/MenuRepository.java  — JpaRepository<MenuEntity, Long> 상속 인터페이스. DB 조회·저장 담당
 menu/service/MenuService.java        — 검증·계산 등 규칙 처리. 컨트롤러는 얇게, 로직은 여기로
 menu/controller/MenuController.java  — 요청을 받아 서비스에 넘기고 응답을 만든다 (스텁이 이미 있음)
@@ -146,7 +146,8 @@ menu/dto/MenuCreateRequest.java 등   — 요청·응답 record
 
 | 문서 | 위치 |
 |---|---|
-| 기능명세서 / API 명세서 v0.4.2 | 팀 노션 |
-| **DB 스키마 v1.2** (테이블 11개·설계 원칙 — 엔티티 만들 때 정본) | [backend/docs/DB스키마_v1.2.md](backend/docs/DB스키마_v1.2.md) + 팀 노션 |
+| 기능명세서 | 팀 노션 |
+| **API 명세서 v0.5** (홈 화면·운영자 POS 반영) | [backend/docs/API명세서_v0.5.md](backend/docs/API명세서_v0.5.md) + 팀 노션 |
+| **DB 스키마 v1.3** (테이블 12개·설계 원칙 — 엔티티 만들 때 정본. v1.2는 변경 이력 참고용) | [backend/docs/DB스키마_v1.3.md](backend/docs/DB스키마_v1.3.md) + 팀 노션 |
 | 협업 규칙 | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | 회의록 | 팀 노션 (매주 토요일) |
