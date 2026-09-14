@@ -13,6 +13,7 @@ public record DashboardResponse(List<OrderSummary> orders, List<CallSummary> cal
     public record OrderSummary(
             Long orderId,
             String orderNo,
+            String tableLabel,
             OrderStatus status,
             PaymentStatus paymentStatus,
             PaymentMethod paymentMethod,

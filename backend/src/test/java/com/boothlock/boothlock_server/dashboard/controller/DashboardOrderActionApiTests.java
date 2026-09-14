@@ -401,17 +401,18 @@ class DashboardOrderActionApiTests {
     }
 
     @Test
-    void rejectsMissingReason() throws Exception {
+    void defaultsReasonWhenBlank() throws Exception {
+        // 프론트 디자인에 취소 사유 입력 UI가 없어서, 비어있으면 기본 사유로 채워 취소 자체는 진행된다
         Long orderId = newOrder(boothId, 18);
 
         mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", orderId)
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cancelReason").value("운영자 취소"));
 
-        assertEquals(OrderStatus.RECEIVED, orderRepository.findById(orderId).orElseThrow().getStatus());
+        assertEquals(OrderStatus.CANCELED, orderRepository.findById(orderId).orElseThrow().getStatus());
     }
 
     @Test

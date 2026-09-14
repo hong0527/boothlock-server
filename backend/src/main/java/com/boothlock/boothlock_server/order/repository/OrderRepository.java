@@ -5,6 +5,7 @@ import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -34,7 +35,10 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     @EntityGraph(attributePaths = "items")
     List<OrderEntity> findBySessionIdOrderByCreatedAtDescIdDesc(Long sessionId);
 
-    /** O10 대시보드 조회 — status/paymentStatus/businessDate/q는 전부 선택(null이면 조건 무시) (명세서 O10) */
+    /**
+     * O10 대시보드 조회 — status/paymentStatus/businessDate/q는 전부 선택(null이면 조건 무시) (명세서 O10)
+     * limit: 탭(진행/완료/취소)별로 화면엔 최신 것만 보여주고 그 이전 건 검색(q)으로 찾게 함 — 무한히 쌓이는 것 방지 (MVP: 30건 고정)
+     */
     @EntityGraph(attributePaths = "items")
     @Query("""
             select o from OrderEntity o
@@ -50,7 +54,8 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
             @Param("status") OrderStatus status,
             @Param("paymentStatus") PaymentStatus paymentStatus,
             @Param("businessDate") LocalDate businessDate,
-            @Param("q") String q);
+            @Param("q") String q,
+            Limit limit);
 
     /** O11·O12 조회 — booth 범위로 스코프해 타 부스 주문은 조회 단계에서 404가 되게 한다 (존재 은닉) */
     @EntityGraph(attributePaths = "items")
