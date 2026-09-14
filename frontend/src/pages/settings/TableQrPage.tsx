@@ -4,7 +4,7 @@ import chevronRight from '../../assets/icons/chevron-right.svg'
 import PrimaryButton from '../../components/PrimaryButton'
 import SectionHeader from '../../components/SectionHeader'
 import TopNav from '../../components/TopNav'
-import { getAuthToken } from '../../lib/auth'
+import { apiFetch } from '../../lib/apiFetch'
 
 type TableStatus = { id: number; label: string; status: 'EMPTY' | 'OCCUPIED'; needsCleanup: boolean }
 
@@ -20,14 +20,9 @@ export default function TableQrPage() {
 
   const table = tables[index]
 
-  // O3 좌석 현황 — 테이블 목록
+  // O3 좌석 현황 — 테이블 목록 (인증 안 되어있으면 apiFetch가 알아서 로그인 화면으로 보냄)
   useEffect(() => {
-    const token = getAuthToken()
-    if (!token) {
-      setListError('로그인이 필요해요.')
-      return
-    }
-    fetch('/api/v1/admin/tables', { headers: { Authorization: `Bearer ${token}` } })
+    apiFetch('/api/v1/admin/tables')
       .then((res) => {
         if (!res.ok) throw new Error(`테이블 목록을 불러오지 못했어요 (${res.status})`)
         return res.json()
@@ -39,18 +34,13 @@ export default function TableQrPage() {
   // O4 QR 단건 다운로드 — 선택된 테이블의 QR 이미지
   useEffect(() => {
     if (!table) return
-    const token = getAuthToken()
-    if (!token) {
-      setQrError('로그인이 필요해요.')
-      return
-    }
 
     let cancelled = false
     let currentUrl: string | null = null
     setLoading(true)
     setQrError(null)
 
-    fetch(`/api/v1/admin/tables/${table.id}/qr`, { headers: { Authorization: `Bearer ${token}` } })
+    apiFetch(`/api/v1/admin/tables/${table.id}/qr`)
       .then((res) => {
         if (!res.ok) throw new Error(`QR 이미지를 불러오지 못했어요 (${res.status})`)
         return res.blob()
