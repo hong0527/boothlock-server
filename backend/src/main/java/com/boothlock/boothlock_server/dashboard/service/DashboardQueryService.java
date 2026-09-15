@@ -27,7 +27,8 @@ import java.util.List;
 public class DashboardQueryService {
 
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
-    // MVP: 탭(상태)별 화면엔 최신 30건만 — 그 이전 주문은 q(주문번호 검색)로 찾는다
+    // MVP: 완료/취소 탭은 최신 30건만 — 그 이전 주문은 q(주문번호 검색)로 찾는다
+    // 진행중(RECEIVED)은 처리 안 된 주문이 뒤로 밀려 안 보이면 안 되므로 제한 없음
     private static final Limit DASHBOARD_LIST_LIMIT = Limit.of(30);
 
     private final OrderRepository orderRepository;
@@ -54,8 +55,9 @@ public class DashboardQueryService {
         }
         Long boothId = staff.getBooth().getId();
 
+        Limit limit = status == OrderStatus.RECEIVED ? Limit.unlimited() : DASHBOARD_LIST_LIMIT;
         List<OrderEntity> orders =
-                orderRepository.searchForDashboard(boothId, status, paymentStatus, businessDate, q, DASHBOARD_LIST_LIMIT);
+                orderRepository.searchForDashboard(boothId, status, paymentStatus, businessDate, q, limit);
         List<StaffCallEntity> calls = staffCallRepository.findUnackedByBoothId(boothId);
 
         return new DashboardResponse(
