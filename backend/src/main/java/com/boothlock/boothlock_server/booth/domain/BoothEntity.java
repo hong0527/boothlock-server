@@ -40,6 +40,13 @@ public class BoothEntity {
     @Column(name = "map_y")
     private Integer mapY;
 
+    // "테이블 추가" 자동 채번용 — 기본적으로 삭제해도 줄어들지 않는다(번호 재사용 금지, DailyCounter와 같은
+    // FOR UPDATE 패턴). 단, 마지막 번호를 이용 이력 없이 삭제하면 TableAdminService가 releaseLastTableSeq()로
+    // 반납해 번호가 부활하게 한다.
+    // columnDefinition으로 DB 기본값을 둔다 — 이 컬럼이 생기기 전 행이나 raw SQL insert(테스트 등)도 채워지게
+    @Column(name = "next_table_seq", nullable = false, columnDefinition = "integer default 1")
+    private int nextTableSeq = 1;
+
     protected BoothEntity() {
     }
 
@@ -85,6 +92,22 @@ public class BoothEntity {
 
     public String getOperatingHours() {
         return operatingHours;
+    }
+
+    /** 채번은 반드시 booth row를 FOR UPDATE로 잠근 트랜잭션 안에서만 호출한다 (DailyCounterEntity.nextSeq와 동일 패턴) */
+    public int nextTableSeq() {
+        int seq = nextTableSeq;
+        nextTableSeq = seq + 1;
+        return seq;
+    }
+
+    public int getNextTableSeq() {
+        return nextTableSeq;
+    }
+
+    /** 이용 이력 없는 마지막 번호 테이블을 삭제했을 때만 호출 — 번호를 반납해 다음 채번이 같은 번호를 다시 낸다 */
+    public void releaseLastTableSeq() {
+        nextTableSeq = nextTableSeq - 1;
     }
 
     public void updateName(String name) { this.name = name; }

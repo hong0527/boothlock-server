@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -36,8 +37,10 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     List<OrderEntity> findBySessionIdOrderByCreatedAtDescIdDesc(Long sessionId);
 
     /**
-     * O10 대시보드 조회 — status/paymentStatus/businessDate/q는 전부 선택(null이면 조건 무시) (명세서 O10)
+     * O10 대시보드 조회 — status/paymentStatus/businessDate/q/tableId는 전부 선택(null이면 조건 무시) (명세서 O10)
      * limit: 탭(진행/완료/취소)별로 화면엔 최신 것만 보여주고 그 이전 건 검색(q)으로 찾게 함 — 무한히 쌓이는 것 방지 (MVP: 30건 고정)
+     * tableId 필터: OrderEntity.sessionId는 연관 매핑이 아니라 raw Long이라 o.session.table.id 같은 경로 탐색이
+     * 컴파일되지 않는다 — TableSessionEntity를 서브쿼리로 이어 찾는다 (명세서 O10 "구현 주의")
      */
     @EntityGraph(attributePaths = "items")
     @Query("""
@@ -47,6 +50,9 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
               and (:paymentStatus is null or o.paymentStatus = :paymentStatus)
               and (:businessDate is null or o.businessDate = :businessDate)
               and (:q is null or o.orderNo like concat('%', :q, '%'))
+              and (:tableId is null or o.sessionId in (
+                  select s.id from TableSessionEntity s
+                  where s.table.id = :tableId and s.table.booth.id = :boothId))
             order by o.createdAt desc, o.id desc
             """)
     List<OrderEntity> searchForDashboard(
@@ -55,7 +61,27 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
             @Param("paymentStatus") PaymentStatus paymentStatus,
             @Param("businessDate") LocalDate businessDate,
             @Param("q") String q,
+            @Param("tableId") Long tableId,
             Limit limit);
+
+    /**
+     * O3 좌석 현황의 unpaidOrderCount — 세션 id별 RECEIVED+UNPAID 주문 수 (명세서 O3).
+     * 테이블 목록 화면에서 세션마다 따로 세지 않고 한 번에 집계한다.
+     */
+    @Query("""
+            select o.sessionId as sessionId, count(o) as count
+            from OrderEntity o
+            where o.sessionId in :sessionIds
+              and o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.RECEIVED
+              and o.paymentStatus = com.boothlock.boothlock_server.global.domain.PaymentStatus.UNPAID
+            group by o.sessionId
+            """)
+    List<SessionUnpaidCount> countUnpaidBySessionIds(@Param("sessionIds") Collection<Long> sessionIds);
+
+    interface SessionUnpaidCount {
+        Long getSessionId();
+        long getCount();
+    }
 
     /** O11·O12 조회 — booth 범위로 스코프해 타 부스 주문은 조회 단계에서 404가 되게 한다 (존재 은닉) */
     @EntityGraph(attributePaths = "items")

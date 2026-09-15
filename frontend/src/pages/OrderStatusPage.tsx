@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import OrderCard from '../components/OrderCard'
 import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
+import { cancelOrder as cancelOrderRequest, completeOrder as completeOrderRequest } from '../lib/orderActions'
 import { todayKst } from '../lib/time'
 import type { OrderStatus, OrderSummary } from '../types/dashboard'
 
@@ -73,7 +74,7 @@ export default function OrderStatusPage() {
   const visibleOrders = ordersByStatus[activeStatus]
 
   const completeOrder = async (orderId: number) => {
-    const res = await apiFetch(`/api/v1/admin/orders/${orderId}/complete`, { method: 'PATCH' })
+    const res = await completeOrderRequest(orderId)
     if (!res.ok) {
       setError(`주문을 완료 처리하지 못했어요 (${res.status})`)
       return
@@ -84,11 +85,7 @@ export default function OrderStatusPage() {
   }
 
   const cancelOrder = async (orderId: number) => {
-    const res = await apiFetch(`/api/v1/admin/orders/${orderId}/cancel`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    })
+    const res = await cancelOrderRequest(orderId)
     if (!res.ok) {
       setError(`주문을 취소 처리하지 못했어요 (${res.status})`)
       return
