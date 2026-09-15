@@ -1,5 +1,4 @@
 import { Route, Routes } from 'react-router-dom'
-import { MenuProvider } from './context/MenuContext'
 import { TableOrderProvider } from './context/TableOrderContext'
 import LoginPage from './pages/LoginPage'
 import OrderStatusPage from './pages/OrderStatusPage'
@@ -12,21 +11,19 @@ import TableHomePage from './pages/TableHomePage'
 
 function App() {
   return (
-    <MenuProvider>
-      <TableOrderProvider>
-        <Routes>
-          <Route path="/" element={<LoginPage />} />
-          <Route path="/orders" element={<OrderStatusPage />} />
-          <Route path="/tables" element={<TableHomePage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/settings/menu" element={<MenuListPage />} />
-          <Route path="/settings/menu/new" element={<MenuEditPage />} />
-          <Route path="/settings/menu/:id" element={<MenuEditPage />} />
-          <Route path="/settings/account" element={<AccountPage />} />
-          <Route path="/settings/table-qr" element={<TableQrPage />} />
-        </Routes>
-      </TableOrderProvider>
-    </MenuProvider>
+    <TableOrderProvider>
+      <Routes>
+        <Route path="/" element={<LoginPage />} />
+        <Route path="/orders" element={<OrderStatusPage />} />
+        <Route path="/tables" element={<TableHomePage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/menu" element={<MenuListPage />} />
+        <Route path="/settings/menu/new" element={<MenuEditPage />} />
+        <Route path="/settings/menu/:id" element={<MenuEditPage />} />
+        <Route path="/settings/account" element={<AccountPage />} />
+        <Route path="/settings/table-qr" element={<TableQrPage />} />
+      </Routes>
+    </TableOrderProvider>
   )
 }
 
