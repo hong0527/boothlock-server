@@ -11,11 +11,13 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.io.IOException;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -31,6 +33,8 @@ class EventUploadServingTests {
     private static final Path BASE;
     private static final Path EVENT_DIR;
     private static final Path OUTSIDE_SECRET;
+    /** Windows는 관리자 권한이나 개발자 모드가 없으면 심볼릭 링크를 만들 수 없다 */
+    private static final boolean SYMLINK_CREATED;
 
     static {
         try {
@@ -41,11 +45,20 @@ class EventUploadServingTests {
             Files.writeString(EVENT_DIR.resolve("evil.svg"), "<svg onload=alert(1)></svg>");
             Files.write(EVENT_DIR.resolve(".hidden.png"), new byte[]{1});
             OUTSIDE_SECRET = Files.writeString(BASE.resolve("secret.png"), "SECRET-OUTSIDE");
-            Files.createSymbolicLink(EVENT_DIR.resolve("link.png"), OUTSIDE_SECRET);
+            SYMLINK_CREATED = tryCreateSymbolicLink(EVENT_DIR.resolve("link.png"), OUTSIDE_SECRET);
             Files.createDirectories(BASE.resolve("uploads/menu"));
             Files.write(BASE.resolve("uploads/menu/dish.png"), new byte[]{9});
         } catch (IOException e) {
             throw new IllegalStateException(e);
+        }
+    }
+
+    private static boolean tryCreateSymbolicLink(Path link, Path target) throws IOException {
+        try {
+            Files.createSymbolicLink(link, target);
+            return true;
+        } catch (FileSystemException | UnsupportedOperationException e) {
+            return false;
         }
     }
 
@@ -88,6 +101,7 @@ class EventUploadServingTests {
     @Test
     @DisplayName("폴더 밖을 가리키는 심볼릭 링크는 확장자가 png여도 404")
     void refusesSymlinkEscapingFolder() throws Exception {
+        assumeTrue(SYMLINK_CREATED, "이 환경에서는 심볼릭 링크를 만들 수 없다 (Windows: 관리자 권한 또는 개발자 모드 필요)");
         mockMvc.perform(get("/uploads/event/link.png"))
                 .andExpect(status().isNotFound())
                 .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("SECRET-OUTSIDE"))));
