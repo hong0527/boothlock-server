@@ -26,6 +26,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -69,6 +70,33 @@ class MenuAdminApiTests {
         menuRepository.deleteAll();
         staffAccountRepository.deleteAll();
         boothRepository.deleteAll();
+    }
+
+    @Test
+    void listMenusReturnsOwnBoothMenusIncludingHiddenAndSoldOutOrderedById() throws Exception {
+        MenuEntity visible = menuRepository.save(new MenuEntity(booth, "김치찌개", 9000, null, null, true));
+        MenuEntity hidden = menuRepository.save(new MenuEntity(booth, "숨김 메뉴", 8000, null, null, false));
+        MenuEntity soldOutMenu = new MenuEntity(booth, "품절 메뉴", 7000, null, null, true);
+        soldOutMenu.updateSoldOut(true);
+        menuRepository.save(soldOutMenu);
+        menuRepository.save(new MenuEntity(otherBooth, "다른 부스 메뉴", 6000, null, null, true));
+
+        mockMvc.perform(get("/api/v1/admin/menus").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.menus.length()").value(3))
+                .andExpect(jsonPath("$.menus[0].id").value(visible.getId()))
+                .andExpect(jsonPath("$.menus[0].name").value("김치찌개"))
+                .andExpect(jsonPath("$.menus[1].id").value(hidden.getId()))
+                .andExpect(jsonPath("$.menus[1].visible").value(false))
+                .andExpect(jsonPath("$.menus[2].id").value(soldOutMenu.getId()))
+                .andExpect(jsonPath("$.menus[2].soldOut").value(true));
+    }
+
+    @Test
+    void listMenusRequiresAuth() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/menus"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
 
     @Test

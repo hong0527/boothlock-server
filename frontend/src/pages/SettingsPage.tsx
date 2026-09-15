@@ -1,8 +1,8 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import chevronRight from '../assets/icons/chevron-right.svg'
 import TopNav from '../components/TopNav'
+import { clearAuth } from '../lib/auth'
 
-// '로그아웃'은 아직 로그인 연동 전이라 클릭해도 동작 없음 — TODO: 토큰 삭제 + '/'로 이동 연결
 const MENU_ITEMS = [
   { label: '테이블 QR 코드 생성', to: '/settings/table-qr' },
   { label: '메뉴 등록 / 편집', to: '/settings/menu' },
@@ -11,6 +11,13 @@ const MENU_ITEMS = [
 ]
 
 export default function SettingsPage() {
+  const navigate = useNavigate()
+
+  const handleLogout = () => {
+    clearAuth()
+    navigate('/')
+  }
+
   return (
     <div className="min-h-screen w-full bg-[#f4f5f7]">
       <TopNav />
@@ -30,7 +37,7 @@ export default function SettingsPage() {
               {content}
             </Link>
           ) : (
-            <button key={label} type="button" className={rowClassName}>
+            <button key={label} type="button" onClick={handleLogout} className={rowClassName}>
               {content}
             </button>
           )

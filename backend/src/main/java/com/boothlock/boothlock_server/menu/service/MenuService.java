@@ -10,6 +10,7 @@ import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.menu.domain.MenuEntity;
 import com.boothlock.boothlock_server.menu.dto.MenuBoardResponse;
+import com.boothlock.boothlock_server.menu.dto.MenuListResponse;
 import com.boothlock.boothlock_server.menu.dto.MenuResponse;
 import com.boothlock.boothlock_server.menu.repository.MenuRepository;
 import com.boothlock.boothlock_server.order.service.MenuLookup;
@@ -62,6 +63,16 @@ public class MenuService implements MenuLookup {
                 .map(MenuBoardResponse.MenuItem::from)
                 .toList();
         return new MenuBoardResponse(booth.getName(), booth.isOpen(), menus);
+    }
+
+    /** 운영자용 메뉴 목록 — 화면(등록/편집)에서 숨김·품절 메뉴도 관리할 수 있어야 하므로 visible 필터 없이 전부 반환 */
+    @Transactional(readOnly = true)
+    public MenuListResponse list(String authorization) {
+        BoothEntity booth = authenticatedBooth(authorization);
+        List<MenuResponse> menus = menuRepository.findByBooth_IdOrderByIdAsc(booth.getId()).stream()
+                .map(MenuResponse::from)
+                .toList();
+        return new MenuListResponse(menus);
     }
 
     @Transactional
