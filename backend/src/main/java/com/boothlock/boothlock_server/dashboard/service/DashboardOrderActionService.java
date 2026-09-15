@@ -25,6 +25,8 @@ import java.time.ZoneOffset;
 public class DashboardOrderActionService {
 
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
+    // 프론트 디자인에 취소 사유 입력 UI가 없어서, 비어있으면 이 값으로 기록한다
+    private static final String DEFAULT_CANCEL_REASON = "운영자 취소";
 
     private final OrderRepository orderRepository;
     private final BoothJwtProvider jwtProvider;
@@ -77,8 +79,9 @@ public class DashboardOrderActionService {
         StaffAccountEntity staff = authenticate(authorization);
         Long boothId = staff.getBooth().getId();
         LocalDateTime now = LocalDateTime.now(KST);
+        String recordedReason = (reason == null || reason.isBlank()) ? DEFAULT_CANCEL_REASON : reason;
 
-        int updated = orderRepository.cancelByStaff(orderId, boothId, reason, staff.getLoginId(), now);
+        int updated = orderRepository.cancelByStaff(orderId, boothId, recordedReason, staff.getLoginId(), now);
         if (updated == 0) {
             requireExisting(orderId, boothId);   // 없으면 여기서 404, 있으면 이미 취소된 주문이라 409
             throw new InvalidStateException("이미 취소된 주문입니다.");

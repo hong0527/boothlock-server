@@ -14,9 +14,6 @@ export type OrderSummary = {
   status: OrderStatus
   items: OrderItemSummary[]
   createdAt: string
-  /**
-   * TODO: 백엔드 OrderSummary에 아직 없는 필드 — DB(orders.table_label)엔 있는데 매퍼에서 응답에 안 담고 있음.
-   * 필드 추가되면 이 optional을 없애고 실제 값을 그대로 씀.
-   */
-  tableLabel?: string | null
+  /** 수기 주문(테이블 미지정)은 세션이 없어서 null일 수 있음 */
+  tableLabel: string | null
 }

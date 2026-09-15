@@ -18,7 +18,7 @@ public class OrderSummaryMapper {
 
     public DashboardResponse.OrderSummary toOrderSummary(OrderEntity o) {
         return new DashboardResponse.OrderSummary(
-                o.getId(), o.getOrderNo(), o.getStatus(), o.getPaymentStatus(), o.getPaymentMethod(),
+                o.getId(), o.getOrderNo(), o.getTableLabel(), o.getStatus(), o.getPaymentStatus(), o.getPaymentMethod(),
                 o.isManual(), o.getTotalAmount(), o.getItems().stream().map(this::toItemSummary).toList(),
                 o.getCanceledBy(), atKst(o.getCanceledAt()), o.getCancelReason(),
                 o.getApprovedBy(), atKst(o.getApprovedAt()),

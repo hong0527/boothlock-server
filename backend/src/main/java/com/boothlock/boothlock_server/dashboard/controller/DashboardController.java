@@ -47,9 +47,7 @@ public class DashboardController {
     @Operation(summary = "O10 실시간 대시보드", description = "주문 목록과 미확인 호출을 한 번에 조회한다. 폴링 주기 3~5초 권장.")
     @GetMapping("/admin/orders")
     public DashboardResponse getDashboard(
-            // TODO(김재원): boothId는 로그인(황대겸 O1) JWT 연동 전까지 임시 쿼리 파라미터 — 연동되면 인증 정보에서 추출하도록 교체
-            @Parameter(description = "부스 ID (임시: 로그인 연동 전까지 직접 지정)", required = true)
-            @RequestParam Long boothId,
+            @RequestHeader("Authorization") String authorization,
             @Parameter(description = "주문 상태 필터")
             @RequestParam(required = false) OrderStatus status,
             @Parameter(description = "결제 상태 필터")
@@ -58,7 +56,7 @@ public class DashboardController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDate,
             @Parameter(description = "주문번호 부분 검색 (예: A3-17)")
             @RequestParam(required = false) String q) {
-        return dashboardQueryService.getDashboard(boothId, status, paymentStatus, businessDate, q);
+        return dashboardQueryService.getDashboard(authorization, status, paymentStatus, businessDate, q);
     }
 
     /** O11 입금 확인 (Must) — UNPAID→PAID, 승인자·승인시각 자동 기록 */
