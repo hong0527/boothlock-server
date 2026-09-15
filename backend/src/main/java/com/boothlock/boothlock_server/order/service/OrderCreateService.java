@@ -113,8 +113,39 @@ public class OrderCreateService {
                 boothId, sessionId, label, tableLabel.trim(), idempotencyKey,
                 // 컬럼이 timestamp(6)라 마이크로초로 잘라 넣는다 — 리눅스 now()는 나노초까지 나와서, 자르지 않으면
                 // 첫 응답(메모리 값)과 멱등 재요청 응답(DB 재조회 값)의 createdAt이 달라진다
-                totalAmount(request, menus), items, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS));
+                totalAmount(request, menus), items, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), false);
         return saveWithRetry(spec, booth.getBankAccount());
+    }
+
+    /**
+     * O14 수기 주문 — C3(create)와 검증·메뉴 조회·금액 계산을 그대로 재사용한다(복붙 금지).
+     * C3과 다른 점만: 멱등키·rate limit 없음, sessionId·tableLabel은 호출자(ManualOrderService)가 이미 정한 값,
+     * label은 tableId 지정 시 그 테이블의 정규화 라벨, 미지정 시 "M" (주문번호 M-{통산}, 명세서 O14).
+     */
+    public OrderCreateResponse createManual(Long boothId, Long sessionId, String label, String tableLabel,
+                                             List<OrderCreateRequest.OrderItemRequest> items) {
+        OrderCreateRequest request = new OrderCreateRequest(items);
+        validateRequest(request);
+
+        BoothEntity booth = boothRepository.findById(boothId)
+                .orElseThrow(() -> new NotFoundException("부스를 찾을 수 없습니다"));
+        if (!booth.isOpen()) {
+            throw new OrderClosedException();
+        }
+
+        Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request);
+        List<OrderItemEntity> orderItems = request.items().stream()
+                .map(item -> {
+                    MenuLookup.MenuInfo menu = menus.get(item.menuId());
+                    return new OrderItemEntity(menu.menuId(), menu.name(), menu.price(), item.qty());
+                })
+                .toList();
+
+        OrderWriter.OrderSpec spec = new OrderWriter.OrderSpec(
+                boothId, sessionId, label, tableLabel, null,
+                totalAmount(request, menus), orderItems, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), true);
+        // 멱등키가 없어 재요청 복구 분기는 항상 타지 않는다 — 채번 충돌 재시도만 의미가 있다
+        return saveWithRetry(spec, booth.getBankAccount()).response();
     }
 
     /**
@@ -154,8 +185,11 @@ public class OrderCreateService {
         return found;
     }
 
-    /** 라벨 정규화 — 하이픈·공백 제거 + 대문자, 영숫자만, 6자 이내, 단독 M 금지 (명세서 §2·O2, DB스키마 §1) */
-    private String normalizeLabel(String tableLabel) {
+    /**
+     * 라벨 정규화 — 하이픈·공백 제거 + 대문자, 영숫자만, 6자 이내, 단독 M 금지 (명세서 §2·O2, DB스키마 §1).
+     * O14(ManualOrderService)가 tableId 지정 시 orderNo 접두(label)를 만드는 데도 그대로 재사용한다 — public.
+     */
+    public String normalizeLabel(String tableLabel) {
         if (tableLabel == null || tableLabel.isBlank()) {
             throw new InvalidRequestException("테이블 정보가 없습니다");
         }

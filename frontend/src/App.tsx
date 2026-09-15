@@ -11,19 +11,24 @@ import TableHomePage from './pages/TableHomePage'
 
 function App() {
   return (
-    <TableOrderProvider>
-      <Routes>
-        <Route path="/" element={<LoginPage />} />
-        <Route path="/orders" element={<OrderStatusPage />} />
-        <Route path="/tables" element={<TableHomePage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/settings/menu" element={<MenuListPage />} />
-        <Route path="/settings/menu/new" element={<MenuEditPage />} />
-        <Route path="/settings/menu/:id" element={<MenuEditPage />} />
-        <Route path="/settings/account" element={<AccountPage />} />
-        <Route path="/settings/table-qr" element={<TableQrPage />} />
-      </Routes>
-    </TableOrderProvider>
+    <Routes>
+      <Route path="/" element={<LoginPage />} />
+      <Route path="/orders" element={<OrderStatusPage />} />
+      <Route
+        path="/tables"
+        element={
+          <TableOrderProvider>
+            <TableHomePage />
+          </TableOrderProvider>
+        }
+      />
+      <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/settings/menu" element={<MenuListPage />} />
+      <Route path="/settings/menu/new" element={<MenuEditPage />} />
+      <Route path="/settings/menu/:id" element={<MenuEditPage />} />
+      <Route path="/settings/account" element={<AccountPage />} />
+      <Route path="/settings/table-qr" element={<TableQrPage />} />
+    </Routes>
   )
 }
 

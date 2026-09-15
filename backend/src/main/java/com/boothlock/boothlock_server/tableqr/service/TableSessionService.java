@@ -67,6 +67,29 @@ public class TableSessionService {
         }
     }
 
+    /**
+     * O14 수기 주문에서 tableId가 지정됐을 때 쓴다 — C1과 같은 "활성 세션 있으면 복원, 없으면 생성" 규칙이지만
+     * tableToken 없이 tableId로 바로 조회한다는 점만 다르다. C1(createOrRestore)은 QR 스캔 경로라 손대지 않는다.
+     */
+    public TableSessionEntity getOrCreateSession(Long tableId) {
+        TableSessionEntity restored = restoreActiveSession(tableId);
+        if (restored != null) {
+            return restored;
+        }
+
+        String sessionToken = SecureTokenGenerator.generate();
+        LocalDateTime now = LocalDateTime.now(KST_ZONE);
+        try {
+            return tableSessionWriter.createSession(tableId, sessionToken, now);
+        } catch (DataIntegrityViolationException e) {
+            TableSessionEntity winner = restoreActiveSession(tableId);
+            if (winner != null) {
+                return winner;
+            }
+            throw e;
+        }
+    }
+
     private TableSessionEntity restoreActiveSession(Long tableId) {
         return tableSessionRepository.findByTableIdAndEndedAtIsNull(tableId)
                 .map(session -> {

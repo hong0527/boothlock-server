@@ -4,6 +4,7 @@ import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 
 import com.boothlock.boothlock_server.global.error.InvalidStateException;
+import com.boothlock.boothlock_server.global.error.NotFoundException;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -170,6 +171,58 @@ public class OrderEntity {
         this.canceledBy = CANCELED_BY_CUSTOMER;          // 누가 (1강 감사 필드)
         this.canceledAt = canceledAt;
         // paymentStatus는 건드리지 않는다 — 미입금 취소는 환불 대상이 아님 (2축 상태)
+    }
+
+    /** O6 결제 모달 항목 단위 수정 가능 판정 — 접수 후 입금 전까지만 허용 (canCancel과 동일 조건) */
+    public boolean canEditItems() {
+        return status == OrderStatus.RECEIVED && paymentStatus == PaymentStatus.UNPAID;
+    }
+
+    /** O6 결제 모달 수량 +/- — 취소된 항목은 대상에서 제외(못 찾은 것과 동일하게 취급) */
+    public void updateItemQty(Long itemId, int qty) {
+        if (!canEditItems()) {
+            throw new InvalidStateException("항목을 수정할 수 없는 주문 상태입니다.");
+        }
+        findEditableItem(itemId).updateQty(qty);
+        recalculateTotal();
+    }
+
+    /** O6 결제 모달 개별 "취소" — 남은 항목이 하나도 없으면 주문 자체도 CANCELED로 전환한다(O13과 같은 감사 필드 사용) */
+    public void cancelItem(Long itemId, LocalDateTime canceledAt, String canceledBy) {
+        if (!canEditItems()) {
+            throw new InvalidStateException("항목을 수정할 수 없는 주문 상태입니다.");
+        }
+        findEditableItem(itemId).cancel();
+        recalculateTotal();
+        if (items.stream().allMatch(OrderItemEntity::isCanceled)) {
+            forceCancel("전체 항목 취소", canceledBy, canceledAt);
+        }
+    }
+
+    private OrderItemEntity findEditableItem(Long itemId) {
+        return items.stream()
+                .filter(item -> item.getId().equals(itemId) && !item.isCanceled())
+                .findFirst()
+                .orElseThrow(() -> new NotFoundException("주문 항목을 찾을 수 없습니다."));
+    }
+
+    /** subtotal은 취소 안 된 항목만 합산 — DB스키마 §3-3(파생값)과 같은 원칙을 취소 항목까지 확장 */
+    private void recalculateTotal() {
+        this.totalAmount = items.stream()
+                .filter(item -> !item.isCanceled())
+                .mapToInt(OrderItemEntity::subtotal)
+                .sum();
+    }
+
+    /** cancelItem 전용 — 리포지토리의 벌크 UPDATE cancelByStaff(O13)와는 별개 경로라 이름을 다르게 둔다 */
+    private void forceCancel(String reason, String canceledBy, LocalDateTime canceledAt) {
+        this.status = OrderStatus.CANCELED;
+        this.cancelReason = reason;
+        this.canceledBy = canceledBy;
+        this.canceledAt = canceledAt;
+        if (this.paymentStatus == PaymentStatus.PAID) {
+            this.paymentStatus = PaymentStatus.REFUND_NEEDED;
+        }
     }
 
     public Long getId() {

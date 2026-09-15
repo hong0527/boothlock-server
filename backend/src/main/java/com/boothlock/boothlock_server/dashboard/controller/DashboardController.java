@@ -4,13 +4,16 @@ import com.boothlock.boothlock_server.dashboard.dto.CallRequest;
 import com.boothlock.boothlock_server.dashboard.dto.CallResponse;
 import com.boothlock.boothlock_server.dashboard.dto.CancelRequest;
 import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
+import com.boothlock.boothlock_server.dashboard.dto.ItemQtyUpdateRequest;
+import com.boothlock.boothlock_server.dashboard.dto.ManualOrderRequest;
 import com.boothlock.boothlock_server.dashboard.dto.PaymentConfirmRequest;
 import com.boothlock.boothlock_server.dashboard.service.CallService;
 import com.boothlock.boothlock_server.dashboard.service.DashboardOrderActionService;
 import com.boothlock.boothlock_server.dashboard.service.DashboardQueryService;
+import com.boothlock.boothlock_server.dashboard.service.ManualOrderService;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
-import com.boothlock.boothlock_server.global.error.NotImplementedException;
+import com.boothlock.boothlock_server.order.dto.OrderCreateResponse;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -35,12 +38,15 @@ public class DashboardController {
     private final DashboardQueryService dashboardQueryService;
     private final DashboardOrderActionService orderActionService;
     private final CallService callService;
+    private final ManualOrderService manualOrderService;
 
     public DashboardController(DashboardQueryService dashboardQueryService,
-            DashboardOrderActionService orderActionService, CallService callService) {
+            DashboardOrderActionService orderActionService, CallService callService,
+            ManualOrderService manualOrderService) {
         this.dashboardQueryService = dashboardQueryService;
         this.orderActionService = orderActionService;
         this.callService = callService;
+        this.manualOrderService = manualOrderService;
     }
 
     /** O10 실시간 대시보드 (Must) — 주문+미확인 호출 한 번에, 폴링 3~5초, q=주문번호 검색 */
@@ -55,8 +61,10 @@ public class DashboardController {
             @Parameter(description = "영업일 필터 (YYYY-MM-DD)")
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDate,
             @Parameter(description = "주문번호 부분 검색 (예: A3-17)")
-            @RequestParam(required = false) String q) {
-        return dashboardQueryService.getDashboard(authorization, status, paymentStatus, businessDate, q);
+            @RequestParam(required = false) String q,
+            @Parameter(description = "특정 테이블의 주문만 (POS 배치도에서 테이블 클릭 시 사용, v0.5 신설)")
+            @RequestParam(required = false) Long tableId) {
+        return dashboardQueryService.getDashboard(authorization, status, paymentStatus, businessDate, q, tableId);
     }
 
     /** O11 입금 확인 (Must) — UNPAID→PAID, 승인자·승인시각 자동 기록 */
@@ -89,10 +97,35 @@ public class DashboardController {
     }
 
     /** O14 수기 주문 (Should) — 검증은 소비자 주문(C3)과 동일, isManual 표시, 미지정 시 M-{통산} */
+    @Operation(summary = "O14 수기 주문", description = "tableId를 지정하면 그 테이블 세션에 귀속시킨다(없으면 자동 생성). "
+            + "생략하면 테이블 미지정 주문(M-통산번호)으로 만든다. 검증은 소비자 주문(C3)과 동일.")
     @PostMapping("/admin/orders")
-    public Object manualOrder() {
-        // TODO(김재원): 명세서 O14 — 홍화수의 OrderService 재사용 (복붙 금지). C3 주문 생성이 머지된 뒤 착수
-        throw new NotImplementedException("O14 수기 주문");
+    @ResponseStatus(HttpStatus.CREATED)
+    public OrderCreateResponse manualOrder(
+            @RequestHeader("Authorization") String authorization,
+            @RequestBody ManualOrderRequest request) {
+        return manualOrderService.create(authorization, request);
+    }
+
+    /** O6 결제 모달 수량 +/- (명세서 밖) — RECEIVED+UNPAID일 때만, 아니면 409 */
+    @Operation(summary = "O6 항목 수량 변경", description = "결제 모달에서 항목 수량을 바꾼다. 접수+미결제 상태일 때만 가능.")
+    @PatchMapping("/admin/orders/{orderId}/items/{itemId}")
+    public DashboardResponse.OrderSummary updateItemQty(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId,
+            @PathVariable Long itemId,
+            @Valid @RequestBody ItemQtyUpdateRequest request) {
+        return orderActionService.updateItemQty(authorization, orderId, itemId, request.qty());
+    }
+
+    /** O6 결제 모달 개별 항목 취소 (명세서 밖) — 남은 항목이 없으면 주문 전체가 취소된다 */
+    @Operation(summary = "O6 항목 취소", description = "결제 모달에서 항목 하나를 취소한다. 마지막 남은 항목이면 주문 전체가 취소 처리된다.")
+    @PostMapping("/admin/orders/{orderId}/items/{itemId}/cancel")
+    public DashboardResponse.OrderSummary cancelItem(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId,
+            @PathVariable Long itemId) {
+        return orderActionService.cancelItem(authorization, orderId, itemId);
     }
 
     /** O21 환불 완료 (Should·ADMIN 전용) — REFUND_NEEDED→REFUNDED, 처리자 기록 */

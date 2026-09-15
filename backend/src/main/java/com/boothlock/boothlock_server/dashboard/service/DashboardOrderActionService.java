@@ -89,6 +89,24 @@ public class DashboardOrderActionService {
         return mapper.toOrderSummary(requireExisting(orderId, boothId));
     }
 
+    /** O6 결제 모달 수량 +/- — RECEIVED+UNPAID일 때만, 아니면 409 */
+    @Transactional
+    public DashboardResponse.OrderSummary updateItemQty(String authorization, Long orderId, Long itemId, int qty) {
+        StaffAccountEntity staff = authenticate(authorization);
+        OrderEntity order = requireExisting(orderId, staff.getBooth().getId());
+        order.updateItemQty(itemId, qty);
+        return mapper.toOrderSummary(order);
+    }
+
+    /** O6 결제 모달 개별 "취소" — 남은 항목이 없으면 주문 전체가 CANCELED로 전환된다(OrderEntity.cancelItem 참조) */
+    @Transactional
+    public DashboardResponse.OrderSummary cancelItem(String authorization, Long orderId, Long itemId) {
+        StaffAccountEntity staff = authenticate(authorization);
+        OrderEntity order = requireExisting(orderId, staff.getBooth().getId());
+        order.cancelItem(itemId, LocalDateTime.now(KST), staff.getLoginId());
+        return mapper.toOrderSummary(order);
+    }
+
     /** O21 환불 완료 — ADMIN 전용, REFUND_NEEDED만 REFUNDED로 전환 (명세서 O21) */
     @Transactional
     public DashboardResponse.OrderSummary refundDone(String authorization, Long orderId) {
