@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { CONTROL_BASE } from '../../components/controlStyles'
-import PrimaryButton from '../../components/PrimaryButton'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import type { OrderCreateResult, OrderSummary } from '../../types/customer'
 
@@ -14,7 +13,6 @@ export default function PaymentInfoPage() {
   const [order, setOrder] = useState<OrderCreateResult | OrderSummary | null>(stateOrder ?? null)
   const [copied, setCopied] = useState(false)
 
-  // 새로고침 등으로 화면 state가 사라졌으면 내 주문 중 가장 최근 것으로 대체한다 (C4)
   useEffect(() => {
     if (order) return
     customerApiFetch('/api/v1/orders')
@@ -27,7 +25,7 @@ export default function PaymentInfoPage() {
 
   if (!order) {
     return (
-      <div className="flex min-h-screen w-full items-center justify-center bg-white">
+      <div className="flex min-h-screen w-full items-center justify-center bg-neutral-50">
         <p className="text-body-1 text-neutral-400">주문 정보를 불러오는 중...</p>
       </div>
     )
@@ -43,48 +41,76 @@ export default function PaymentInfoPage() {
   }
 
   return (
-    <div className="flex min-h-screen w-full flex-col bg-white">
-      <div className="border-b border-neutral-100 px-5 py-4">
-        <h1 className="text-heading-3 text-neutral-900">결제 안내</h1>
+    <div className="flex min-h-screen w-full flex-col bg-neutral-50">
+      <div className="flex h-[114px] items-center bg-primary-50 px-4">
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          aria-label="뒤로가기"
+          className="flex h-8 w-8 items-center justify-center text-neutral-900"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M15 5l-7 7 7 7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <h1 className="ml-3 text-heading-1 text-neutral-900">결제 안내</h1>
       </div>
 
-      <div className="flex-1 px-5 py-8 text-center">
-        <p className="text-heading-3 text-neutral-900">
+      <div className="flex-1 px-[18px] py-8">
+        <p className="text-center text-heading-2 text-neutral-900">
           아래 계좌로
           <br />
           주문 금액을 입금해주세요.
         </p>
-        <p className="mt-2 text-body-3 text-neutral-400">입금이 확인되면 조리가 시작됩니다.</p>
+        <p className="mt-2 text-center text-body-2 text-neutral-400">입금이 확인되면 조리가 시작됩니다.</p>
 
-        <div className="mt-6 rounded-2xl border border-neutral-100 bg-neutral-50 p-5 text-left">
-          <p className="text-body-3 text-neutral-400">입금 계좌</p>
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-body-1 text-neutral-900">{order.payment.bankAccount}</span>
-            <button type="button" onClick={handleCopy} className="text-body-3 text-primary-500 underline">
-              {copied ? '복사됨' : '복사'}
-            </button>
+        <div className="mt-8 rounded-[10px] border border-[#b8dcd3] bg-primary-50 p-5">
+          <p className="text-body-2 text-neutral-900">입금 계좌</p>
+          <div className="mt-3 flex items-start gap-1 text-body-2 text-neutral-900">
+            <span className="mt-1">•</span>
+            <div className="flex flex-1 items-center gap-2">
+              <span className="underline">{order.payment.bankAccount}</span>
+              <button type="button" onClick={handleCopy} aria-label="계좌번호 복사" className="text-neutral-900">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <rect x="8" y="8" width="12" height="12" rx="2" />
+                  <path d="M4 16V6a2 2 0 0 1 2-2h10" />
+                </svg>
+              </button>
+            </div>
           </div>
-          <p className="mt-2 text-body-3 text-neutral-400">{order.payment.depositorNameRule}</p>
-          <div className="mt-4 flex items-center justify-between border-t border-neutral-100 pt-4 text-heading-3 text-neutral-900">
+          <p className="mt-1 pl-3 text-body-2 text-neutral-900">{order.payment.depositorNameRule}</p>
+          <div className="mt-3 flex items-center justify-between border-t border-neutral-100 pt-3 text-body-2 text-neutral-900">
             <span>주문 금액</span>
             <span>{order.totalAmount.toLocaleString()}원</span>
           </div>
         </div>
 
-        <p className="mt-4 text-body-3 text-neutral-400">결제 후에는 취소가 어려워요.</p>
+        <div className="mt-3 flex items-center gap-2 rounded-[10px] bg-neutral-100 px-4 py-3">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8h.01M11 12h1v4h1" strokeLinecap="round" />
+          </svg>
+          <p className="text-caption text-neutral-700">결제 후에는 취소가 어려워요.</p>
+        </div>
+
+        {copied && <p className="mt-2 text-center text-caption text-neutral-400">복사됐어요.</p>}
       </div>
 
-      <div className="flex flex-col gap-3 px-5 py-5">
+      <div className="flex flex-col gap-[6px] px-[18px] pb-8">
         <button
           type="button"
           onClick={() => navigate('/order-history', { replace: true })}
-          className={`${CONTROL_BASE} border border-neutral-900 text-heading-3 text-neutral-900`}
+          className={`${CONTROL_BASE} bg-black text-heading-3 text-white`}
         >
           주문내역 확인
         </button>
-        <PrimaryButton type="button" onClick={() => navigate('/order', { replace: true })}>
+        <button
+          type="button"
+          onClick={() => navigate('/order', { replace: true })}
+          className={`${CONTROL_BASE} bg-black text-heading-3 text-white`}
+        >
           완료
-        </PrimaryButton>
+        </button>
       </div>
     </div>
   )

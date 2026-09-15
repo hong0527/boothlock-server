@@ -14,14 +14,14 @@ type CategoryTabsProps = {
 
 export default function CategoryTabs({ active, onChange }: CategoryTabsProps) {
   return (
-    <div className="flex gap-2 overflow-x-auto px-5 py-3">
+    <div className="flex gap-[9px] overflow-x-auto px-[17px] pt-3 pb-[13px]">
       {TABS.map((tab) => (
         <button
           key={tab.key}
           type="button"
           onClick={() => onChange(tab.key)}
-          className={`shrink-0 rounded-full px-4 py-2 text-body-2 ${
-            active === tab.key ? 'bg-neutral-900 text-neutral-50' : 'bg-neutral-100 text-neutral-500'
+          className={`h-9 shrink-0 rounded-[12px] px-[17px] text-body-1 ${
+            active === tab.key ? 'bg-black text-white' : 'bg-neutral-100 text-neutral-600'
           }`}
         >
           {tab.label}

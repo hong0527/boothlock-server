@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import PrimaryButton from '../../components/PrimaryButton'
+import { CONTROL_BASE } from '../../components/controlStyles'
 import { useCart } from '../../context/CartContext'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { getSessionInfo } from '../../lib/customerSession'
@@ -21,8 +21,6 @@ export default function OrderConfirmPage() {
     setError(null)
 
     try {
-      // C3: 재시도 시에도 같은 키를 재사용해야 하지만, 이 화면은 실패 시 사람이 다시 눌러야 하는 구조라
-      // 매 시도(=매 클릭)를 새 주문 시도로 본다 — 더블클릭 자체는 loading 가드로 막는다
       const res = await customerApiFetch('/api/v1/orders', {
         method: 'POST',
         headers: {
@@ -53,48 +51,50 @@ export default function OrderConfirmPage() {
   }
 
   return (
-    <div className="flex min-h-screen w-full flex-col bg-white">
-      <div className="flex items-center gap-4 border-b border-neutral-100 px-5 py-4">
+    <div className="flex min-h-screen w-full flex-col bg-neutral-50">
+      <div className="flex h-[114px] items-center bg-primary-50 px-4">
         <button
           type="button"
           onClick={() => navigate(-1)}
           aria-label="뒤로가기"
-          className="text-heading-2 text-neutral-900"
+          className="flex h-8 w-8 items-center justify-center text-neutral-900"
         >
-          ‹
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M15 5l-7 7 7 7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </button>
-        <h1 className="text-heading-3 text-neutral-900">주문 확인</h1>
+        <h1 className="ml-3 text-heading-1 text-neutral-900">주문 확인</h1>
       </div>
 
-      <div className="flex-1 px-5 py-4">
-        <p className="text-body-3 text-neutral-400">테이블 번호: {sessionInfo?.tableLabel}</p>
-
-        <div className="mt-3 divide-y divide-neutral-100">
-          {items.map((item) => (
-            <div key={item.menuId} className="flex items-center justify-between py-3 text-body-1 text-neutral-900">
-              <span>{item.name}</span>
-              <span>{item.qty}개</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-3 flex items-center justify-between border-t border-neutral-100 pt-3 text-heading-3 text-neutral-900">
-          <span>주문 금액</span>
-          <span>{totalAmount.toLocaleString()}원</span>
+      <div className="flex-1 px-[18px] py-6">
+        <div className="rounded-[10px] border border-[#b8dcd3] bg-primary-50 p-6">
+          <p className="text-body-3 text-neutral-500">테이블 번호: {sessionInfo?.tableLabel}</p>
+          <div className="mt-3 divide-y divide-neutral-100 border-t border-neutral-100">
+            {items.map((item) => (
+              <div key={item.menuId} className="flex items-center justify-between py-3 text-body-1 text-neutral-900">
+                <span>{item.name}</span>
+                <span>{item.qty}개</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-body-2 text-neutral-900">
+            <span>주문 금액</span>
+            <span>{totalAmount.toLocaleString()}원</span>
+          </div>
         </div>
 
         {error && <p className="mt-4 text-body-3 text-red-600">{error}</p>}
       </div>
 
-      <div className="px-5 py-5">
-        <PrimaryButton
+      <div className="px-6 pb-8">
+        <button
           type="button"
           onClick={handleSubmit}
           disabled={loading || items.length === 0}
-          className="disabled:opacity-40"
+          className={`${CONTROL_BASE} bg-black text-heading-3 text-white disabled:opacity-40`}
         >
           {loading ? '주문 중...' : '주문하기'}
-        </PrimaryButton>
+        </button>
       </div>
     </div>
   )

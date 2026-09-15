@@ -43,13 +43,11 @@ export default function MenuOrderPage() {
     }
   }, [])
 
-  // category는 백엔드 C2 응답에 아직 없는 필드 — 값이 없는 메뉴는 '전체'에서만 노출된다 (types/customer.ts 참고)
   const visibleMenus = useMemo(
     () => (category === 'ALL' ? menus : menus.filter((menu) => menu.category === category)),
     [menus, category],
   )
 
-  // C6(직원 호출)는 백엔드에 아직 구현되어 있지 않음 — 구현되면 catch의 안내 문구를 제거
   const handleCallStaff = async () => {
     try {
       const res = await customerApiFetch('/api/v1/calls', {
@@ -65,7 +63,7 @@ export default function MenuOrderPage() {
   }
 
   return (
-    <div className="min-h-screen w-full bg-white pb-24">
+    <div className="min-h-screen w-full bg-neutral-50 pb-[97px]">
       <CustomerTopBar boothName={boothName} tableLabel={sessionInfo?.tableLabel ?? ''} />
 
       {!isOpen && (
@@ -75,11 +73,12 @@ export default function MenuOrderPage() {
       )}
 
       <CategoryTabs active={category} onChange={setCategory} />
+      <div className="h-px bg-neutral-100" />
 
-      {error && <p className="px-5 pb-2 text-body-3 text-red-600">{error}</p>}
-      {callMessage && <p className="px-5 pb-2 text-center text-body-3 text-neutral-400">{callMessage}</p>}
+      {error && <p className="px-6 pt-4 text-body-3 text-red-600">{error}</p>}
+      {callMessage && <p className="px-6 pt-2 text-center text-body-3 text-neutral-400">{callMessage}</p>}
 
-      <div>
+      <div className="flex flex-col gap-4 px-6 py-5">
         {visibleMenus.map((menu) => (
           <MenuListItem key={menu.id} menu={menu} orderingDisabled={!isOpen} onAdd={() => addItem(menu)} />
         ))}
