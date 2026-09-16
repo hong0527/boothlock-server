@@ -1,0 +1,37 @@
+# 운영: EC2 1대에서 API 서버 컨테이너만 띄운다. DB는 AWS RDS MySQL 8.0(컨테이너 없음).
+#   준비:  cp .env.prod.example .env.prod  → 값 채우기 (커밋 금지, .gitignore 등록)
+#          mkdir -p data/uploads/menu data/uploads/event && sudo chown -R 10001:10001 data/uploads
+#   기동:  docker compose -f docker-compose.prod.yml up -d --build
+#   로그:  docker compose -f docker-compose.prod.yml logs -f api
+# TLS 종단(HTTPS)은 이 파일 밖 — 같은 EC2의 nginx/Caddy 또는 ALB가 443을 받아 127.0.0.1:8080으로 넘긴다 (배포 문서 §4).
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: boothlock-server:latest
+    container_name: boothlock-api
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+    ports:
+      # 호스트 루프백에만 노출 — 외부는 리버스 프록시(443)를 거친다. 프록시 없이 직접 열려면 "8080:8080"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # 메뉴 사진·행사 약도 — 서버 로컬 폴더. 컨테이너 UID 10001이 쓸 수 있어야 한다
+      - ./data/uploads:/app/data/uploads
+      # 시딩 JSON(계정 정보 포함) — 읽기 전용. BOOTLOCK_SEED_FILE=/app/seed/event-seed.json
+      - ./seed:/app/seed:ro
+    # 헬스체크는 Dockerfile의 것을 쓴다 (GET /api/v1/event/booths)
+    deploy:
+      resources:
+        limits:
+          # t3.small(2GiB) 기준. JVM은 JAVA_TOOL_OPTIONS의 MaxRAMPercentage=70으로 이 한도 안에서 힙을 잡는다
+          memory: 1200m
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

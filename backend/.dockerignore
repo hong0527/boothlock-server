@@ -1,0 +1,14 @@
+# 이미지 빌드 컨텍스트에서 제외 — 빌드 산출물·로컬 DB·비밀값이 이미지에 들어가지 않게
+build/
+.gradle/
+bin/
+out/
+data/
+*.log
+.idea/
+*.iml
+.env
+.env.*
+seed/*.json
+!src/main/resources/seed/event-seed.example.json
+docs/
