@@ -3,6 +3,8 @@ export type CustomerSessionInfo = {
   boothName: string
   boothIsOpen: boolean
   tableLabel: string
+  /** 테이블 이용 인원 선택 화면(PartySizePage)에서 확정 후 채워짐. 그 전까지는 없음 */
+  partySize?: number
 }
 /** C2 메뉴판의 메뉴 1건.
  * category: 목업(전체/메인메뉴/사이드/음료 탭)엔 있지만 현재 백엔드 C2 응답엔 없는 필드 —

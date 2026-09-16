@@ -23,3 +23,10 @@ export function clearCustomerSession() {
   localStorage.removeItem(SESSION_TOKEN_KEY)
   localStorage.removeItem(SESSION_INFO_KEY)
 }
+
+export function setSessionPartySize(partySize: number) {
+  const token = getSessionToken()
+  const info = getSessionInfo()
+  if (!token || !info) return
+  setCustomerSession(token, { ...info, partySize })
+}

@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage'
 import CodeScanPage from './pages/CodeScanPage'
 import HomePage from './pages/HomePage'
 import OrderStatusPage from './pages/OrderStatusPage'
+import PartySizePage from './pages/PartySizePage'
 import CartPage from './pages/customer/CartPage'
 import MenuOrderPage from './pages/customer/MenuOrderPage'
 import SessionExpiredPage from './pages/customer/SessionExpiredPage'
@@ -46,6 +47,8 @@ function App() {
 
         {/* 소비자(손님) 주문 플로우 — API 명세서 C1~C5 */}
         <Route path="/t/:tableToken" element={<TableSessionPage />} />
+        {/* 세션 발급 직후 인원 선택 — Figma 289:3672 */}
+        <Route path="/party-size" element={<PartySizePage />} />
         <Route path="/order" element={<MenuOrderPage />} />
         <Route path="/cart" element={<CartPage />} />
         <Route path="/session-expired" element={<SessionExpiredPage />} />
