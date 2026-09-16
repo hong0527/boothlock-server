@@ -3,6 +3,7 @@ import { CartProvider } from './context/CartContext'
 import { TableOrderProvider } from './context/TableOrderContext'
 import LoginPage from './pages/LoginPage'
 import OrderStatusPage from './pages/OrderStatusPage'
+import PartySizePage from './pages/PartySizePage'
 import CartPage from './pages/customer/CartPage'
 import MenuOrderPage from './pages/customer/MenuOrderPage'
 import SessionExpiredPage from './pages/customer/SessionExpiredPage'
@@ -23,6 +24,9 @@ function App() {
       <Routes>
         <Route path="/" element={<LoginPage />} />
         <Route path="/orders" element={<OrderStatusPage />} />
+
+        {/* 테이블 이용 인원 선택 — Figma 289:3672 */}
+        <Route path="/party-size" element={<PartySizePage />} />
         <Route
           path="/tables"
           element={
