@@ -4,7 +4,7 @@
 > v1.1: MySQL 8.4·H2 실행 검증 — 멱등키 NULL 허용, password_hash 72자, call→staff_call, 세션 유일성 제약, utf8mb4, 타임존·조건부 UPDATE 원칙.
 > v1.2: 토큰·멱등키 `utf8mb4_bin`, ended_at_key를 자기 id 방식으로. v1.2.1: `orders.table_label`.
 > v1.3: `booth.category·map_x·map_y`, `booth_table.pos_x·pos_y`, `event_map` 신설, 좌석 현황을 세션으로 판정(원칙 14).
-> **v1.4 변경 (2026-09-16, 통합 PR 반영 — 코드가 정본)**: ① **문서 미기재였던 컬럼 5개 편입** — `booth.next_table_seq`, `booth_table.active`, `menu.category`, `order_item.canceled`, 제약 `uk_menu_booth_name(booth_id, name)` (deploy-mysql §5 실측) ② `booth_table.status`는 **VARCHAR(20)** — 엔티티에 `@JdbcTypeCode(VARCHAR)`를 붙여 MySQL 네이티브 ENUM 생성을 막았다 ③ **`idx_orders_session(session_id)`** 인덱스 신설(엔티티 `@Index` + 운영 SQL) ④ **운영 스키마는 `schema-mysql8.sql`을 먼저 적용하고 `ddl-auto=validate`로 기동** — 토큰 3컬럼의 `utf8mb4_bin`은 Hibernate가 만들 수 없다(원칙 17·18) ⑤ 원칙 15 **잠금 뒤 읽기**, 원칙 16 **미결제 정의**, 원칙 13 정정(인증 전환 완료), 원칙 14 갱신(미결제 예외) ⑥ §4를 "실습 코드 차이"에서 **"문서 ↔ Hibernate 자동 DDL ↔ 운영 SQL 차이표"** 로 교체.
+> **v1.4 변경 (2026-09-16, 통합 PR 반영 — 코드가 정본)**: ① **문서 미기재였던 컬럼 5개 편입** — `booth.next_table_seq`, `booth_table.active`, `menu.category`, `order_item.canceled`, 제약 `uk_menu_booth_name(booth_id, name)` (deploy-mysql §5 실측) ② `booth_table.status`는 **VARCHAR(20)** — 엔티티에 `@JdbcTypeCode(VARCHAR)`를 붙여 MySQL 네이티브 ENUM 생성을 막았다 ③ **`idx_orders_session(session_id)`** 인덱스 신설(엔티티 `@Index` + 운영 SQL) ④ **운영 스키마는 `schema-mysql8.sql`을 먼저 적용하고 `ddl-auto=validate`로 기동** — 토큰 3컬럼의 `utf8mb4_bin`은 Hibernate가 만들 수 없다(원칙 17·18) ⑤ 원칙 15 **잠금 뒤 읽기**, 원칙 16 **미결제 정의**, 원칙 13 정정(인증 전환 완료), 원칙 14 갱신(미결제 예외) ⑥ §4를 "실습 코드 차이"에서 **"문서 ↔ Hibernate 자동 DDL ↔ 운영 SQL 차이표"** 로 교체 ⑦ **`booth.depositor_name VARCHAR(50) NULL`**(예금주명, main #57 → 통합 PR #54 병합) 편입.
 > 규칙: 엔티티에는 반드시 `@Table(name = "...")`로 아래 테이블명을 명시한다. 담당은 파트로 적는다(부스·테이블·메뉴·주문·대시보드·정산·홈).
 
 ## 0. 전체 관계도 (ERD)
@@ -24,7 +24,7 @@ erDiagram
     TABLE_SESSION ||--o{ STAFF_CALL : "호출"
     ORDERS ||--|{ ORDER_ITEM : "항목"
 
-    BOOTH { bigint id PK "부스 (next_table_seq 포함)" }
+    BOOTH { bigint id PK "부스 (depositor_name·next_table_seq 포함)" }
     BOOTH_TABLE { bigint id PK "테이블 (active = soft delete)" }
     TABLE_SESSION { bigint id PK "테이블 세션" }
     MENU { bigint id PK "메뉴 (category, 부스 내 이름 유일)" }
@@ -47,6 +47,7 @@ erDiagram
 | id | BIGINT | PK, AUTO_INCREMENT | |
 | name | VARCHAR(50) | NOT NULL | 부스명 |
 | bank_account | VARCHAR(100) | NOT NULL | 계좌 표기 문자열 — C3 응답에 그대로 노출. 변경은 감사 로그 필수 |
+| **depositor_name** | VARCHAR(50) | NULL | **v1.4 편입(main #57)** — 예금주명, 계좌 등록 화면 표시용 라벨. O17에서 ADMIN만 변경, trim 후 50자, null·공백은 NULL 저장. 입금 경로를 바꾸지 않는 표시값이라 `bank_account`와 달리 **감사 로그·웹훅 대상이 아니다**. C3 결제 안내에는 나가지 않는다 |
 | is_open | BOOLEAN | NOT NULL DEFAULT TRUE | 주문 접수 스위치 — FALSE면 C3·O14·O23 증가가 409 ORDER_CLOSED |
 | operating_hours | VARCHAR(50) | NULL | 안내용 텍스트 |
 | category | VARCHAR(20) | NULL | 홈 화면 부스 분류 `FOOD` / `CAFE` / `GOODS` / `ETC`. **대문자 정확 일치 저장**(O17·시더가 검증). E1 필터는 대소문자 무시. NULL이면 미분류 |
@@ -55,8 +56,6 @@ erDiagram
 | **next_table_seq** | INT | NOT NULL DEFAULT 1 | **v1.4 편입** — O25 "테이블 추가" 자동 채번(`T-N`) 카운터. 부스 행 `FOR UPDATE` + `refresh` 아래에서 읽고, **컬럼 단독 UPDATE**(`TableSequenceRepository.setNextTableSeq`)로 올린다. 삭제해도 줄지 않는다(이력 없는 마지막 테이블 완전 삭제 시 1 반납 예외). 엔티티는 `columnDefinition = "integer default 1"` — 컬럼이 생기기 전 행·raw INSERT도 1로 채워지게 |
 
 - 엔티티 `@DynamicUpdate` — O17 저장(전체 컬럼 UPDATE였다면)이 동시에 채번된 `next_table_seq`를 옛 값으로 되돌려 이후 테이블 추가가 라벨 중복으로 영구 실패하던 결함(audit2 H3)의 수정
-- **main #57(기준 코드 이후 머지)이 `depositor_name VARCHAR(50) NULL`(예금주명)을 추가했다** — 이 문서의 기준 코드 f7aac1d에는 없어 표에 넣지 않았다. 통합 확정 후 컬럼 행·DDL에 반영(확정 필요)
-
 ### staff_account — 운영자 계정 (부스 파트)
 
 | 컬럼 | 타입 | 제약 | 설명 |
@@ -116,7 +115,7 @@ erDiagram
 | description | VARCHAR(200) | NULL | |
 | sold_out | BOOLEAN | NOT NULL DEFAULT FALSE | 원클릭 품절. 재고 수량 컬럼 없음 |
 | visible | BOOLEAN | NOT NULL DEFAULT TRUE | 숨김 — DELETE 없음 |
-| **category** | VARCHAR(20) | NULL | **v1.4 편입** — `MAIN` / `SIDE` / `DRINK`(손님 메뉴판 탭과 1:1). **값·컬럼명은 main #53 기준**(통합 갈래와 main #53이 같은 컬럼 `category VARCHAR(20) NULL`·같은 값으로 각각 구현 — 일치). **문자열 컬럼 + 코드 화이트리스트**(통합본 `MenuCategory.isValid`, main #53 `VALID_CATEGORIES` Set — 둘 다 대문자 정확 일치) — `@Enumerated`로 두면 MySQL 네이티브 ENUM이 생겨 분류를 늘릴 때 ALTER가 필요하다. NULL = 분류 없음('전체' 탭에만). **NOT NULL 금지** — 기존 행이 있는 테이블에 컬럼을 덧붙이므로 |
+| **category** | VARCHAR(20) | NULL | **v1.4 편입(main #53)** — `MAIN` / `SIDE` / `DRINK`(손님 메뉴판 탭과 1:1). **문자열 컬럼 + 코드 화이트리스트**(`MenuService.VALID_CATEGORIES`, 대문자 정확 일치) — `@Enumerated`로 두면 MySQL 네이티브 ENUM이 생겨 분류를 늘릴 때 ALTER가 필요하다. NULL = 분류 없음('전체' 탭에만). **NOT NULL 금지** — 기존 행이 있는 테이블에 컬럼을 덧붙이므로 |
 | _UNIQUE_ | | **uk_menu_booth_name (booth_id, name)** | **v1.4 편입** — 부스 내 메뉴명 중복 금지. 앱은 사전 검사 + 제약 위반을 409 INVALID_STATE로 변환 |
 
 ### orders — 주문 (주문 파트) — `ORDER`는 예약어라 orders
@@ -225,6 +224,7 @@ CREATE TABLE booth (
   id              BIGINT AUTO_INCREMENT PRIMARY KEY,
   name            VARCHAR(50)  NOT NULL,
   bank_account    VARCHAR(100) NOT NULL,
+  depositor_name  VARCHAR(50)  NULL,
   is_open         BOOLEAN      NOT NULL DEFAULT TRUE,
   operating_hours VARCHAR(50),
   category        VARCHAR(20)  NULL,
@@ -421,6 +421,7 @@ CREATE TABLE event_map (
 | 제약 이름 | `fk_*`·`uq_*`·`uk_*` | 해시(`uq_*`·`uk_menu_booth_name`·`uq_session_active`·`uq_orders_seq`는 엔티티에 명시돼 동일) | 문서 이름 | |
 | `daily_counter` PK 순서 | (booth_id, business_date) | (business_date, booth_id) | 문서 순서 | validate 무관 |
 | `next_table_seq`·`active`·`menu.category`·`uk_menu_booth_name`·`canceled` | v1.4 편입 | 있음 | 있음 | v1.3 문서에만 없던 5개 |
+| `booth.depositor_name` | v1.4 편입(main #57) | 있음(통합 PR #54가 main 병합 후) | **확인 필요** — 운영 SQL은 #57 병합 전에 작성돼 이 컬럼이 없을 수 있다. 없으면 `ALTER TABLE booth ADD COLUMN depositor_name VARCHAR(50) NULL` 추가 후 validate | validate는 컬럼 누락을 잡으므로 빠져 있으면 기동 실패로 드러난다 |
 | DEFAULT 절 | 있음 | 없음(`columnDefinition` 있는 3컬럼 제외) | 있음 | 앱은 항상 값을 넣으므로 동작 차이 없음 |
 
 - 기존 H2 파일 DB(구 스키마) 위에 통합본을 `ddl-auto=update`로 띄우면 `menu.category`만 NULL 허용으로 추가되고 기동·회귀가 통과함을 실측(verify-int2 §6). `next_table_seq`·`active`·`canceled`는 기본값이 있어 기존 행이 채워진다

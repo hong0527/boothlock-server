@@ -18,11 +18,11 @@
 | v0.5 | 2026-09-09 | 2026-09-07 회의 결정 반영 — 부스 탐색(1.7·1.9) 파일럿 포함, 공개 축 `/api/v1/event/*` 신설(E1·E2), 운영자 POS형 메인(O3 좌표·O22·O10 `tableId`), O17 약도 좌표·카테고리, 단일 부스 → 복수 부스 |
 | v0.5.1 | 2026-09-12 | E1 빈자리 판정을 세션 기준으로 전환, 유휴 임계 설정값(기본 3시간), E2 정적 서빙 구현 |
 | v0.5.2 | 2026-09-14 | 기능 번호를 노션 병합본 체계로 되돌림, E1 서버 캐시 10초, 약도 서빙 가드, §7-21 실측 정정, O17 표 깨짐 정정 |
-| **v0.6** | **2026-09-16** | **통합 PR 반영 — 코드가 정본.** ① 신규 절: **O23 항목 수량 변경·O23b 항목 개별 취소·O24 테이블 일괄 입금 확인·O25 테이블 1개 자동 추가·O26 테이블 삭제·O27 운영자 메뉴 목록**(main이 명세 밖에서 먼저 만든 API를 명세에 편입) ② 변경 절: O3(합집합 응답·`session.id`·유휴 세션 `session:null`·`needsCleanup`), O6(멱등 200·`{unpaidWarning,id,label,status,warning?}`), O10(`Authorization` 필수·`boothId` 400·`activeSessionOnly`·`businessDate` 기본=현재 영업일·`sessionId`·`itemId`), O11~O13 응답 형태 정정, O14(검증 순서·409), O15(JWT·`{callId,acked}`), O16/O17(category·mapX·mapY), O22(0~10000·반올림), C1(유휴 세션 재발급·응답 필드 정정), C2·O7·O8(`category`), C3(저장 직전 종료 410), C4·C5(취소 항목 제외·행 잠금), C6(`X-Session-Token`), E1(미결제 예외·삭제 테이블 제외) ③ **§1.2 유휴 만료를 SeatIdlePolicy 공용 정의로 통일**, §1.1·§7-21 무인증 전환 완료로 정정 ④ **미결제 정의 통일**(RECEIVED·DONE && UNPAID) ⑤ §7 신규: CORS, 잠금 뒤 읽기, 토큰 대조 ⑥ 확정 필요 표 갱신, §5 시더로 대체, §8 부록 갱신. 결제는 계좌이체만(PG 없음). 근거: 갈래 보고서 port-table·port-order·port-dash·port-fix·port-fix2·port-menu·port-cors·port-booth, verify-int2, e2e, deploy-mysql |
+| **v0.6** | **2026-09-16** | **통합 PR 반영 — 코드가 정본.** ① 신규 절: **O23 항목 수량 변경·O23b 항목 개별 취소·O24 테이블 일괄 입금 확인·O25 테이블 1개 자동 추가·O26 테이블 삭제·O27 운영자 메뉴 목록**(main이 명세 밖에서 먼저 만든 API를 명세에 편입) ② 변경 절: O3(합집합 응답·`session.id`·유휴 세션 `session:null`·`needsCleanup`), O6(멱등 200·`{unpaidWarning,id,label,status,warning?}`), O10(`Authorization` 필수·`boothId` 400·`activeSessionOnly`·`businessDate` 기본=현재 영업일·`sessionId`·`itemId`), O11~O13 응답 형태 정정, O14(검증 순서·409), O15(JWT·`{callId,acked}`), O16/O17(category·mapX·mapY·**depositorName** — main #57 병합), O22(0~10000·반올림), C1(유휴 세션 재발급·응답 필드 정정), C2·O7·O8(`category`), C3(저장 직전 종료 410), C4·C5(취소 항목 제외·행 잠금), C6(`X-Session-Token`), E1(미결제 예외·삭제 테이블 제외) ③ **§1.2 유휴 만료를 SeatIdlePolicy 공용 정의로 통일**, §1.1·§7-21 무인증 전환 완료로 정정 ④ **미결제 정의 통일**(RECEIVED·DONE && UNPAID) ⑤ §7 신규: CORS, 잠금 뒤 읽기, 토큰 대조 ⑥ 확정 필요 표 갱신, §5 시더로 대체, §8 부록 갱신. 결제는 계좌이체만(PG 없음). 근거: 갈래 보고서 port-table·port-order·port-dash·port-fix·port-fix2·port-menu·port-cors·port-booth, verify-int2, e2e, deploy-mysql |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
-v0.5의 9건 중 7건(부스 수 복수·좌석 표시 방식·좌표 입력 주체·홈 화면 담당·파트 분담·O3 합집합·category 값 체계·시딩 형식)은 코드로 확정됐다. 남은 것과 새로 생긴 것만 둔다 (8건).
+v0.5의 9건 중 7건(부스 수 복수·좌석 표시 방식·좌표 입력 주체·홈 화면 담당·파트 분담·O3 합집합·category 값 체계·시딩 형식)은 코드로 확정됐다. 남은 것과 새로 생긴 것만 둔다 (7건).
 
 | # | 항목 | 현재 값 (코드·설정) | 확정이 필요한 이유 |
 |---|---|---|---|
@@ -33,7 +33,6 @@ v0.5의 9건 중 7건(부스 수 복수·좌석 표시 방식·좌표 입력 주
 | 5 | **O13 취소 사유 필수화** | 코드는 **선택** — 빈 값이면 `"운영자 취소"`로 기록 (운영자 프론트에 사유 입력 UI가 없음) | v0.4 명세는 "1~100자 필수"였다. 분쟁 방지용 기록이 획일화되는 것을 받아들일지 결정 |
 | 6 | **전 영업일 미결제가 남은 세션의 운영 규칙** | 06:00 경계가 지나면 전날 미결제는 세션을 붙잡지 않는다. C1 재스캔으로 새 세션이 열리면 옛 미결제는 O3·O6·O24에서 빠지고 **O10 대시보드(해당 `businessDate`)에서만** 보인다 (verify-int2 §2) | 의도된 동작이나 운영자가 전날 미수금을 O10·정산으로 대사해야 한다. 운영 절차에 넣을지 결정 |
 | 7 | **운영자 인증의 부스 클레임 검사 범위** | 대시보드 파트(O10~O15·O21·O23·O24)와 O16은 JWT `boothId` 클레임 ≠ 계정 현재 부스면 401. 테이블·메뉴·정산·O17 경로는 계정의 현재 부스로 스코프만 한다 | 보안 침해는 아니다(어느 경로도 남의 부스를 열지 않음). 하네스 하나로 통합할지 결정 (verify-int2 §4 Low) |
-| 8 | **main #53·#57과 통합본의 병합 결과** | 이 문서의 기준 코드(f7aac1d) 이후 main에 #53(메뉴 `category`)·#57(부스 `depositorName`)이 머지됐다. #53은 통합 갈래와 값·필드명·null 규칙이 일치하고 400 문구만 다르다. #57은 통합본에 없는 신규 필드다 | 통합 시 어느 코드로 맞추는지(팀장: main #53 기준 예정) 확정되면 C2·O7·O8·O27의 문구와 O16/O17·DB `booth.depositor_name`을 반영한다 |
 
 ## 반영된 확정 결정 (이 명세서의 전제)
 
@@ -55,7 +54,7 @@ v0.5의 9건 중 7건(부스 수 복수·좌석 표시 방식·좌표 입력 주
 | 14 | **(9/16) 수량 증가 허용** — 단 입금 전(RECEIVED·UNPAID)·품절·숨김·주문 마감 검사를 C3과 같은 기준으로 한다 | O23 |
 | 15 | **(9/16) 개별 취소한 항목은 행을 남기고 숨긴다**(`canceled=true`). 마지막 항목 취소는 O13과 같은 전이 | O23b |
 | 16 | **(9/16) 미결제 정의 = `status ∈ {RECEIVED, DONE}` && `paymentStatus = UNPAID`** — 서빙 여부와 무관하게 입금이 안 된 주문. O3·O6·O24·유휴 예외·E1이 같은 정의를 쓴다. C3 상한·C5·O23 판정은 RECEIVED·UNPAID(다른 목적) | §2, §7-23 |
-| 17 | 메뉴 분류는 **운영자 등록 시 지정**(MAIN / SIDE / DRINK), 분류 없음 허용 | C2·O7·O8 |
+| 17 | 메뉴 분류는 **운영자 등록 시 지정**(MAIN / SIDE / DRINK), 분류 없음 허용. 통합 결과 main #53 구현을 채택 | C2·O7·O8·O27 |
 | 18 | 손님 홈 화면 경로 `/home`. 프론트·API **도메인 분리 배포**, 운영 DB **RDS MySQL 8.0** | §7-22 CORS, 배포 문서 |
 
 ---
@@ -384,7 +383,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 
 **규칙**
 - `visible = false` 메뉴 제외. 품절 메뉴는 포함하되 `soldOut: true`. `id` 오름차순
-- **`category` (v0.6)**: `MAIN` / `SIDE` / `DRINK` / `null`. 키는 항상 있다. 분류 없는 메뉴는 손님 화면의 '전체' 탭에만 보인다. **값·필드명은 main #53 기준** — 통합 갈래(port-menu)와 main #53이 같은 기능을 따로 구현했고 값(`MAIN`·`SIDE`·`DRINK`)·필드명(`category`)·null 의미는 일치한다. 통합 시 main #53 코드로 맞춘다(확정 전)
+- **`category` (v0.6)**: `MAIN` / `SIDE` / `DRINK` / `null`. 키는 항상 있다. 분류 없는 메뉴는 손님 화면의 '전체' 탭에만 보인다
 - `imageUrl`은 API 서버 기준 상대 경로 `/uploads/menu/{랜덤}.jpg`
 - 잔여 수량 필드 없음. 이 조회도 세션 활동으로 기록된다
 
@@ -659,7 +658,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | imageUrl | string | — | 500자 이하. O9 결과 |
 | visible | boolean | — | 기본 true |
 | soldOut | boolean | — | 보내면 타입만 검사하고 **저장값은 항상 false로 시작** |
-| **category** | string | — | **`MAIN` / `SIDE` / `DRINK` 대문자 정확 일치(trim 없음), 또는 `null`/생략(분류 없음).** 그 외(`main`, `" MAIN"`, `""`, `ALL`) `400`. **값·필드명은 main #53 기준**(두 구현이 값·필드명·null 규칙 일치). 400 message 문구만 다르다 — 통합본 `category: 분류는 MAIN, SIDE, DRINK 중 하나여야 합니다.`, main #53 `category: category는 MAIN, SIDE, DRINK 중 하나여야 합니다.` — 통합 확정 후 한쪽으로 고정 |
+| **category** | string | — | **`MAIN` / `SIDE` / `DRINK` 대문자 정확 일치(trim 없음), 또는 `null`/생략(분류 없음).** 그 외(`main`, `" MAIN"`, `""`, `ALL`) `400` — message `category: category는 MAIN, SIDE, DRINK 중 하나여야 합니다.` |
 
 **Response 201**: `{ "id", "name", "price", "imageUrl", "description", "soldOut": false, "visible", "category" }`
 
@@ -673,7 +672,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 { "soldOut": true }       // 6.2 원클릭 품절 (해제는 false)
 { "visible": false }      // 6.1 숨김
 { "price": 9000 }
-{ "category": "DRINK" }   // 분류 변경, null이면 지움(미분류), 생략하면 유지 — 값·필드명은 main #53 기준
+{ "category": "DRINK" }   // 분류 변경, null이면 지움(미분류), 생략하면 유지
 ```
 
 **Response 200**: 갱신된 메뉴 객체(O7과 같은 형태) / **Errors**: `400` / `404`(타 부스·미존재) / `409 INVALID_STATE`(이름 중복)
@@ -683,7 +682,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 
 ## O27. GET /api/v1/admin/menus — 운영자 메뉴 목록 (기능 6.1, v0.6 편입)
 
-**Response 200**: `{ "menus": [ O7 응답 형태 ... ] }` — **숨김·품절 포함 전체**, `id` 오름차순. 메뉴 등록/편집 화면 전용. **이력**: main이 명세 밖에서 먼저 만든 API. 응답에 `category`가 추가됐다(값·필드명은 main #53 기준)
+**Response 200**: `{ "menus": [ O7 응답 형태 ... ] }` — **숨김·품절 포함 전체**, `id` 오름차순. 메뉴 등록/편집 화면 전용. **이력**: main이 명세 밖에서 먼저 만든 API. 응답에 `category`가 추가됐다
 
 ## O9. POST /api/v1/admin/uploads — 메뉴 사진 업로드 (기능 6.1)
 
@@ -801,13 +800,14 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 
 ```json
 {
-  "name": "컴공 주점", "bankAccount": "카카오뱅크 ...", "operatingHours": "18:00~02:00",
+  "name": "컴공 주점", "bankAccount": "카카오뱅크 ...", "depositorName": "홍길동",
+  "operatingHours": "18:00~02:00",
   "tableCount": 10, "isOpen": true,
   "category": "FOOD", "mapX": 3200, "mapY": 5400
 }
 ```
 
-**PATCH Request (부분 수정)** — 허용 필드 7개, 그 외 `400 지원하지 않는 필드입니다`, 빈 본문 `400`
+**PATCH Request (부분 수정)** — 허용 필드 8개(`name`·`operatingHours`·`isOpen`·`bankAccount`·`depositorName`·`category`·`mapX`·`mapY`), 그 외 `400 지원하지 않는 필드입니다`, 빈 본문 `400`
 
 | 필드 | 타입 | 변경 권한 | 규칙 |
 |---|---|---|---|
@@ -815,6 +815,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | operatingHours | string | STAFF | 50자 이하. `null` 허용(지움) |
 | isOpen | boolean | STAFF | 주문 접수 스위치. false면 C3·O14·O23 증가가 `409 ORDER_CLOSED` |
 | bankAccount | string | **ADMIN** | 공백 불가, 100자 이하. STAFF가 포함해 보내면 `403`(다른 필드만이면 통과) |
+| **depositorName** | string | **ADMIN** | **예금주명 (v0.6 신설, main #57)** — 계좌 등록 화면 표시용 라벨. trim 후 50자 이하. `null`·빈 문자열·공백은 미지정(`null`)으로 저장. bankAccount와 같은 화면·같은 권한(STAFF `403`)이지만 입금 경로를 바꾸지 않는 표시값이라 **감사 로그·웹훅 대상은 아니다**. C3 결제 안내에는 나가지 않는다 |
 | **category** | string | STAFF | `FOOD` / `CAFE` / `GOODS` / `ETC` **대문자 정확 일치**. `null`·소문자·공백·그 외 값 `400` |
 | **mapX / mapY** | int | STAFF | **둘을 함께** 보내야 한다(한쪽만 `400`). **정수만** 0~10000(소수·문자열·null `400`). null로 핀 제거는 받지 않는다(확정 필요 #4) |
 | tableCount | int | 읽기 전용 | **활성 테이블 수**(삭제 제외) |
@@ -822,7 +823,6 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 **Response 200**: GET과 같은 형태(전 필드) / **Errors**: `400` / `401` / `403` / `404`
 
 - **v0.5의 "구현 주의(화이트리스트에 세 필드 없음)"는 해소됐다**
-- **main #57(이 문서의 기준 코드 이후 머지)이 `depositorName`(예금주명)을 O16 응답·O17 화이트리스트에 추가했다** — string, trim 후 50자 이하, `null`·빈 문자열·공백은 미지정(null)으로 저장, **ADMIN** 권한(STAFF 403), 표시용 라벨이라 감사 로그·웹훅 대상 아님(#57 코드 기준). 기준 코드 f7aac1d에는 없어 위 표에 넣지 않았다 — 통합 확정 후 반영(확정 필요 #8)
 - **bankAccount 변경 규칙**: 같은 값이면 무변경. 바뀌면 `booth_account_change_log`(누가·언제·이전·새값) 기록 + 트랜잭션 커밋 후 웹훅(`BOOTLOCK_OPERATIONS_WEBHOOK_URL` 환경변수, 미설정이면 생략). 웹훅 본문은 이벤트 종류(`BOOTH_BANK_ACCOUNT_CHANGED`)·부스 id·변경자·시각만 담고 **계좌번호 자체를 보내지 않는다**(마스킹이 필요 없음)
 - 부스 엔티티는 변경 컬럼만 UPDATE(`@DynamicUpdate`) — O17 저장이 동시 O25의 `next_table_seq`를 되돌리지 않는다
 
@@ -1021,7 +1021,7 @@ TableSession 1─N Call
 
 | 엔티티 | 핵심 필드 | v0.6 비고 |
 |---|---|---|
-| Booth | name, bankAccount, isOpen, operatingHours, category, mapX, mapY, **nextTableSeq** | `nextTableSeq`는 O25 채번 카운터. `@DynamicUpdate` |
+| Booth | name, bankAccount, **depositorName**(null 가능), isOpen, operatingHours, category, mapX, mapY, **nextTableSeq** | `depositorName`은 예금주명 표시 라벨(감사 대상 아님). `nextTableSeq`는 O25 채번 카운터. `@DynamicUpdate` |
 | Table | boothId, label(원본 ≤20자), tableToken(unique), status(EMPTY/OCCUPIED, **VARCHAR**), posX, posY, **active** | `active=false` = soft delete. `@DynamicUpdate` |
 | TableSession | tableId, sessionToken(unique), startedAt, endedAt, lastActivityAt, endedAtKey | `unique(tableId, endedAtKey)`, 열린 세션 = `endedAt IS NULL AND endedAtKey = 0`. `id`가 O3·O10에 노출. `@DynamicUpdate` |
 | Menu | boothId, name, price, imageUrl, description, soldOut, visible, **category** | **`unique(boothId, name)`**. category VARCHAR(MAIN/SIDE/DRINK/NULL) |
@@ -1093,6 +1093,6 @@ TableSession 1─N Call
 # 9. 다음 단계
 
 1. 이 문서를 노션에 반영 → 프론트·운영이 v0.6 기준으로 배선 확인(O24·O6 순서, `businessDate` 생략, `manual`·`sessionId`·`itemId` 필드명, `imageUrl` 절대 주소화)
-2. 확정 필요 8건 결정(특히 #8 main #53·#57 병합 결과) → 해당 절 갱신 후 동결
+2. 확정 필요 7건 결정 → 해당 절 갱신 후 동결
 3. 운영 준비: 시딩 파일 작성(§5), RDS 스키마 선적용(`schema-mysql8.sql`, `ddl-auto=validate`), CORS 오리진·JWT 시크릿·고객 base-url 환경변수 — 절차는 `배포_운영절차.md`
 4. 남은 백엔드 Low: O19 구현 여부, 인증 하네스 통합(확정 필요 #7), 죽은 코드 정리
