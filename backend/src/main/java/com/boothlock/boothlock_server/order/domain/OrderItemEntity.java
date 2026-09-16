@@ -79,10 +79,15 @@ public class OrderItemEntity {
 
     /** O6 결제 모달 수량 +/- — 0 이하로는 못 내리고(제거는 cancel()로 별도 처리), 주문 생성 때와 같은 상한(30)을 넘길 수 없다 */
     public void updateQty(int qty) {
+        requireValidQty(qty);
+        this.qty = qty;
+    }
+
+    /** 수량 범위 검사(1~30) — 호출자가 품절 검사보다 먼저 400을 돌려주고 싶을 때 따로 부른다 */
+    public static void requireValidQty(int qty) {
         if (qty < 1 || qty > MAX_QTY) {
             throw new InvalidRequestException("수량은 1~" + MAX_QTY + "개까지 가능합니다");
         }
-        this.qty = qty;
     }
 
     /** O6 결제 모달 개별 "취소" — 지우지 않고 숨김 처리, 합계 재계산은 OrderEntity 몫 */

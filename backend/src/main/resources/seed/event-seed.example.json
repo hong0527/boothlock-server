@@ -1,0 +1,32 @@
+{
+  "booths": [
+    {
+      "name": "CHANGE_ME 부스 이름 (50자 이하)",
+      "bankAccount": "CHANGE_ME 은행 계좌번호 (예금주)",
+      "category": "FOOD",
+      "mapX": 3200,
+      "mapY": 5400,
+      "operatingHours": "18:00~02:00",
+      "admin": {
+        "loginId": "CHANGE_ME-부스명에서-유추-불가한-id",
+        "passwordEnv": "BOOTLOCK_SEED_PASSWORD_CHANGE_ME_1"
+      }
+    },
+    {
+      "name": "CHANGE_ME 두 번째 부스",
+      "bankAccount": "CHANGE_ME 은행 계좌번호 (예금주)",
+      "category": "CAFE",
+      "mapX": 6100,
+      "mapY": 2800,
+      "admin": {
+        "loginId": "CHANGE_ME-두번째-id",
+        "passwordEnv": "BOOTLOCK_SEED_PASSWORD_CHANGE_ME_2"
+      }
+    }
+  ],
+  "eventMap": {
+    "imageUrl": "/uploads/event/CHANGE_ME.png",
+    "width": 1600,
+    "height": 1200
+  }
+}

@@ -50,12 +50,21 @@ public class BoothInfoService {
         BoothEntity booth = boothRepository.findById(boothId)
                 .orElseThrow(() -> new NotFoundException("부스를 찾을 수 없습니다."));
         long tableCount = boothRepository.countTablesByBoothId(boothId);
+        return toResponse(booth, tableCount);
+    }
+
+    /** O16·O17 공통 응답 — 두 곳에서 따로 조립하면 필드가 추가될 때 한쪽만 바뀐다 */
+    static BoothInfoDto.Response toResponse(BoothEntity booth, long tableCount) {
         return new BoothInfoDto.Response(
                 booth.getName(),
                 booth.getBankAccount(),
+                booth.getDepositorName(),
                 booth.getOperatingHours(),
                 tableCount,
-                booth.isOpen());
+                booth.isOpen(),
+                booth.getCategory(),
+                booth.getMapX(),
+                booth.getMapY());
     }
 
     public StaffAccountEntity authenticate(Jwt jwt) {

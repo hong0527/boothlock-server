@@ -6,6 +6,7 @@
 > v1.2.1 변경: `orders.table_label` 추가 — 주문 시점 테이블 라벨 스냅샷(O10 표시·O19 CSV용).
 > **v1.3 변경 (2026-09-07 회의 결정 반영)**: ① `booth`에 `category`·`map_x`·`map_y` 추가 — 손님 홈 화면의 부스 분류와 약도 핀 위치(API E1·E2) ② `booth_table`에 `pos_x`·`pos_y` 추가 — 운영자 POS형 배치도의 테이블 상자 위치(API O3·O22) ③ **`event_map` 테이블 신설** — 행사 약도 이미지 1건 ④ 파일럿 전제가 단일 부스에서 복수 부스로 바뀌어 부스·계정·약도 시딩이 실질 필수가 됨 ⑤ 좌석 현황을 `booth_table.status`가 아니라 `table_session`의 종료 여부와 마지막 활동 시각으로 판정(원칙 14) ⑥ 좌표 컬럼을 `Integer`로 두어야 하는 이유 정정(원칙 설명·pos_y 참조).
 > **v1.3.1 변경**: `menu`에 `category` 추가(NULL 허용) — 메인메뉴/사이드/음료 분류. 기존 메뉴는 NULL로 남고, 소비자 메뉴판(C2)에서는 미분류로 취급돼 "전체" 탭에서만 노출된다. O7·O8 요청 필드와 C2 응답에 반영.
+> **v1.3.2 변경**: `booth`에 `depositor_name` 추가(NULL 허용) — 계좌 등록 화면의 예금주명 표시용 라벨. `bank_account`와 같은 화면·같은 ADMIN 권한으로 O16·O17에 반영하되, 입금 경로 자체를 바꾸지 않는 표시값이라 감사 로그·웹훅 대상에서는 제외했다.
 > 규칙: 엔티티에는 반드시 `@Table(name = "...")`로 아래 테이블명을 명시한다 (Hibernate 자동 이름에 맡기지 않음).
 
 ## 0. 전체 관계도 (ERD)
@@ -48,6 +49,7 @@ erDiagram
 | id | BIGINT | PK, AUTO_INCREMENT | |
 | name | VARCHAR(50) | NOT NULL | 부스명 (소비자 화면 상단 표시) |
 | bank_account | VARCHAR(100) | NOT NULL | 계좌 표기 문자열 — C3 응답에 그대로 노출. 변경은 감사 로그 필수 |
+| depositor_name | VARCHAR(50) | NULL | **v1.3.2 신설** — 예금주명(계좌 등록 화면 표시용 라벨). bank_account와 달리 입금 경로 자체를 바꾸지 않아 감사 로그·웹훅 대상은 아님(§3 원칙 추가 예정) |
 | is_open | BOOLEAN | NOT NULL DEFAULT TRUE | 주문 접수 스위치 — FALSE면 주문 409 ORDER_CLOSED |
 | operating_hours | VARCHAR(50) | NULL | 안내용 텍스트 (서버가 시간으로 주문을 막지 않음) |
 | category | VARCHAR(20) | NULL | **v1.3 신설** — 홈 화면 부스 분류. `FOOD` / `CAFE` / `GOODS` / `ETC`. E1 응답·필터용. NULL이면 미분류로 표시 |
@@ -215,6 +217,7 @@ CREATE TABLE booth (
   id              BIGINT AUTO_INCREMENT PRIMARY KEY,
   name            VARCHAR(50)  NOT NULL,
   bank_account    VARCHAR(100) NOT NULL,
+  depositor_name  VARCHAR(50)  NULL,
   is_open         BOOLEAN      NOT NULL DEFAULT TRUE,
   operating_hours VARCHAR(50),
   category        VARCHAR(20)  NULL,

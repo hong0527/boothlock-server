@@ -9,7 +9,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.ResourceLock;
 
+import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
+import com.boothlock.boothlock_server.order.service.OrderNumberingService;
+
+import java.time.Clock;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
@@ -42,16 +47,21 @@ class EventQueryServiceTimeZoneTests {
         TimeZone.setDefault(original);
     }
 
+    /** 실제 배포와 같은 시스템 시계(UTC 순간)로 만든 정책 */
+    private static SeatIdlePolicy policy() {
+        return new SeatIdlePolicy(180, Clock.systemUTC(), new OrderNumberingService(null));
+    }
+
     @Test
     void idleSinceIsComputedInKstEvenWhenJvmIsUtc() {
         AtomicReference<LocalDateTime> captured = new AtomicReference<>();
         BoothSeatRepository seats = mock(BoothSeatRepository.class);
-        when(seats.findSeatSummaries(any(LocalDateTime.class))).thenAnswer(invocation -> {
+        when(seats.findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class))).thenAnswer(invocation -> {
             captured.set(invocation.getArgument(0));
             return List.of();
         });
 
-        new EventQueryService(seats, null, 180, 0).getBooths(null);
+        new EventQueryService(seats, null, policy(), 0).getBooths(null);
 
         LocalDateTime expected = LocalDateTime.now(ZoneId.of("Asia/Seoul")).minusMinutes(180);
         assertThat(Duration.between(captured.get(), expected).abs()).isLessThan(Duration.ofMinutes(1));
@@ -63,7 +73,7 @@ class EventQueryServiceTimeZoneTests {
         when(maps.findFirstByOrderByIdDesc()).thenReturn(Optional.of(
                 new EventMapEntity("/uploads/event/map.png", 10, 10, LocalDateTime.of(2026, 9, 10, 14, 0))));
 
-        assertThat(new EventQueryService(null, maps, 180, 0).getMap().updatedAt().toString())
+        assertThat(new EventQueryService(null, maps, policy(), 0).getMap().updatedAt().toString())
                 .isEqualTo("2026-09-10T14:00+09:00");
     }
 }

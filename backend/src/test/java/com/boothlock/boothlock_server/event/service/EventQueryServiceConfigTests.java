@@ -1,59 +1,58 @@
 package com.boothlock.boothlock_server.event.service;
 
+import com.boothlock.boothlock_server.event.repository.BoothSeatRepository;
+import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
+import com.boothlock.boothlock_server.order.service.OrderNumberingService;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
- * 좌석 유휴 임계 설정값 검증 (명세서 E1).
- * 임계가 0 이하면 idleSince가 현재 시각 이후가 되어 활성 세션이 하나도 안 잡히고
- * 전 부스가 "빈자리 가득"으로 보인다. 화면만 봐서는 오설정인지 그냥 한가한 건지 구별되지 않아
- * 행사 중에 알아채기 가장 어려운 종류의 오류다. 기동 시점에 막는다.
+ * 좌석 유휴 임계 설정 (명세서 E1).
+ * 임계값 하한 검증은 운영자 좌석 현황(O3)과 공유하는 SeatIdlePolicy로 옮겼다 — SeatIdlePolicyTests 참조.
+ * 여기서는 E1이 그 정책의 기준 시각을 그대로 쓰는지와, 설정 손잡이가 배포 파일에 드러나 있는지를 본다.
  */
 class EventQueryServiceConfigTests {
 
     @Test
-    @DisplayName("유휴 임계가 0이면 기동을 거부한다")
-    void rejectsZeroIdleThreshold() {
-        assertThatThrownBy(() -> new EventQueryService(null, null, 0, 10))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("seat-idle-minutes");
-    }
+    @DisplayName("E1 집계는 공유 유휴 정책의 idleSince·영업일을 그대로 쓴다 — O3·C1과 기준이 갈라지지 않는다")
+    void usesSharedIdlePolicyThreshold() {
+        Instant now = LocalDateTime.of(2026, 9, 15, 18, 0).atZone(ZoneId.of("Asia/Seoul")).toInstant();
+        SeatIdlePolicy policy = new SeatIdlePolicy(45, Clock.fixed(now, ZoneOffset.UTC), new OrderNumberingService(null));
+        BoothSeatRepository repository = mock(BoothSeatRepository.class);
+        when(repository.findSeatSummaries(LocalDateTime.of(2026, 9, 15, 17, 15), LocalDate.of(2026, 9, 15))).thenReturn(List.of());
 
-    @Test
-    @DisplayName("유휴 임계가 음수면 기동을 거부한다")
-    void rejectsNegativeIdleThreshold() {
-        assertThatThrownBy(() -> new EventQueryService(null, null, -30, 10))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
+        new EventQueryService(repository, null, policy, 0).getBooths(null);
 
-    @Test
-    @DisplayName("거부 메시지에 실제 설정값이 담겨 원인을 바로 알 수 있다")
-    void messageCarriesTheOffendingValue() {
-        assertThatThrownBy(() -> new EventQueryService(null, null, -30, 10))
-                .hasMessageContaining("-30");
+        verify(repository).findSeatSummaries(LocalDateTime.of(2026, 9, 15, 17, 15), LocalDate.of(2026, 9, 15));
     }
 
     @Test
     @DisplayName("캐시 시간이 음수면 기동을 거부한다 — 0은 캐시 끄기로 허용한다")
     void rejectsNegativeCacheSeconds() {
-        assertThatThrownBy(() -> new EventQueryService(null, null, 180, -1))
+        SeatIdlePolicy policy = new SeatIdlePolicy(180, Clock.systemUTC(), new OrderNumberingService(null));
+        assertThatThrownBy(() -> new EventQueryService(null, null, policy, -1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("booths-cache-seconds");
-        assertThatCode(() -> new EventQueryService(null, null, 180, 0)).doesNotThrowAnyException();
-    }
-
-    @Test
-    @DisplayName("1분은 허용한다 — 하한만 막고 짧은 값 자체는 운영 판단에 맡긴다")
-    void acceptsOneMinute() {
-        assertThatCode(() -> new EventQueryService(null, null, 1, 10)).doesNotThrowAnyException();
+        assertThatCode(() -> new EventQueryService(null, null, policy, 0)).doesNotThrowAnyException();
     }
 
     @Test

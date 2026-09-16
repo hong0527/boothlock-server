@@ -27,7 +27,9 @@ public record DashboardResponse(List<OrderSummary> orders, List<CallSummary> cal
             OffsetDateTime approvedAt,
             String refundedBy,
             OffsetDateTime refundedAt,
-            OffsetDateTime createdAt) {
+            OffsetDateTime createdAt,
+            /** 주문이 붙은 테이블 세션 PK — O3 session.id와 맞춰 "지금 앉은 손님" 주문을 고른다. 테이블 미지정 수기 주문은 null. 기존 필드 뒤에 붙였다 */
+            Long sessionId) {
     }
 
     public record OrderItemSummary(Long itemId, Long menuId, String menuName, int unitPrice, int qty) {

@@ -125,6 +125,23 @@ class DashboardOrderActionApiTests {
     }
 
     @Test
+    void confirmsPaymentOnDoneButUnpaidOrder() throws Exception {
+        // O12 완료는 입금 전에도 가능(명세 O12)하므로 DONE·UNPAID가 생긴다 — 미수금이라 O11로 받아야 한다(UnpaidOrderRule).
+        // 조건부 UPDATE의 조건은 payment_status='UNPAID'(+ 취소 아님)뿐이라 status는 보지 않는다
+        Long orderId = newOrder(boothId, 21);
+        setOrderStatus(orderId, OrderStatus.DONE);
+
+        mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/payment", orderId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"method\":\"BANK_TRANSFER\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DONE"))
+                .andExpect(jsonPath("$.paymentStatus").value("PAID"))
+                .andExpect(jsonPath("$.approvedBy").value("dashboard-staff"));
+    }
+
+    @Test
     void rejectsConfirmPaymentOnAlreadyPaidOrder() throws Exception {
         Long orderId = newOrder(boothId, 2);
         setPaymentStatus(orderId, PaymentStatus.PAID);

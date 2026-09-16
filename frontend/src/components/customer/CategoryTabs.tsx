@@ -3,31 +3,31 @@ import type { MenuCategoryCode } from '../../types/customer'
 /** 'ALL'은 프론트 전용 탭 키 — 백엔드 category 값(MAIN·SIDE·DRINK)에는 없다 */
 export type MenuCategory = 'ALL' | MenuCategoryCode
 
-const TABS: { key: MenuCategory; label: string }[] = [
-  { key: 'ALL', label: '전체' },
-  { key: 'MAIN', label: '메인메뉴' },
-  { key: 'SIDE', label: '사이드' },
-  { key: 'DRINK', label: '음료' },
-]
-
 type CategoryTabsProps = {
   active: MenuCategory
   onChange: (category: MenuCategory) => void
 }
 
+const CATEGORIES: { value: MenuCategory; label: string; width: string }[] = [
+  { value: 'ALL', label: '전체', width: 'w-[68px]' },
+  { value: 'MAIN', label: '메인메뉴', width: 'w-[83px]' },
+  { value: 'SIDE', label: '사이드', width: 'w-[68px]' },
+  { value: 'DRINK', label: '음료', width: 'w-[68px]' },
+]
+
 export default function CategoryTabs({ active, onChange }: CategoryTabsProps) {
   return (
-    <div className="flex gap-[9px] overflow-x-auto px-[17px] pt-3 pb-[13px]">
-      {TABS.map((tab) => (
+    <div className="flex h-[61px] w-full shrink-0 items-start gap-[9px] border-b border-neutral-300 bg-neutral-50 px-[17px] pt-3">
+      {CATEGORIES.map((category) => (
         <button
-          key={tab.key}
+          key={category.value}
           type="button"
-          onClick={() => onChange(tab.key)}
-          className={`h-9 shrink-0 rounded-[12px] px-[17px] text-body-1 ${
-            active === tab.key ? 'bg-black text-white' : 'bg-neutral-100 text-neutral-600'
+          onClick={() => onChange(category.value)}
+          className={`${category.width} max-[374px]:w-auto max-[374px]:flex-1 min-[376px]:w-auto min-[376px]:flex-1 h-[36px] min-w-0 rounded-[12px] text-[15px] leading-[1.2] font-semibold tracking-[-0.72px] ${
+            active === category.value ? 'bg-black text-white' : 'bg-neutral-100 text-neutral-600'
           }`}
         >
-          {tab.label}
+          {category.label}
         </button>
       ))}
     </div>

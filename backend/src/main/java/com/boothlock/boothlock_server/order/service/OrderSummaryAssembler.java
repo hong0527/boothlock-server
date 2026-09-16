@@ -22,7 +22,9 @@ public class OrderSummaryAssembler {
     }
 
     private OrderListResponse.OrderSummary toSummary(OrderEntity order, String bankAccount) {
+        // 결제 모달에서 개별 취소된 항목은 손님 화면(C4·C5 응답)에서도 뺀다 — 안 빼면 totalAmount와 항목 합이 어긋난다 (대시보드 매퍼와 같은 규칙)
         List<OrderListResponse.OrderItemSummary> items = order.getItems().stream()
+                .filter(item -> !item.isCanceled())
                 .map(this::toItemSummary)
                 .toList();
         return new OrderListResponse.OrderSummary(
