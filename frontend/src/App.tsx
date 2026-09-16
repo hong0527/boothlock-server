@@ -2,6 +2,8 @@ import { Route, Routes } from 'react-router-dom'
 import { CartProvider } from './context/CartContext'
 import { TableOrderProvider } from './context/TableOrderContext'
 import LoginPage from './pages/LoginPage'
+import CodeScanPage from './pages/CodeScanPage'
+import HomePage from './pages/HomePage'
 import OrderStatusPage from './pages/OrderStatusPage'
 import CartPage from './pages/customer/CartPage'
 import MenuOrderPage from './pages/customer/MenuOrderPage'
@@ -23,6 +25,10 @@ function App() {
       <Routes>
         <Route path="/" element={<LoginPage />} />
         <Route path="/orders" element={<OrderStatusPage />} />
+
+        {/* 방문자 홈 — Figma 92:2 / 95:368 / 212:704 */}
+        <Route path="/home" element={<HomePage />} />
+        <Route path="/scan" element={<CodeScanPage />} />
         <Route
           path="/tables"
           element={
