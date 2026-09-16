@@ -1,10 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import OrderCard from '../components/OrderCard'
 import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
-import { cancelOrder as cancelOrderRequest, completeOrder as completeOrderRequest } from '../lib/orderActions'
-import { todayKst } from '../lib/time'
-import type { OrderStatus, OrderSummary } from '../types/dashboard'
+import { ackCall, cancelOrder as cancelOrderRequest, completeOrder as completeOrderRequest } from '../lib/orderActions'
+import { displayTableLabel } from '../lib/tableLabel'
+import { formatElapsed } from '../lib/time'
+import {
+  CALL_REASON_LABEL,
+  type CallSummary,
+  type DashboardResponse,
+  type OrderStatus,
+  type OrderSummary,
+} from '../types/dashboard'
 
 const TABS: { status: OrderStatus; label: string }[] = [
   { status: 'RECEIVED', label: '진행' },
@@ -16,22 +23,20 @@ const POLL_INTERVAL_MS = 5000 // 명세서 O10 권장 폴링 주기(3~5초)
 
 type OrdersByStatus = Record<OrderStatus, OrderSummary[]>
 
-async function fetchOrdersByStatus(status: OrderStatus): Promise<OrderSummary[]> {
-  const res = await apiFetch(`/api/v1/admin/orders?status=${status}&businessDate=${todayKst()}`)
+// businessDate는 보내지 않는다 — 서버 기본값이 현재 영업일(06:00 경계)이라 새벽에도 전날 영업일 주문이 그대로 보인다.
+// 응답의 calls(미확인 호출)는 status 필터와 무관하게 부스 전체가 실려 온다 — 세 번 중 한 응답에서만 읽으면 된다
+async function fetchDashboard(status: OrderStatus): Promise<DashboardResponse> {
+  const res = await apiFetch(`/api/v1/admin/orders?status=${status}`)
   if (!res.ok) throw new Error(`주문 목록을 불러오지 못했어요 (${res.status})`)
-  const data: { orders: OrderSummary[] } = await res.json()
-  return data.orders
+  return res.json()
 }
 
 export default function OrderStatusPage() {
   const [ordersByStatus, setOrdersByStatus] = useState<OrdersByStatus>({ RECEIVED: [], DONE: [], CANCELED: [] })
+  const [calls, setCalls] = useState<CallSummary[]>([])
   const [activeStatus, setActiveStatus] = useState<OrderStatus>('RECEIVED')
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
-  // "되돌리기"는 백엔드에 엔드포인트가 없어 로컬로만 되돌린다 — 폴링이 서버 값으로 덮어쓰지 않도록
-  // 되돌린 주문을 여기 보관해뒀다가 매 refetch마다 다시 얹는다. complete/cancel로 다시 실제 액션을
-  // 취하면(그때는 서버 상태가 진짜 바뀌므로) 지운다.
-  const revertedOrdersRef = useRef<Map<number, OrderSummary>>(new Map())
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000)
@@ -40,16 +45,9 @@ export default function OrderStatusPage() {
 
   const refetchAll = useCallback(async () => {
     try {
-      const [received, done, canceled] = await Promise.all(
-        TABS.map((tab) => fetchOrdersByStatus(tab.status)),
-      )
-      const overrides = revertedOrdersRef.current
-      const hasOverride = (o: OrderSummary) => overrides.has(o.orderId)
-      setOrdersByStatus({
-        RECEIVED: [...overrides.values(), ...received.filter((o) => !hasOverride(o))],
-        DONE: done.filter((o) => !hasOverride(o)),
-        CANCELED: canceled.filter((o) => !hasOverride(o)),
-      })
+      const [received, done, canceled] = await Promise.all(TABS.map((tab) => fetchDashboard(tab.status)))
+      setOrdersByStatus({ RECEIVED: received.orders, DONE: done.orders, CANCELED: canceled.orders })
+      setCalls(received.calls ?? [])
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : '주문 목록을 불러오지 못했어요.')
@@ -73,47 +71,36 @@ export default function OrderStatusPage() {
 
   const visibleOrders = ordersByStatus[activeStatus]
 
+  // O15 호출 확인 — 성공하면 서버 calls에서 빠진다. 폴링을 기다리지 않고 바로 지운다(멱등이라 중복 눌림도 안전)
+  const acknowledgeCall = async (callId: number) => {
+    const res = await ackCall(callId)
+    if (!res.ok && res.status !== 404) {
+      setError(`호출을 확인 처리하지 못했어요 (${res.status})`)
+      return
+    }
+    setCalls((prev) => prev.filter((c) => c.callId !== callId))
+    setError(null)
+  }
+
   const completeOrder = async (orderId: number) => {
     const res = await completeOrderRequest(orderId)
     if (!res.ok) {
       setError(`주문을 완료 처리하지 못했어요 (${res.status})`)
       return
     }
-    revertedOrdersRef.current.delete(orderId)
     setError(null)
     refetchAll()
   }
 
+  // 취소는 종결이다(명세 O13 — 되돌리는 API 없음). 오취소 복구는 O14 수기 주문 재입력으로 한다
   const cancelOrder = async (orderId: number) => {
     const res = await cancelOrderRequest(orderId)
     if (!res.ok) {
       setError(`주문을 취소 처리하지 못했어요 (${res.status})`)
       return
     }
-    revertedOrdersRef.current.delete(orderId)
     setError(null)
     refetchAll()
-  }
-
-  // "되돌리기"는 백엔드에 해당 엔드포인트가 아직 없음 — 로컬 화면 상태만 되돌리고,
-  // revertedOrdersRef에 보관해서 폴링(refetchAll)이 서버 값으로 다시 덮어쓰지 못하게 한다
-  const revertOrder = (orderId: number) => {
-    setOrdersByStatus((prev) => {
-      let reverted: OrderSummary | null = null
-      const next: OrdersByStatus = { RECEIVED: prev.RECEIVED, DONE: [], CANCELED: [] }
-      for (const status of ['DONE', 'CANCELED'] as const) {
-        next[status] = prev[status].filter((o) => {
-          if (o.orderId === orderId) {
-            reverted = { ...o, status: 'RECEIVED' }
-            return false
-          }
-          return true
-        })
-      }
-      if (!reverted) return prev
-      revertedOrdersRef.current.set(orderId, reverted)
-      return { ...next, RECEIVED: [reverted, ...next.RECEIVED] }
-    })
   }
 
   return (
@@ -139,6 +126,33 @@ export default function OrderStatusPage() {
 
       {error && <p className="px-10 pt-4 text-sm text-red-600">{error}</p>}
 
+      {/* 미확인 직원 호출(O10 calls) — 주문 카드와 같은 카드 톤으로 한 줄씩, '확인'을 누르면 O15 */}
+      {calls.length > 0 && (
+        <div className="flex flex-wrap gap-3 px-10 pt-6">
+          {calls.map((call) => (
+            <div
+              key={call.callId}
+              className="flex items-center gap-4 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3"
+            >
+              <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
+                {displayTableLabel(call.tableLabel)}
+              </span>
+              <span className="text-base tracking-[-0.04em] text-neutral-900">
+                {CALL_REASON_LABEL[call.reason] ?? call.reason}
+              </span>
+              <span className="text-sm text-blue-600">{formatElapsed(call.createdAt, now)}</span>
+              <button
+                type="button"
+                onClick={() => acknowledgeCall(call.callId)}
+                className="rounded-xl bg-neutral-600 px-4 py-2 text-base leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
+              >
+                확인
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-6 p-10 md:grid-cols-2 lg:grid-cols-3">
         {visibleOrders.map((order) => (
           <OrderCard
@@ -147,7 +161,6 @@ export default function OrderStatusPage() {
             now={now}
             onComplete={completeOrder}
             onCancel={cancelOrder}
-            onRevert={revertOrder}
           />
         ))}
         {visibleOrders.length === 0 && !error && (

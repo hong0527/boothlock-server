@@ -3,8 +3,12 @@ import { Link, useNavigate } from 'react-router-dom'
 import PrimaryButton from '../../components/PrimaryButton'
 import SectionHeader from '../../components/SectionHeader'
 import TopNav from '../../components/TopNav'
+import { assetUrl } from '../../lib/apiBase'
 import { apiFetch } from '../../lib/apiFetch'
 import type { MenuItem } from '../../types/menu'
+
+/** 백엔드 O7·O8 허용값(MAIN·SIDE·DRINK)의 화면 이름 — types/menu.ts는 #53 기준 그대로 두고 여기서만 쓴다 */
+const MENU_CATEGORY_LABEL: Record<'MAIN' | 'SIDE' | 'DRINK', string> = { MAIN: '메인메뉴', SIDE: '사이드', DRINK: '음료' }
 
 export default function MenuListPage() {
   const [menus, setMenus] = useState<MenuItem[]>([])
@@ -36,11 +40,15 @@ export default function MenuListPage() {
             className="flex h-[120px] items-center gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-5"
           >
             <div className="h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-300">
-              {menu.imageUrl && <img src={menu.imageUrl} alt="" className="h-full w-full object-cover" />}
+              {menu.imageUrl && <img src={assetUrl(menu.imageUrl)} alt="" className="h-full w-full object-cover" />}
             </div>
             <div className="flex flex-col gap-2">
-              <span className="text-[22px] leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
+              <span className="flex items-baseline gap-2 text-[22px] leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
                 {menu.name}
+                {/* 분류 라벨 — 없으면 손님 메뉴판 '전체' 탭에만 보인다는 뜻이라 미분류를 눈에 띄게 */}
+                <span className="text-sm font-medium text-neutral-400">
+                  {menu.category ? MENU_CATEGORY_LABEL[menu.category] : '미분류'}
+                </span>
               </span>
               <span className="text-[22px] leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
                 {menu.price.toLocaleString()} 원

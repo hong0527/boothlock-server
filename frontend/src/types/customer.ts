@@ -6,9 +6,11 @@ export type CustomerSessionInfo = {
   /** 테이블 이용 인원 선택 화면(PartySizePage)에서 확정 후 채워짐. 그 전까지는 없음 */
   partySize?: number
 }
-/** C2 메뉴판의 메뉴 1건.
- * category: 목업(전체/메인메뉴/사이드/음료 탭)엔 있지만 현재 백엔드 C2 응답엔 없는 필드 —
- * 값이 없으면(undefined) '전체' 탭에서만 보인다. 백엔드에 필드가 추가되면 그대로 동작한다.
+/** 메뉴 분류 — 백엔드 MenuService 허용값(MAIN·SIDE·DRINK, #53)과 같다. 분류 없는 메뉴는 null */
+export type MenuCategoryCode = 'MAIN' | 'SIDE' | 'DRINK'
+
+/** C2 메뉴판의 메뉴 1건 (MenuBoardResponse.MenuItem).
+ * category: 백엔드가 항상 키를 내려주며 분류 없는 메뉴는 null — 그런 메뉴는 '전체' 탭에서만 보인다('ALL' 탭은 프론트 전용).
  */
 export type CustomerMenuItem = {
   id: number
@@ -17,8 +19,11 @@ export type CustomerMenuItem = {
   imageUrl?: string | null
   description?: string | null
   soldOut: boolean
-  category?: 'MAIN' | 'SIDE' | 'DRINK'
+  category?: MenuCategoryCode | null
 }
+
+/** global/domain/PaymentStatus — 손님 화면은 UNPAID·PAID만 구분해 보여주지만, 운영자 취소·환불 뒤 값도 그대로 내려온다 */
+export type CustomerPaymentStatus = 'UNPAID' | 'PAID' | 'REFUND_NEEDED' | 'REFUNDED'
 
 /** 장바구니에 담긴 메뉴 1건 — 주문 전까지는 로컬 상태로만 존재 */
 export type CartItem = {
@@ -47,7 +52,7 @@ export type OrderCreateResult = {
   orderId: number
   orderNo: string
   status: 'RECEIVED' | 'DONE' | 'CANCELED'
-  paymentStatus: 'UNPAID' | 'PAID'
+  paymentStatus: CustomerPaymentStatus
   totalAmount: number
   items: OrderCreateItem[]
   payment: PaymentGuide
@@ -67,7 +72,7 @@ export type OrderSummary = {
   orderId: number
   orderNo: string
   status: 'RECEIVED' | 'DONE' | 'CANCELED'
-  paymentStatus: 'UNPAID' | 'PAID'
+  paymentStatus: CustomerPaymentStatus
   totalAmount: number
   items: OrderSummaryItem[]
   payment: PaymentGuide

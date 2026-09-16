@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
 import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { useCart } from '../../context/CartContext'
 import { customerApiFetch } from '../../lib/customerApiFetch'
-import { getSessionInfo } from '../../lib/customerSession'
+import { getSessionInfo, getSessionToken } from '../../lib/customerSession'
+import { cartFingerprint, createIdempotencyKeyStore } from '../../lib/idempotencyKey'
 import type { OrderCreateResult } from '../../types/customer'
 
 type OrderErrorBody = { error: { code: string; message: string } }
@@ -15,6 +16,8 @@ export default function OrderConfirmPage() {
   const { items, totalAmount, clear } = useCart()
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  // 멱등키는 클릭마다 새로 만들지 않는다 — 실패 뒤 재시도는 같은 키로 보내 서버가 중복 주문을 만들지 않게 한다
+  const idempotencyRef = useRef(createIdempotencyKeyStore())
 
   const handleSubmit = async () => {
     if (loading || items.length === 0) return
@@ -26,7 +29,7 @@ export default function OrderConfirmPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': crypto.randomUUID(),
+          'Idempotency-Key': idempotencyRef.current.keyFor(cartFingerprint(items)),
         },
         body: JSON.stringify({ items: items.map((item) => ({ menuId: item.menuId, qty: item.qty })) }),
       })
@@ -42,10 +45,12 @@ export default function OrderConfirmPage() {
       }
 
       const order: OrderCreateResult = await res.json()
+      idempotencyRef.current.clear()
       clear()
       navigate('/payment-info', { state: { order }, replace: true })
     } catch {
-      setError('서버에 연결할 수 없어요. 네트워크 상태를 확인해주세요.')
+      // 410(퇴실·만료)으로 customerApiFetch가 세션을 지우고 이동 중이면 네트워크 오류 문구가 잠깐 비치지 않게 한다
+      if (getSessionToken()) setError('서버에 연결할 수 없어요. 네트워크 상태를 확인해주세요.')
     } finally {
       setLoading(false)
     }

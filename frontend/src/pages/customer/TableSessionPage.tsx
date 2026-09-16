@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { apiUrl } from '../../lib/apiBase'
 import { setCustomerSession } from '../../lib/customerSession'
 
 type TableSessionResponse = {
@@ -21,7 +22,7 @@ export default function TableSessionPage() {
 
     let cancelled = false
 
-    fetch('/api/v1/table-sessions', {
+    fetch(apiUrl('/api/v1/table-sessions'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tableToken }),
