@@ -63,13 +63,14 @@ public class BoothSettingsService {
             booth.updateOpen(request.get("isOpen").asBoolean());
         }
         if (request.has("bankAccount")) changeBankAccount(request, staff, booth);
+        if (request.has("depositorName")) changeDepositorName(request, staff, booth);
 
-        return new BoothInfoDto.Response(booth.getName(), booth.getBankAccount(), booth.getOperatingHours(),
-                boothRepository.countTablesByBoothId(booth.getId()), booth.isOpen());
+        return new BoothInfoDto.Response(booth.getName(), booth.getBankAccount(), booth.getDepositorName(),
+                booth.getOperatingHours(), boothRepository.countTablesByBoothId(booth.getId()), booth.isOpen());
     }
 
     private void changeBankAccount(JsonNode request, StaffAccountEntity staff, BoothEntity booth) {
-        if (staff.getRole() != StaffRole.ADMIN) throw new ForbiddenException();
+        requireAdmin(staff);
         String newValue = requiredText(request, "bankAccount", 100);
         String oldValue = booth.getBankAccount();
         if (Objects.equals(oldValue, newValue)) return;
@@ -84,10 +85,28 @@ public class BoothSettingsService {
         });
     }
 
+    // 계좌 화면의 일부지만 표시용 라벨일 뿐 실제 입금 경로(계좌번호)를 바꾸지 않아 bankAccount와 달리
+    // 감사 로그·웹훅 대상은 아니다. 다만 같은 화면·같은 신뢰 등급이라 ADMIN 권한은 동일하게 요구한다.
+    private void changeDepositorName(JsonNode request, StaffAccountEntity staff, BoothEntity booth) {
+        requireAdmin(staff);
+        JsonNode node = request.get("depositorName");
+        if (node.isNull()) {
+            booth.updateDepositorName(null);
+            return;
+        }
+        // 빈 문자열/공백도 null(미지정)로 취급 — "null = 미지정" 계약을 공백 값이 조용히 깨지 않게 한다
+        String value = optionalText(request, "depositorName", 50).trim();
+        booth.updateDepositorName(value.isEmpty() ? null : value);
+    }
+
+    private void requireAdmin(StaffAccountEntity staff) {
+        if (staff.getRole() != StaffRole.ADMIN) throw new ForbiddenException();
+    }
+
     private void validateFields(JsonNode request) {
         request.propertyNames().forEach(name -> {
-            if (!name.equals("name") && !name.equals("operatingHours")
-                    && !name.equals("isOpen") && !name.equals("bankAccount"))
+            if (!name.equals("name") && !name.equals("operatingHours") && !name.equals("isOpen")
+                    && !name.equals("bankAccount") && !name.equals("depositorName"))
                 throw new InvalidRequestException("지원하지 않는 필드입니다: " + name);
         });
     }

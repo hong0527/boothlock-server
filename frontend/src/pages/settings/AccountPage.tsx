@@ -5,11 +5,12 @@ import TextField from '../../components/TextField'
 import TopNav from '../../components/TopNav'
 import { apiFetch } from '../../lib/apiFetch'
 
-type BoothInfo = { bankAccount: string }
+type BoothInfo = { bankAccount: string; depositorName?: string | null }
 
 export default function AccountPage() {
   const [bankName, setBankName] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
+  const [depositorName, setDepositorName] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -26,6 +27,7 @@ export default function AccountPage() {
         const [name, ...rest] = (data.bankAccount ?? '').trim().split(' ')
         setBankName(name ?? '')
         setAccountNumber(rest.join(' '))
+        setDepositorName(data.depositorName ?? '')
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
@@ -39,11 +41,14 @@ export default function AccountPage() {
     setSaving(true)
 
     try {
-      // O17 부스 설정 변경 — bankAccount는 ADMIN 전용 필드
+      // O17 부스 설정 변경 — bankAccount·depositorName은 ADMIN 전용 필드
       const res = await apiFetch('/api/v1/admin/booth', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bankAccount: `${bankName} ${accountNumber}`.trim() }),
+        body: JSON.stringify({
+          bankAccount: `${bankName} ${accountNumber}`.trim(),
+          depositorName: depositorName.trim() || null,
+        }),
       })
       if (!res.ok) {
         if (res.status === 403) throw new Error('계좌 변경은 관리자만 할 수 있어요.')
@@ -76,6 +81,13 @@ export default function AccountPage() {
           inputMode="numeric"
           value={accountNumber}
           onChange={(e) => setAccountNumber(e.target.value.replace(/-/g, ''))}
+          disabled={loading}
+        />
+        <TextField
+          label="예금주명"
+          placeholder="예금주명 입력"
+          value={depositorName}
+          onChange={(e) => setDepositorName(e.target.value)}
           disabled={loading}
         />
         {error && <p className="text-sm text-red-600">{error}</p>}
