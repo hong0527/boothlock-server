@@ -100,3 +100,33 @@ export function InfoIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+export function CameraIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M38.3333 31.6667C38.3333 32.5507 37.9821 33.3986 37.357 34.0237C36.7319 34.6488 35.8841 35 35 35H5C4.11595 35 3.2681 34.6488 2.64298 34.0237C2.01786 33.3986 1.66667 32.5507 1.66667 31.6667V13.3333C1.66667 12.4493 2.01786 11.6014 2.64298 10.9763C3.2681 10.3512 4.11595 10 5 10H11.6667L15 5H25L28.3333 10H35C35.8841 10 36.7319 10.3512 37.357 10.9763C37.9821 11.6014 38.3333 12.4493 38.3333 13.3333V31.6667Z"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M20 28.3333C23.6819 28.3333 26.6667 25.3486 26.6667 21.6667C26.6667 17.9848 23.6819 15 20 15C16.3181 15 13.3333 17.9848 13.3333 21.6667C13.3333 25.3486 16.3181 28.3333 20 28.3333Z"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+export function CloseIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M27 9L9 27" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 9L27 27" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
