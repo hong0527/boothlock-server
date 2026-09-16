@@ -24,9 +24,6 @@ function App() {
       <Routes>
         <Route path="/" element={<LoginPage />} />
         <Route path="/orders" element={<OrderStatusPage />} />
-
-        {/* 테이블 이용 인원 선택 — Figma 289:3672 */}
-        <Route path="/party-size" element={<PartySizePage />} />
         <Route
           path="/tables"
           element={
@@ -44,6 +41,8 @@ function App() {
 
         {/* 소비자(손님) 주문 플로우 — API 명세서 C1~C5 */}
         <Route path="/t/:tableToken" element={<TableSessionPage />} />
+        {/* 세션 발급 직후 인원 선택 — Figma 289:3672 */}
+        <Route path="/party-size" element={<PartySizePage />} />
         <Route path="/order" element={<MenuOrderPage />} />
         <Route path="/cart" element={<CartPage />} />
         <Route path="/session-expired" element={<SessionExpiredPage />} />

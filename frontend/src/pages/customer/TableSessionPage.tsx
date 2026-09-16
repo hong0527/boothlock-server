@@ -41,7 +41,8 @@ export default function TableSessionPage() {
           tableLabel: data.table.label,
         })
         // 명세서 §1.2: 토큰 교환 직후 tableToken을 주소창에서 제거 — replace 네비게이션으로 히스토리에도 안 남긴다
-        navigate('/order', { replace: true })
+        // 세션 발급 직후엔 인원 선택(Figma 289:3672)부터 거친다
+        navigate('/party-size', { replace: true })
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : '세션을 시작하지 못했어요.')
