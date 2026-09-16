@@ -55,6 +55,7 @@ erDiagram
 | **next_table_seq** | INT | NOT NULL DEFAULT 1 | **v1.4 편입** — O25 "테이블 추가" 자동 채번(`T-N`) 카운터. 부스 행 `FOR UPDATE` + `refresh` 아래에서 읽고, **컬럼 단독 UPDATE**(`TableSequenceRepository.setNextTableSeq`)로 올린다. 삭제해도 줄지 않는다(이력 없는 마지막 테이블 완전 삭제 시 1 반납 예외). 엔티티는 `columnDefinition = "integer default 1"` — 컬럼이 생기기 전 행·raw INSERT도 1로 채워지게 |
 
 - 엔티티 `@DynamicUpdate` — O17 저장(전체 컬럼 UPDATE였다면)이 동시에 채번된 `next_table_seq`를 옛 값으로 되돌려 이후 테이블 추가가 라벨 중복으로 영구 실패하던 결함(audit2 H3)의 수정
+- **main #57(기준 코드 이후 머지)이 `depositor_name VARCHAR(50) NULL`(예금주명)을 추가했다** — 이 문서의 기준 코드 f7aac1d에는 없어 표에 넣지 않았다. 통합 확정 후 컬럼 행·DDL에 반영(확정 필요)
 
 ### staff_account — 운영자 계정 (부스 파트)
 
@@ -115,7 +116,7 @@ erDiagram
 | description | VARCHAR(200) | NULL | |
 | sold_out | BOOLEAN | NOT NULL DEFAULT FALSE | 원클릭 품절. 재고 수량 컬럼 없음 |
 | visible | BOOLEAN | NOT NULL DEFAULT TRUE | 숨김 — DELETE 없음 |
-| **category** | VARCHAR(20) | NULL | **v1.4 편입** — `MAIN` / `SIDE` / `DRINK`(손님 메뉴판 탭과 1:1). **문자열 컬럼 + 코드 화이트리스트**(`MenuCategory.isValid`, 대문자 정확 일치) — `@Enumerated`로 두면 MySQL 네이티브 ENUM이 생겨 분류를 늘릴 때 ALTER가 필요하다. NULL = 분류 없음('전체' 탭에만). **NOT NULL 금지** — 기존 행이 있는 테이블에 컬럼을 덧붙이므로 |
+| **category** | VARCHAR(20) | NULL | **v1.4 편입** — `MAIN` / `SIDE` / `DRINK`(손님 메뉴판 탭과 1:1). **값·컬럼명은 main #53 기준**(통합 갈래와 main #53이 같은 컬럼 `category VARCHAR(20) NULL`·같은 값으로 각각 구현 — 일치). **문자열 컬럼 + 코드 화이트리스트**(통합본 `MenuCategory.isValid`, main #53 `VALID_CATEGORIES` Set — 둘 다 대문자 정확 일치) — `@Enumerated`로 두면 MySQL 네이티브 ENUM이 생겨 분류를 늘릴 때 ALTER가 필요하다. NULL = 분류 없음('전체' 탭에만). **NOT NULL 금지** — 기존 행이 있는 테이블에 컬럼을 덧붙이므로 |
 | _UNIQUE_ | | **uk_menu_booth_name (booth_id, name)** | **v1.4 편입** — 부스 내 메뉴명 중복 금지. 앱은 사전 검사 + 제약 위반을 409 INVALID_STATE로 변환 |
 
 ### orders — 주문 (주문 파트) — `ORDER`는 예약어라 orders
