@@ -12,7 +12,7 @@ const HANDLE_SPACE = 40
 const CANVAS_SIDE_PADDING = 40 // 캔버스 컨테이너의 px-10(좌우 각 40px)
 
 export default function TableHomePage() {
-  const { tables, error, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable } =
+  const { tables, error, refetch, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable } =
     useTableOrders()
   const [editMode, setEditMode] = useState(false)
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
@@ -121,7 +121,17 @@ export default function TableHomePage() {
         ))}
       </div>
 
-      {selectedTable && <PaymentModal table={selectedTable} onClose={() => setSelectedTableId(null)} />}
+      {selectedTable && (
+        <PaymentModal
+          table={selectedTable}
+          onClose={() => setSelectedTableId(null)}
+          // 퇴실 직후 5초 폴링을 기다리지 않고 카드가 바로 비게 목록을 다시 읽는다
+          onCheckedOut={() => {
+            setSelectedTableId(null)
+            refetch()
+          }}
+        />
+      )}
     </div>
   )
 }

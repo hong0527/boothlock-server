@@ -1,3 +1,4 @@
+import { apiUrl } from './apiBase'
 import { clearCustomerSession, getSessionToken } from './customerSession'
 
 /**
@@ -15,7 +16,7 @@ export async function customerApiFetch(path: string, options: RequestInit = {}):
   const headers = new Headers(options.headers)
   headers.set('X-Session-Token', token)
 
-  const res = await fetch(path, { ...options, headers })
+  const res = await fetch(apiUrl(path), { ...options, headers })
 
   if (res.status === 410) {
     clearCustomerSession()

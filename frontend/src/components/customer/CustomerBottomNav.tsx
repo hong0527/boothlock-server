@@ -2,50 +2,55 @@ import { useNavigate } from 'react-router-dom'
 import { CartIcon, PersonIcon, ReceiptIcon } from './icons'
 
 type CustomerBottomNavProps = {
-  cartCount: number
-  onCallStaff: () => void
+  onStaffCall?: () => void
+  onOrderHistory?: () => void
+  onCart?: () => void
+  onCallStaff?: () => void
+  cartCount?: number
 }
 
-export default function CustomerBottomNav({ cartCount, onCallStaff }: CustomerBottomNavProps) {
+export default function CustomerBottomNav({
+  onStaffCall,
+  onOrderHistory,
+  onCart,
+  onCallStaff,
+  cartCount = 0,
+}: CustomerBottomNavProps) {
   const navigate = useNavigate()
 
   return (
-    <div className="fixed inset-x-0 bottom-0 flex h-[97px] items-center justify-around bg-primary-50">
+    <nav className="fixed inset-x-0 bottom-0 z-40 h-[97px] w-full bg-primary-50" aria-label="손님 메뉴">
       <button
         type="button"
-        onClick={onCallStaff}
-        className="flex flex-col items-center gap-1 text-body-2 text-neutral-900"
+        onClick={onStaffCall ?? onCallStaff}
+        className="absolute left-1/6 top-[17px] flex h-[51px] w-1/6 -translate-x-1/2 flex-col items-center gap-1 text-[14px] leading-[1.2] font-medium tracking-[-0.56px] text-black"
       >
-        <PersonIcon className="h-7 w-7" />
+        <PersonIcon className="size-[28px]" />
         직원 호출
       </button>
-
-      <div className="h-[49px] w-px bg-neutral-200" />
-
       <button
         type="button"
-        onClick={() => navigate('/order-history')}
-        className="flex flex-col items-center gap-1 text-body-2 text-neutral-900"
+        onClick={onOrderHistory ?? (() => navigate('/order-history'))}
+        className="absolute left-1/2 top-[19px] flex h-[51px] w-1/6 -translate-x-1/2 flex-col items-center gap-1 text-[14px] leading-[1.2] font-medium tracking-[-0.56px] text-black"
       >
-        <ReceiptIcon className="h-[30px] w-[30px]" />
+        <ReceiptIcon className="size-[30px]" />
         주문내역
       </button>
-
-      <div className="h-[49px] w-px bg-neutral-200" />
-
       <button
         type="button"
-        onClick={() => navigate('/cart')}
-        className="relative flex flex-col items-center gap-1 text-body-2 text-neutral-900"
+        onClick={onCart ?? (() => navigate('/cart'))}
+        className="absolute left-5/6 top-[21px] flex h-[48px] w-1/6 -translate-x-1/2 flex-col items-center gap-1 text-[14px] leading-[1.2] font-medium tracking-[-0.56px] text-black"
       >
-        <CartIcon className="h-7 w-7" />
+        <CartIcon className="size-[28px]" />
         장바구니
         {cartCount > 0 && (
-          <span className="absolute -top-1 right-2 flex h-4 w-4 items-center justify-center rounded-full bg-neutral-900 text-[10px] text-neutral-50">
+          <span className="absolute -right-[3px] -top-[5px] flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black px-1 text-[11px] leading-none font-semibold text-white">
             {cartCount}
           </span>
         )}
       </button>
-    </div>
+      <span aria-hidden="true" className="absolute left-1/3 top-[19px] h-[49px] w-px bg-neutral-200" />
+      <span aria-hidden="true" className="absolute left-2/3 top-[19px] h-[49px] w-px bg-neutral-200" />
+    </nav>
   )
 }

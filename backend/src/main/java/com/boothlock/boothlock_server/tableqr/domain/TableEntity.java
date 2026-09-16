@@ -14,7 +14,13 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import org.hibernate.annotations.DynamicUpdate;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 @Entity
+// 변경된 컬럼만 UPDATE — 전체 컬럼을 쓰면 C1의 사용중 전환이 동시에 저장된 O5 새 토큰·O22 좌표·삭제(active=false)를 옛 값으로 덮는다
+@DynamicUpdate
 @Table(
         name = "booth_table",
         uniqueConstraints = @UniqueConstraint(name = "uq_booth_label", columnNames = {"booth_id", "label"})
@@ -35,7 +41,10 @@ public class TableEntity {
     @Column(name = "table_token", nullable = false, unique = true, length = 64)
     private String tableToken;
 
+    // JdbcTypeCode(VARCHAR): Hibernate 6 기본은 DB 네이티브 ENUM 타입 — MySQL에서 enum('EMPTY','OCCUPIED')로 만들어지면
+    // 값을 하나 늘릴 때마다 ALTER가 필요하다. 정본은 VARCHAR(20) (DB스키마 §1, OrderEntity의 열거형과 같은 방식)
     @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
     @Column(nullable = false, length = 20)
     private TableStatus status = TableStatus.EMPTY;
 

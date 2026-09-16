@@ -6,6 +6,11 @@ import com.boothlock.boothlock_server.event.repository.BoothSeatRow;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
+import com.boothlock.boothlock_server.order.service.OrderNumberingService;
+
+import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -33,7 +38,8 @@ class EventQueryServiceCacheTests {
     private final AtomicLong clock = new AtomicLong(1_000 * SECOND);
 
     private EventQueryService service(long cacheSeconds) {
-        return new EventQueryService(repository, null, 180, cacheSeconds, clock::get);
+        return new EventQueryService(repository, null,
+                new SeatIdlePolicy(180, Clock.systemUTC(), new OrderNumberingService(null)), cacheSeconds, clock::get);
     }
 
     /** 프로젝션 인터페이스를 값 객체로 흉내 낸다 — 목 안에서 목을 만들면 스터빙이 꼬인다 */
@@ -49,20 +55,20 @@ class EventQueryServiceCacheTests {
     @Test
     @DisplayName("캐시 시간 안의 두 번째 요청은 DB에 가지 않는다")
     void reusesResultWithinTtl() {
-        when(repository.findSeatSummaries(any(LocalDateTime.class))).thenReturn(List.of(row(1, "FOOD", 3)));
+        when(repository.findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class))).thenReturn(List.of(row(1, "FOOD", 3)));
         EventQueryService service = service(10);
 
         service.getBooths(null);
         clock.addAndGet(9 * SECOND);
         service.getBooths(null);
 
-        verify(repository, times(1)).findSeatSummaries(any(LocalDateTime.class));
+        verify(repository, times(1)).findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class));
     }
 
     @Test
     @DisplayName("캐시 시간이 정확히 지나면 새로 읽는다 — 좌석 변화가 10초 넘게 묻히지 않는다")
     void reloadsExactlyAtExpiry() {
-        when(repository.findSeatSummaries(any(LocalDateTime.class)))
+        when(repository.findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class)))
                 .thenReturn(List.of(row(1, "FOOD", 3)))
                 .thenReturn(List.of(row(1, "FOOD", 0)));
         EventQueryService service = service(10);
@@ -73,13 +79,13 @@ class EventQueryServiceCacheTests {
         clock.addAndGet(1);
         assertThat(service.getBooths(null).booths().get(0).tables().empty()).isEqualTo(0);
 
-        verify(repository, times(2)).findSeatSummaries(any(LocalDateTime.class));
+        verify(repository, times(2)).findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class));
     }
 
     @Test
     @DisplayName("카테고리가 달라도 같은 캐시를 쓴다 — 필터는 캐시된 전체 목록에서 건다")
     void categoryFilterSharesOneCacheEntry() {
-        when(repository.findSeatSummaries(any(LocalDateTime.class)))
+        when(repository.findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class)))
                 .thenReturn(List.of(row(1, "FOOD", 3), row(2, "CAFE", 1)));
         EventQueryService service = service(10);
 
@@ -88,19 +94,19 @@ class EventQueryServiceCacheTests {
         assertThat(service.getBooths(" ").booths()).hasSize(2);
         assertThat(service.getBooths("NOPE").booths()).isEmpty();
 
-        verify(repository, times(1)).findSeatSummaries(any(LocalDateTime.class));
+        verify(repository, times(1)).findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class));
     }
 
     @Test
     @DisplayName("0초면 캐시를 끄고 매번 새로 읽는다")
     void zeroDisablesCache() {
-        when(repository.findSeatSummaries(any(LocalDateTime.class))).thenReturn(List.of(row(1, "FOOD", 3)));
+        when(repository.findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class))).thenReturn(List.of(row(1, "FOOD", 3)));
         EventQueryService service = service(0);
 
         service.getBooths(null);
         service.getBooths(null);
 
-        verify(repository, times(2)).findSeatSummaries(any(LocalDateTime.class));
+        verify(repository, times(2)).findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class));
     }
 
     @Test
@@ -108,7 +114,7 @@ class EventQueryServiceCacheTests {
     void concurrentRequestsAtExpiryLoadOnce() throws Exception {
         CountDownLatch inQuery = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(repository.findSeatSummaries(any(LocalDateTime.class))).thenAnswer(invocation -> {
+        when(repository.findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class))).thenAnswer(invocation -> {
             inQuery.countDown();
             release.await(5, TimeUnit.SECONDS);   // 첫 요청이 쿼리 중인 동안 나머지가 들어오게 붙잡는다
             return List.of(row(1, "FOOD", 3));
@@ -133,6 +139,6 @@ class EventQueryServiceCacheTests {
         assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
         pool.shutdownNow();
 
-        verify(repository, times(1)).findSeatSummaries(any(LocalDateTime.class));
+        verify(repository, times(1)).findSeatSummaries(any(LocalDateTime.class), any(LocalDate.class));
     }
 }

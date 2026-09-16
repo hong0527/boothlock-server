@@ -7,6 +7,7 @@ import com.boothlock.boothlock_server.event.repository.BoothSeatRepository;
 import com.boothlock.boothlock_server.event.repository.BoothSeatRow;
 import com.boothlock.boothlock_server.event.repository.EventMapRepository;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
+import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,8 +15,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.function.LongSupplier;
@@ -28,12 +27,10 @@ import java.util.function.LongSupplier;
 public class EventQueryService {
 
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
-    /** JVM 기본 시간대에 기대지 않는다 — java -jar 배포에는 -Duser.timezone이 붙지 않는다 */
-    private static final ZoneId KST_ZONE = ZoneId.of("Asia/Seoul");
 
     private final BoothSeatRepository boothSeatRepository;
     private final EventMapRepository eventMapRepository;
-    private final Duration idleThreshold;
+    private final SeatIdlePolicy seatIdlePolicy;
     private final long cacheTtlNanos;
     private final LongSupplier nanoClock;
     private final Object refreshLock = new Object();
@@ -43,21 +40,20 @@ public class EventQueryService {
     private record CachedBooths(List<BoothListResponse.Booth> booths, long expiresAtNanos) {
     }
 
+    /** 유휴 임계값과 그 하한 검증은 SeatIdlePolicy가 맡는다 — 운영자 좌석 현황(O3)·세션 발급(C1)과 같은 기준을 쓰기 위해서다 */
     @Autowired
     public EventQueryService(BoothSeatRepository boothSeatRepository,
                              EventMapRepository eventMapRepository,
-                             // 이 시간 동안 주문·조회가 없으면 그 테이블을 빈자리로 센다.
-                             // 명세 §1.2의 세션 유휴 만료(3시간)를 기본값으로 두되, 행사 회전 속도에 맞춰 조정할 수 있게 설정으로 뺀다
-                             @Value("${boothlock.event.seat-idle-minutes:180}") long idleMinutes,
+                             SeatIdlePolicy seatIdlePolicy,
                              // 명세 §E1·§7-19의 서버 캐시. 0이면 끈다
                              @Value("${boothlock.event.booths-cache-seconds:10}") long cacheSeconds) {
-        this(boothSeatRepository, eventMapRepository, idleMinutes, cacheSeconds, System::nanoTime);
+        this(boothSeatRepository, eventMapRepository, seatIdlePolicy, cacheSeconds, System::nanoTime);
     }
 
     /** 캐시 만료 경계를 테스트에서 시계를 돌려 확인하기 위한 생성자 */
     EventQueryService(BoothSeatRepository boothSeatRepository,
                       EventMapRepository eventMapRepository,
-                      long idleMinutes,
+                      SeatIdlePolicy seatIdlePolicy,
                       long cacheSeconds,
                       LongSupplier nanoClock) {
         if (cacheSeconds < 0) {
@@ -66,15 +62,9 @@ public class EventQueryService {
         }
         this.cacheTtlNanos = Duration.ofSeconds(cacheSeconds).toNanos();
         this.nanoClock = nanoClock;
-        // 0 이하면 idleSince가 현재 시각 이후가 되어 활성 세션이 하나도 안 잡힌다 —
-        // 전 부스가 "빈자리 가득"으로 보이고, 화면만 봐서는 오설정인지 한가한 건지 구별되지 않는다. 기동 시점에 막는다
-        if (idleMinutes <= 0) {
-            throw new IllegalArgumentException(
-                    "boothlock.event.seat-idle-minutes는 1 이상이어야 합니다. 현재 값: " + idleMinutes);
-        }
         this.boothSeatRepository = boothSeatRepository;
         this.eventMapRepository = eventMapRepository;
-        this.idleThreshold = Duration.ofMinutes(idleMinutes);
+        this.seatIdlePolicy = seatIdlePolicy;
     }
 
     /**
@@ -120,8 +110,8 @@ public class EventQueryService {
     }
 
     private List<BoothListResponse.Booth> loadBooths() {
-        LocalDateTime idleSince = LocalDateTime.now(KST_ZONE).minus(idleThreshold);
-        return boothSeatRepository.findSeatSummaries(idleSince).stream()
+        SeatIdlePolicy.Criteria criteria = seatIdlePolicy.criteria();
+        return boothSeatRepository.findSeatSummaries(criteria.idleSince(), criteria.businessDate()).stream()
                 .map(EventQueryService::toBooth)
                 .toList();
     }

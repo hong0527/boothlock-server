@@ -8,9 +8,13 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface BoothRepository extends JpaRepository<BoothEntity, Long> {
+
+    /** 행사 시딩의 멱등 판단용 — name에 유니크 제약이 없어 여러 건일 수 있다 */
+    List<BoothEntity> findByName(String name);
 
     // 삭제(soft delete)된 테이블은 "등록된 테이블 수"에서 제외한다 (O16)
     @Query(value = "select count(*) from booth_table where booth_id = :boothId and active = true", nativeQuery = true)

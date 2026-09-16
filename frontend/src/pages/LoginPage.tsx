@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PrimaryButton from '../components/PrimaryButton'
 import TextField from '../components/TextField'
+import { apiUrl } from '../lib/apiBase'
 import { setAuth } from '../lib/auth'
 
 type LoginErrorBody = {
@@ -22,7 +23,7 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const res = await fetch('/api/v1/admin/auth/login', {
+      const res = await fetch(apiUrl('/api/v1/admin/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ loginId, password }),

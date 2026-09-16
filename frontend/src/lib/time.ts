@@ -12,16 +12,20 @@ export function formatClockTime(createdAt: string): string {
   return `${hours}:${minutes}`
 }
 
+/** 영업일 경계 — 백엔드 OrderNumberingService.businessDateOf와 같은 06:00 KST (명세 §1.1) */
+export const BUSINESS_DAY_START_HOUR = 6
+
 /**
- * 오늘 날짜(KST, YYYY-MM-DD) — 대시보드 조회 시 businessDate로 넘겨서
- * 서버가 businessDate 생략 시 전체 날짜를 다 돌려주는 걸 피한다.
- * 주의: 실제 영업일 경계(자정~06시는 전날로 침)는 반영 안 한 근사치 — 새벽 운영 시 어긋날 수 있음
+ * 영업일(KST, YYYY-MM-DD) — 06:00 이전은 전날 영업일로 친다.
+ * 대시보드 조회(O10)는 businessDate를 생략하면 서버가 이 값을 기본으로 쓰므로 평소엔 보낼 필요가 없다.
+ * 특정 영업일을 명시해 조회할 때(전일 환불 처리 등)만 이 함수로 만든 값을 넘긴다.
  */
-export function todayKst(): string {
+export function businessDateKst(now: Date = new Date()): string {
+  const shifted = new Date(now.getTime() - BUSINESS_DAY_START_HOUR * 60 * 60 * 1000)
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Seoul',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(new Date())
+  }).format(shifted)
 }

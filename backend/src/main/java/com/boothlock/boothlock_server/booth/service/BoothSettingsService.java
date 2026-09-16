@@ -1,6 +1,7 @@
 package com.boothlock.boothlock_server.booth.service;
 
 import com.boothlock.boothlock_server.booth.domain.BoothAccountChangeLogEntity;
+import com.boothlock.boothlock_server.booth.domain.BoothCategory;
 import com.boothlock.boothlock_server.booth.domain.BoothEntity;
 import com.boothlock.boothlock_server.booth.domain.StaffAccountEntity;
 import com.boothlock.boothlock_server.booth.domain.StaffRole;
@@ -23,6 +24,8 @@ import java.util.Objects;
 @Service
 public class BoothSettingsService {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+    /** 약도 상대 좌표 상한 — 10000 = 100.00% (명세 E1) */
+    public static final int MAP_COORDINATE_MAX = 10_000;
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
     private final BoothRepository boothRepository;
@@ -62,14 +65,21 @@ public class BoothSettingsService {
             if (!request.get("isOpen").isBoolean()) throw new InvalidRequestException("isOpen은 boolean이어야 합니다.");
             booth.updateOpen(request.get("isOpen").asBoolean());
         }
+        if (request.has("category")) booth.updateCategory(category(request));
+        if (request.has("mapX") || request.has("mapY")) {
+            // 반쪽 좌표는 지도에 찍을 수 없다 — 한쪽만 오면 저장된 다른 한쪽과 섞지 않고 거부한다 (명세 O17)
+            if (!request.has("mapX") || !request.has("mapY"))
+                throw new InvalidRequestException("mapX와 mapY는 함께 보내야 합니다.");
+            booth.updateMapPosition(coordinate(request, "mapX"), coordinate(request, "mapY"));
+        }
         if (request.has("bankAccount")) changeBankAccount(request, staff, booth);
+        if (request.has("depositorName")) changeDepositorName(request, staff, booth);
 
-        return new BoothInfoDto.Response(booth.getName(), booth.getBankAccount(), booth.getOperatingHours(),
-                boothRepository.countTablesByBoothId(booth.getId()), booth.isOpen());
+        return BoothInfoService.toResponse(booth, boothRepository.countTablesByBoothId(booth.getId()));
     }
 
     private void changeBankAccount(JsonNode request, StaffAccountEntity staff, BoothEntity booth) {
-        if (staff.getRole() != StaffRole.ADMIN) throw new ForbiddenException();
+        requireAdmin(staff);
         String newValue = requiredText(request, "bankAccount", 100);
         String oldValue = booth.getBankAccount();
         if (Objects.equals(oldValue, newValue)) return;
@@ -84,12 +94,55 @@ public class BoothSettingsService {
         });
     }
 
+    // 계좌 화면의 일부지만 표시용 라벨일 뿐 실제 입금 경로(계좌번호)를 바꾸지 않아 bankAccount와 달리
+    // 감사 로그·웹훅 대상은 아니다. 다만 같은 화면·같은 신뢰 등급이라 ADMIN 권한은 동일하게 요구한다.
+    private void changeDepositorName(JsonNode request, StaffAccountEntity staff, BoothEntity booth) {
+        requireAdmin(staff);
+        JsonNode node = request.get("depositorName");
+        if (node.isNull()) {
+            booth.updateDepositorName(null);
+            return;
+        }
+        // 빈 문자열/공백도 null(미지정)로 취급 — "null = 미지정" 계약을 공백 값이 조용히 깨지 않게 한다
+        String value = optionalText(request, "depositorName", 50).trim();
+        booth.updateDepositorName(value.isEmpty() ? null : value);
+    }
+
+    private void requireAdmin(StaffAccountEntity staff) {
+        if (staff.getRole() != StaffRole.ADMIN) throw new ForbiddenException();
+    }
+
     private void validateFields(JsonNode request) {
         request.propertyNames().forEach(name -> {
-            if (!name.equals("name") && !name.equals("operatingHours")
-                    && !name.equals("isOpen") && !name.equals("bankAccount"))
+            if (!name.equals("name") && !name.equals("operatingHours") && !name.equals("isOpen")
+                    && !name.equals("bankAccount") && !name.equals("depositorName")
+                    && !name.equals("category") && !name.equals("mapX") && !name.equals("mapY"))
                 throw new InvalidRequestException("지원하지 않는 필드입니다: " + name);
         });
+    }
+
+    /**
+     * null로 지우기는 받지 않는다. 분류를 모르겠으면 ETC가 있고, 시딩으로 넣은 값을
+     * 폼이 기본값 null을 실어 보내는 실수로 날리면 E1 필터에서 부스가 조용히 빠진다.
+     */
+    private String category(JsonNode request) {
+        JsonNode node = request.get("category");
+        if (node == null || !node.isString() || !BoothCategory.isValid(node.asText()))
+            throw new InvalidRequestException("category는 FOOD, CAFE, GOODS, ETC 중 하나여야 합니다.");
+        return node.asText();
+    }
+
+    /**
+     * 0~10000 정수만 — 소수(3200.5)·문자열("3200")·null은 거부한다 (명세 E1 좌표 규칙, §7-20).
+     * null로 핀 제거도 받지 않는다: 좌표는 주최측이 약도를 보고 시딩한 값이라, 운영자 화면에서 지우면
+     * 다시 찍을 기준이 없고 손님 지도에서 부스가 사라진다. 운영자는 옮기기(미세 조정)만 한다.
+     */
+    private int coordinate(JsonNode request, String field) {
+        JsonNode node = request.get(field);
+        if (node == null || !node.isIntegralNumber() || !node.canConvertToInt()
+                || node.intValue() < 0 || node.intValue() > MAP_COORDINATE_MAX)
+            throw new InvalidRequestException(field + "는 0~" + MAP_COORDINATE_MAX + " 정수여야 합니다.");
+        return node.intValue();
     }
 
     private String requiredText(JsonNode request, String field, int max) {

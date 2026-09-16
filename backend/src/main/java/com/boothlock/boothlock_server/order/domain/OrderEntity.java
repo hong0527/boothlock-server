@@ -41,9 +41,11 @@ import java.util.List;
         uniqueConstraints = @UniqueConstraint(
                 name = "uq_orders_seq",
                 columnNames = {"booth_id", "business_date", "order_seq"}),
-        indexes = @Index(
-                name = "idx_orders_search",
-                columnList = "booth_id, business_date, order_no"))
+        indexes = {
+                @Index(name = "idx_orders_search", columnList = "booth_id, business_date, order_no"),
+                // 세션 단위 조회용 — O6 퇴실 경고·O3 미결제 집계·O10 activeSessionOnly·C1 유휴 판정이 session_id로 찾는다.
+                // 없으면 부스 인덱스 앞부분만 타고 그 부스의 주문을 훑는다 (운영 스키마 SQL의 idx_orders_session과 같은 이름)
+                @Index(name = "idx_orders_session", columnList = "session_id")})
 public class OrderEntity {
 
     /** 소비자 취소의 canceled_by 표기 — 운영자 취소는 운영자 loginId를 넣는다 (DB스키마 §1) */
@@ -173,33 +175,45 @@ public class OrderEntity {
         // paymentStatus는 건드리지 않는다 — 미입금 취소는 환불 대상이 아님 (2축 상태)
     }
 
-    /** O6 결제 모달 항목 단위 수정 가능 판정 — 접수 후 입금 전까지만 허용 (canCancel과 동일 조건) */
+    /**
+     * O6 결제 모달 항목 단위 수정 가능 판정 — 접수 후 입금 전까지만 허용 (canCancel과 동일 조건).
+     * 호출자는 이 판정을 행 잠금(findByIdAndBoothIdForUpdate) 아래에서 읽어야 한다 — 잠금 없이 읽은 UNPAID는
+     * 커밋 순서에 따라 이미 지난 상태일 수 있다 (audit2 B1)
+     */
     public boolean canEditItems() {
         return status == OrderStatus.RECEIVED && paymentStatus == PaymentStatus.UNPAID;
     }
 
-    /** O6 결제 모달 수량 +/- — 취소된 항목은 대상에서 제외(못 찾은 것과 동일하게 취급) */
+    /** O6 결제 모달 수량 +/- — 취소된 항목은 대상에서 제외(못 찾은 것과 동일하게 취급). 증가 시 품절·마감 검사는 호출자 몫 */
     public void updateItemQty(Long itemId, int qty) {
         if (!canEditItems()) {
             throw new InvalidStateException("항목을 수정할 수 없는 주문 상태입니다.");
         }
-        findEditableItem(itemId).updateQty(qty);
+        requireEditableItem(itemId).updateQty(qty);
         recalculateTotal();
     }
 
-    /** O6 결제 모달 개별 "취소" — 남은 항목이 하나도 없으면 주문 자체도 CANCELED로 전환한다(O13과 같은 감사 필드 사용) */
-    public void cancelItem(Long itemId, LocalDateTime canceledAt, String canceledBy) {
+    /**
+     * O6 결제 모달 개별 "취소" — 항목을 숨기고(행은 남긴다) 합계를 다시 계산한다.
+     * 남은 항목이 하나도 없으면 true를 돌려준다 — 주문 자체의 CANCELED 전이는 호출자가 O13과 같은 조건부 UPDATE
+     * (OrderRepository.cancelByStaff)로 처리한다. 엔티티에서 status를 바꾸면 취소 기록 경로가 두 벌이 된다 (audit2 M6)
+     */
+    public boolean cancelItem(Long itemId) {
         if (!canEditItems()) {
             throw new InvalidStateException("항목을 수정할 수 없는 주문 상태입니다.");
         }
-        findEditableItem(itemId).cancel();
+        requireEditableItem(itemId).cancel();
         recalculateTotal();
-        if (items.stream().allMatch(OrderItemEntity::isCanceled)) {
-            forceCancel("전체 항목 취소", canceledBy, canceledAt);
-        }
+        return !hasRemainingItems();
     }
 
-    private OrderItemEntity findEditableItem(Long itemId) {
+    /** 취소되지 않은 항목이 하나라도 남아 있나 */
+    public boolean hasRemainingItems() {
+        return items.stream().anyMatch(item -> !item.isCanceled());
+    }
+
+    /** 수정 대상 항목 — 이 주문의 것이 아니거나 이미 취소된 항목은 404 (남의 주문 항목 id를 끼워 넣어도 같은 응답) */
+    public OrderItemEntity requireEditableItem(Long itemId) {
         return items.stream()
                 .filter(item -> item.getId().equals(itemId) && !item.isCanceled())
                 .findFirst()
@@ -212,17 +226,6 @@ public class OrderEntity {
                 .filter(item -> !item.isCanceled())
                 .mapToInt(OrderItemEntity::subtotal)
                 .sum();
-    }
-
-    /** cancelItem 전용 — 리포지토리의 벌크 UPDATE cancelByStaff(O13)와는 별개 경로라 이름을 다르게 둔다 */
-    private void forceCancel(String reason, String canceledBy, LocalDateTime canceledAt) {
-        this.status = OrderStatus.CANCELED;
-        this.cancelReason = reason;
-        this.canceledBy = canceledBy;
-        this.canceledAt = canceledAt;
-        if (this.paymentStatus == PaymentStatus.PAID) {
-            this.paymentStatus = PaymentStatus.REFUND_NEEDED;
-        }
     }
 
     public Long getId() {
