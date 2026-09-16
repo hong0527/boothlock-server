@@ -1,30 +1,10 @@
 import { useNavigate } from 'react-router-dom'
+import { CloseIcon } from '../components/customer/icons'
 
 /*
  * 코드 스캔 화면 — Figma fileKey OZSYaIZ3UgdVIAdzmq5R8y, node 212:704 (홈화면 - 카메라)
  * 상·하단 마스크 #090909 120px, 가운데가 카메라 프리뷰 영역.
  */
-
-function CloseIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path
-        d="M27 9L9 27"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M9 9L27 27"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
 
 export default function CodeScanPage() {
   const navigate = useNavigate()
@@ -60,7 +40,7 @@ export default function CodeScanPage() {
         <button
           type="button"
           aria-label="닫기"
-          onClick={() => navigate(-1)}
+          onClick={() => navigate('/home')}
           className="absolute right-6 top-0 h-6 w-6 text-neutral-50"
         >
           <CloseIcon className="h-6 w-6" />
