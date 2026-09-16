@@ -60,6 +60,8 @@ class MenuBoardApiTests {
     void returnsVisibleMenusWithBoothStatus() throws Exception {
         MenuEntity visible = menuRepository.save(new MenuEntity(
                 booth, "김치찌개", 9000, "https://cdn.example.com/kimchi.jpg", "돼지고기 사용", true));
+        visible.updateCategory("MAIN");
+        menuRepository.save(visible);
         MenuEntity soldOut = new MenuEntity(booth, "부침개", 7000, null, null, true);
         soldOut.updateSoldOut(true);
         menuRepository.save(soldOut);
@@ -76,9 +78,11 @@ class MenuBoardApiTests {
                 .andExpect(jsonPath("$.menus[0].imageUrl").value("https://cdn.example.com/kimchi.jpg"))
                 .andExpect(jsonPath("$.menus[0].description").value("돼지고기 사용"))
                 .andExpect(jsonPath("$.menus[0].soldOut").value(false))
+                .andExpect(jsonPath("$.menus[0].category").value("MAIN"))
                 .andExpect(jsonPath("$.menus[0].visible").doesNotExist())
                 .andExpect(jsonPath("$.menus[1].name").value("부침개"))
-                .andExpect(jsonPath("$.menus[1].soldOut").value(true));
+                .andExpect(jsonPath("$.menus[1].soldOut").value(true))
+                .andExpect(jsonPath("$.menus[1].category").value(org.hamcrest.Matchers.nullValue()));
     }
 
     @Test

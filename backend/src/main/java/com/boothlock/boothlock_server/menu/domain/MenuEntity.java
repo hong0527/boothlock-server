@@ -42,6 +42,9 @@ public class MenuEntity {
     @Column(name = "sold_out", nullable = false)
     private boolean soldOut = false;
 
+    @Column(length = 20)
+    private String category;
+
     @Column(nullable = false)
     private boolean visible = true;
 
@@ -85,6 +88,10 @@ public class MenuEntity {
         return soldOut;
     }
 
+    public String getCategory() {
+        return category;
+    }
+
     public boolean isVisible() {
         return visible;
     }
@@ -107,6 +114,10 @@ public class MenuEntity {
 
     public void updateSoldOut(boolean soldOut) {
         this.soldOut = soldOut;
+    }
+
+    public void updateCategory(String category) {
+        this.category = category;
     }
 
     public void updateVisible(boolean visible) {

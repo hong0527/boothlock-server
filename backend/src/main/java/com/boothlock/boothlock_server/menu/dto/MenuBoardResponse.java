@@ -15,7 +15,8 @@ public record MenuBoardResponse(
             int price,
             String imageUrl,
             String description,
-            boolean soldOut
+            boolean soldOut,
+            String category
     ) {
         public static MenuItem from(MenuEntity menu) {
             return new MenuItem(
@@ -24,7 +25,8 @@ public record MenuBoardResponse(
                     menu.getPrice(),
                     menu.getImageUrl(),
                     menu.getDescription(),
-                    menu.isSoldOut()
+                    menu.isSoldOut(),
+                    menu.getCategory()
             );
         }
     }

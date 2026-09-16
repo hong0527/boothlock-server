@@ -30,7 +30,9 @@ import java.util.Set;
 @Service
 public class MenuService implements MenuLookup {
 
-    private static final Set<String> PATCH_FIELDS = Set.of("name", "price", "description", "imageUrl", "visible", "soldOut");
+    private static final Set<String> PATCH_FIELDS =
+            Set.of("name", "price", "description", "imageUrl", "visible", "soldOut", "category");
+    private static final Set<String> VALID_CATEGORIES = Set.of("MAIN", "SIDE", "DRINK");
 
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
@@ -87,6 +89,7 @@ public class MenuService implements MenuLookup {
         String imageUrl = clearableText(request, "imageUrl", 500, "메뉴 이미지 URL은 500자 이하여야 합니다.", errors);
         Boolean visible = optionalBoolean(request, "visible", "visible은 boolean이어야 합니다.", errors);
         validateOptionalBoolean(request, "soldOut", "soldOut은 boolean이어야 합니다.", errors);
+        String category = nullableCategory(request, errors);
 
         if (price != null && price < 0) {
             errors.add("price: 가격은 0 이상이어야 합니다.");
@@ -97,7 +100,9 @@ public class MenuService implements MenuLookup {
         }
 
         try {
-            MenuEntity menu = menuRepository.saveAndFlush(new MenuEntity(booth, name, price, imageUrl, description, visible == null || visible));
+            MenuEntity menu = new MenuEntity(booth, name, price, imageUrl, description, visible == null || visible);
+            menu.updateCategory(category);
+            menu = menuRepository.saveAndFlush(menu);
             return MenuResponse.from(menu);
         } catch (DataIntegrityViolationException exception) {
             throw duplicatedMenuName();
@@ -122,6 +127,7 @@ public class MenuService implements MenuLookup {
                 ? clearableText(request, "imageUrl", 500, "메뉴 이미지 URL은 500자 이하여야 합니다.", errors) : null;
         Boolean visible = request.has("visible") ? requiredBoolean(request, "visible", "visible은 boolean이어야 합니다.", errors) : null;
         Boolean soldOut = request.has("soldOut") ? requiredBoolean(request, "soldOut", "soldOut은 boolean이어야 합니다.", errors) : null;
+        String category = request.has("category") ? nullableCategory(request, errors) : null;
 
         if (price != null && price < 0) {
             errors.add("price: 가격은 0 이상이어야 합니다.");
@@ -137,6 +143,7 @@ public class MenuService implements MenuLookup {
         if (request.has("imageUrl")) menu.updateImageUrl(imageUrl);
         if (request.has("visible")) menu.updateVisible(visible);
         if (request.has("soldOut")) menu.updateSoldOut(soldOut);
+        if (request.has("category")) menu.updateCategory(category);
         try {
             menuRepository.flush();
             return MenuResponse.from(menu);
@@ -212,6 +219,18 @@ public class MenuService implements MenuLookup {
             return null;
         }
         return value;
+    }
+
+    private String nullableCategory(JsonNode request, List<String> errors) {
+        JsonNode node = request.get("category");
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (!node.isString() || !VALID_CATEGORIES.contains(node.asText())) {
+            errors.add("category: category는 MAIN, SIDE, DRINK 중 하나여야 합니다.");
+            return null;
+        }
+        return node.asText();
     }
 
     private Integer requiredInt(JsonNode request, String field, String message, List<String> errors) {

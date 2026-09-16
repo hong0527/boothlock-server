@@ -5,6 +5,7 @@
 > v1.2 변경: 2차 재검증 반영 — 토큰·멱등키 `utf8mb4_bin`(대소문자 구분), ended_at_key를 epoch초→자기 id 방식으로, ERD 관계·PK 표기 보정.
 > v1.2.1 변경: `orders.table_label` 추가 — 주문 시점 테이블 라벨 스냅샷(O10 표시·O19 CSV용).
 > **v1.3 변경 (2026-09-07 회의 결정 반영)**: ① `booth`에 `category`·`map_x`·`map_y` 추가 — 손님 홈 화면의 부스 분류와 약도 핀 위치(API E1·E2) ② `booth_table`에 `pos_x`·`pos_y` 추가 — 운영자 POS형 배치도의 테이블 상자 위치(API O3·O22) ③ **`event_map` 테이블 신설** — 행사 약도 이미지 1건 ④ 파일럿 전제가 단일 부스에서 복수 부스로 바뀌어 부스·계정·약도 시딩이 실질 필수가 됨 ⑤ 좌석 현황을 `booth_table.status`가 아니라 `table_session`의 종료 여부와 마지막 활동 시각으로 판정(원칙 14) ⑥ 좌표 컬럼을 `Integer`로 두어야 하는 이유 정정(원칙 설명·pos_y 참조).
+> **v1.3.1 변경**: `menu`에 `category` 추가(NULL 허용) — 메인메뉴/사이드/음료 분류. 기존 메뉴는 NULL로 남고, 소비자 메뉴판(C2)에서는 미분류로 취급돼 "전체" 탭에서만 노출된다. O7·O8 요청 필드와 C2 응답에 반영.
 > 규칙: 엔티티에는 반드시 `@Table(name = "...")`로 아래 테이블명을 명시한다 (Hibernate 자동 이름에 맡기지 않음).
 
 ## 0. 전체 관계도 (ERD)
@@ -107,6 +108,7 @@ erDiagram
 | description | VARCHAR(200) | NULL | 알레르기 유발 재료 표기 위치 |
 | sold_out | BOOLEAN | NOT NULL DEFAULT FALSE | 원클릭 품절 — **재고 수량 컬럼은 존재하지 않음(팀 확정)** |
 | visible | BOOLEAN | NOT NULL DEFAULT TRUE | 숨김 — 소비자 조회에서 제외. **DELETE 없음(숨김으로 대체)** |
+| category | VARCHAR(20) | NULL | MAIN / SIDE / DRINK. 미지정(NULL) 메뉴는 소비자 메뉴판 "전체" 탭에서만 노출 (v1.3.1) |
 
 ### orders — 주문 (담당: 홍화수) — 주의: `ORDER`는 SQL 예약어라 이름을 orders로
 
@@ -266,6 +268,7 @@ CREATE TABLE menu (
   description VARCHAR(200) NULL,
   sold_out    BOOLEAN      NOT NULL DEFAULT FALSE,
   visible     BOOLEAN      NOT NULL DEFAULT TRUE,
+  category    VARCHAR(20)  NULL,
   CONSTRAINT fk_menu_booth FOREIGN KEY (booth_id) REFERENCES booth(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

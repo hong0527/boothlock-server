@@ -384,7 +384,8 @@
       "price": 8000,
       "imageUrl": "https://.../menu3.jpg",
       "description": "돼지고기·밀가루 함유",
-      "soldOut": false
+      "soldOut": false,
+      "category": "MAIN"
     }
   ]
 }
@@ -395,6 +396,7 @@
 - 품절 메뉴는 포함하되 `soldOut: true` → SOLD OUT 뱃지 + 선택 비활성화 (기능 2.1·6.2)
 - **잔여 수량 필드는 존재하지 않음** (팀 확정 — 응답에 수량 개념 자체가 없음)
 - `imageUrl`, `description`은 null 가능. 알레르기 유발 재료는 `description`에 표기 (기능 6.1)
+- `category`는 `MAIN` / `SIDE` / `DRINK` 중 하나이거나 null(미분류) — 프론트 카테고리 탭(전체/메인메뉴/사이드/음료) 필터링용. null은 "전체" 탭에서만 노출 (v1.3.1)
 
 **Errors**: `401` / `410 SESSION_EXPIRED`(→ "QR을 다시 스캔해주세요" — 재스캔하면 메뉴판 복귀. 퇴실된 손님용 별도 폴백은 두지 않음: v0.4.1의 tableToken 쿼리 폴백은 토큰이 로그에 남고 수명 긴 자격증명을 브라우저에 보관하게 만들어 **삭제**, 검증 반영)
 
@@ -657,6 +659,7 @@
 | description | string | — | 최대 200자. **알레르기 유발 재료 표기 위치** (기능 6.1) |
 | imageUrl | string | — | O9 업로드로 받은 URL |
 | visible | boolean | — | 기본 true |
+| category | string | — | `MAIN` / `SIDE` / `DRINK` 중 하나. 미지정 시 null(미분류) |
 
 **Response 201**: 메뉴 객체 (id 포함, `soldOut: false`로 시작)
 
@@ -668,6 +671,7 @@
 { "soldOut": true }      // 6.2 원클릭 품절 (해제는 false) — 품절 전환의 유일한 수단
 { "visible": false }     // 6.1 숨김 — 소비자 메뉴판에서 즉시 미노출
 { "price": 9000 }        // 6.1 수정
+{ "category": "SIDE" }   // 카테고리 변경, "category": null 로 미분류로 되돌림
 ```
 
 **Response 200**: 갱신된 메뉴 객체 / **Errors**: `400` / `404`
@@ -940,7 +944,7 @@ TableSession 1─N Call
 | Booth | name, bankAccount, isOpen, operatingHours, **category, mapX, mapY** | category·mapX·mapY는 v0.5 신설 — 홈 화면(E1·E2)용. mapX·mapY는 0~10000 상대 좌표 |
 | Table | boothId, label(정규화 후 최대 6자·대문자), **tableToken**(unique·CSPRNG 128bit+), status(EMPTY/OCCUPIED), **posX, posY** | posX·posY는 v0.5 신설 — 운영자 배치도 표시용(px). null 허용 |
 | TableSession | tableId, **sessionToken**(unique), startedAt, endedAt(null=활성), lastActivityAt | 테이블당 활성 세션 최대 1개. MySQL은 부분 unique 인덱스가 없으므로 `unique(tableId, endedAtKey)`(활성=0, **종료 시 자기 id 기록** — epoch초는 같은 초 2건 종료 시 충돌해 v0.4.3에서 정정) 사용. 상세는 DB 스키마 v1.3 (검증 반영 — 초심자가 막히는 지점) |
-| Menu | boothId, name, price, imageUrl, description, **soldOut**, visible | **stock 없음 (확정)** |
+| Menu | boothId, name, price, imageUrl, description, **soldOut**, visible, **category**(nullable) | **stock 없음 (확정)** |
 | Order | boothId, sessionId(수기 미지정 시 null), **businessDate, orderSeq**, orderNo, **idempotencyKey**, status(RECEIVED/DONE/CANCELED), paymentStatus(UNPAID/PAID/REFUND_NEEDED/REFUNDED), paymentMethod, totalAmount, cancelReason, **approvedBy, approvedAt, canceledBy, canceledAt, refundedBy, refundedAt**, isManual, createdAt | **unique(boothId, businessDate, orderSeq)** + **unique(idempotencyKey) 단일** (v0.4.3 정정 — 복합은 수기 주문의 null sessionId에서 무력화). orderSeq 채번은 §2 (FOR UPDATE — auto-increment 금지) |
 | OrderItem | orderId, menuId, **menuName(스냅샷), unitPrice(스냅샷)**, qty | 가격 변경에도 과거 주문 불변 |
 | StaffAccount | boothId(**SUPER_ADMIN은 null**), loginId(unique), passwordHash, **passwordChangedAt**, role(**SUPER_ADMIN**/ADMIN/STAFF), active, failedLoginCount, lockedUntil | |

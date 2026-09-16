@@ -5,4 +5,5 @@ export type MenuItem = {
   soldOut: boolean
   imageUrl?: string
   visible: boolean
+  category?: 'MAIN' | 'SIDE' | 'DRINK'
 }
