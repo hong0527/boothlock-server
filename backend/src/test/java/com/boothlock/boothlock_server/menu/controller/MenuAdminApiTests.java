@@ -234,6 +234,81 @@ class MenuAdminApiTests {
     }
 
     @Test
+    void createMenuAcceptsValidCategory() throws Exception {
+        String response = mockMvc.perform(post("/api/v1/admin/menus")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "name", "콜라", "price", 2000, "category", "DRINK"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.category").value("DRINK"))
+                .andReturn().getResponse().getContentAsString();
+
+        Long menuId = objectMapper.readTree(response).get("id").asLong();
+        assertThat(menuRepository.findById(menuId).orElseThrow().getCategory()).isEqualTo("DRINK");
+    }
+
+    @Test
+    void createMenuDefaultsCategoryToNullWhenOmitted() throws Exception {
+        String response = mockMvc.perform(post("/api/v1/admin/menus")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("name", "서비스", "price", 0))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.category").value(org.hamcrest.Matchers.nullValue()))
+                .andReturn().getResponse().getContentAsString();
+
+        Long menuId = objectMapper.readTree(response).get("id").asLong();
+        assertThat(menuRepository.findById(menuId).orElseThrow().getCategory()).isNull();
+    }
+
+    @Test
+    void createMenuRejectsInvalidCategory() throws Exception {
+        mockMvc.perform(post("/api/v1/admin/menus")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "name", "디저트", "price", 3000, "category", "DESSERT"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("category:")));
+    }
+
+    @Test
+    void updateMenuSetsAndClearsCategory() throws Exception {
+        MenuEntity menu = menuRepository.save(new MenuEntity(booth, "김치찌개", 9000, null, null, true));
+
+        mockMvc.perform(patch("/api/v1/admin/menus/{menuId}", menu.getId())
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("category", "MAIN"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.category").value("MAIN"));
+        assertThat(menuRepository.findById(menu.getId()).orElseThrow().getCategory()).isEqualTo("MAIN");
+
+        mockMvc.perform(patch("/api/v1/admin/menus/{menuId}", menu.getId())
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"category\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.category").value(org.hamcrest.Matchers.nullValue()));
+        assertThat(menuRepository.findById(menu.getId()).orElseThrow().getCategory()).isNull();
+    }
+
+    @Test
+    void updateMenuRejectsInvalidCategory() throws Exception {
+        MenuEntity menu = menuRepository.save(new MenuEntity(booth, "김치찌개", 9000, null, null, true));
+
+        mockMvc.perform(patch("/api/v1/admin/menus/{menuId}", menu.getId())
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("category", "DESSERT"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("category:")));
+    }
+
+    @Test
     void updateMenuPartiallyChangesOnlySentFields() throws Exception {
         MenuEntity menu = menuRepository.save(new MenuEntity(booth, "김치찌개", 9000, "old", "old-desc", true));
 

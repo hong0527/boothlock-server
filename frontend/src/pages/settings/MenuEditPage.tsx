@@ -8,6 +8,14 @@ import TopNav from '../../components/TopNav'
 import { apiFetch } from '../../lib/apiFetch'
 import type { MenuItem } from '../../types/menu'
 
+type MenuCategory = 'MAIN' | 'SIDE' | 'DRINK'
+
+const CATEGORIES: { key: MenuCategory; label: string }[] = [
+  { key: 'MAIN', label: '메인메뉴' },
+  { key: 'SIDE', label: '사이드' },
+  { key: 'DRINK', label: '음료' },
+]
+
 export default function MenuEditPage() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -15,6 +23,7 @@ export default function MenuEditPage() {
 
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
+  const [category, setCategory] = useState<MenuCategory | null>('MAIN')
   const [soldOut, setSoldOut] = useState(false)
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined)
   const [previewUrl, setPreviewUrl] = useState<string | undefined>(undefined)
@@ -50,6 +59,8 @@ export default function MenuEditPage() {
         }
         setName(menu.name)
         setPrice(menu.price.toString())
+        // null(미분류)을 'MAIN'으로 덮어쓰면 저장 시 그대로 굳어버려서, 값 그대로 옮긴다
+        setCategory(menu.category ?? null)
         setSoldOut(menu.soldOut)
         setImageUrl(menu.imageUrl)
       })
@@ -108,14 +119,14 @@ export default function MenuEditPage() {
         const res = await apiFetch(`/api/v1/admin/menus/${targetId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, price: Number(price) || 0, soldOut, imageUrl: imageUrl ?? null }),
+          body: JSON.stringify({ name, price: Number(price) || 0, category, soldOut, imageUrl: imageUrl ?? null }),
         })
         if (!res.ok) throw new Error(`저장에 실패했어요 (${res.status})`)
       } else {
         const res = await apiFetch('/api/v1/admin/menus', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, price: Number(price) || 0, imageUrl }),
+          body: JSON.stringify({ name, price: Number(price) || 0, category, imageUrl }),
         })
         if (!res.ok) throw new Error(`등록에 실패했어요 (${res.status})`)
         const created: MenuItem = await res.json()
@@ -168,6 +179,26 @@ export default function MenuEditPage() {
             value={price}
             onChange={(e) => setPrice(e.target.value.replace(/[^0-9]/g, ''))}
           />
+
+          <div>
+            <span className="block text-sm leading-[1.5] tracking-[-0.04em] text-neutral-400">카테고리</span>
+            <div className="mt-2 flex gap-3">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => setCategory(c.key)}
+                  className={`h-[60px] flex-1 rounded-xl border text-base leading-[1.5] tracking-[-0.04em] ${
+                    category === c.key
+                      ? 'border-neutral-600 bg-neutral-600 text-neutral-50'
+                      : 'border-neutral-100 bg-neutral-50 text-neutral-400'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div>
             <span className="block text-sm leading-[1.5] tracking-[-0.04em] text-neutral-400">품절 여부</span>
