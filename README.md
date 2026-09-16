@@ -147,7 +147,7 @@ menu/dto/MenuCreateRequest.java 등   — 요청·응답 record
 | 문서 | 위치 |
 |---|---|
 | 기능명세서 | 팀 노션 |
-| **API 명세서 v0.5** (홈 화면·운영자 POS 반영) | [backend/docs/API명세서_v0.5.md](backend/docs/API명세서_v0.5.md) + 팀 노션 |
-| **DB 스키마 v1.3** (테이블 12개·설계 원칙 — 엔티티 만들 때 정본. v1.2는 변경 이력 참고용) | [backend/docs/DB스키마_v1.3.md](backend/docs/DB스키마_v1.3.md) + 팀 노션 |
+| **API 명세서 v0.6** (통합 PR 반영 — 코드가 정본. O23~O27 신설, 유휴·미결제 정의 통일. v0.5는 변경 이력 참고용) | [backend/docs/API명세서_v0.6.md](backend/docs/API명세서_v0.6.md) + 팀 노션 |
+| **DB 스키마 v1.4** (테이블 12개·설계 원칙 18 — 엔티티 만들 때 정본. 운영은 `schema-mysql8.sql` 선적용 + `validate`. v1.3은 변경 이력 참고용) | [backend/docs/DB스키마_v1.4.md](backend/docs/DB스키마_v1.4.md) + 팀 노션 |
 | 협업 규칙 | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | 회의록 | 팀 노션 (매주 토요일) |
