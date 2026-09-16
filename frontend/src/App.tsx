@@ -9,6 +9,7 @@ import MenuListPage from './pages/settings/MenuListPage'
 import TableQrPage from './pages/settings/TableQrPage'
 import SettingsPage from './pages/SettingsPage'
 import TableHomePage from './pages/TableHomePage'
+import MenuPage from './pages/customer/MenuPage'
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
       <TableOrderProvider>
         <Routes>
           <Route path="/" element={<LoginPage />} />
+          <Route path="/customer/menu" element={<MenuPage />} />
           <Route path="/orders" element={<OrderStatusPage />} />
           <Route path="/tables" element={<TableHomePage />} />
           <Route path="/settings" element={<SettingsPage />} />
