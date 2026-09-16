@@ -140,8 +140,8 @@ public class TableController {
         return tableAdminService.updatePosition(authorization, tableId, request);
     }
 
-    /** O6 퇴실·초기화 (Should) — 세션 종료+테이블 비움, 이미 퇴실 처리됐으면 410, 미결제 있어도 warning만 */
-    @Operation(summary = "O6 퇴실·초기화", description = "활성 세션을 종료하고 테이블을 빈 자리로 되돌린다. 이미 퇴실 처리됐으면 410. 미결제 주문이 있어도 막지 않고 warning만 준다.")
+    /** O6 퇴실·초기화 (Should) — 세션 종료+테이블 비움, 멱등(세션이 없어도 200으로 EMPTY), 미결제 있어도 warning만 */
+    @Operation(summary = "O6 퇴실·초기화", description = "열린 세션을 종료하고 테이블을 빈 자리로 되돌린다. 세션이 없어도 200으로 EMPTY를 돌려준다(멱등). 미결제 주문이 있어도 막지 않고 unpaidWarning·warning만 준다.")
     @PostMapping("/admin/tables/{tableId}/checkout")
     public TableCheckoutResponse checkout(@RequestHeader("Authorization") String authorization,
                                            @PathVariable Long tableId) {

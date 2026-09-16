@@ -20,5 +20,9 @@ backend/data/
 
 # 환경 변수·비밀값
 .env
+# 행사 시딩 파일 — 계정 정보가 들어가므로 예시 파일만 커밋한다
+backend/seed/*.json
+*.seed.json
+!**/event-seed.example.json
 *.pem
 *.key

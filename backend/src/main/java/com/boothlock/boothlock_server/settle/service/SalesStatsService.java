@@ -58,7 +58,7 @@ public class SalesStatsService {
                 : orderNumberingService.businessDateOf(LocalDateTime.now(KST));
         // 정산은 그날 전체 합계라 대시보드용 30건 제한을 걸면 안 됨 — 명시적으로 무제한
         List<OrderEntity> orders = orderRepository.searchForDashboard(
-                booth.getId(), null, null, businessDate, null, null, Limit.unlimited());
+                booth.getId(), null, null, businessDate, null, null, false, Limit.unlimited());
 
         long totalSales = 0;
         long paidOrderCount = 0;

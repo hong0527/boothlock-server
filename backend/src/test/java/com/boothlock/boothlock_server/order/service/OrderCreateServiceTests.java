@@ -10,12 +10,19 @@ import com.boothlock.boothlock_server.global.error.OrderRateLimitedException;
 import com.boothlock.boothlock_server.global.error.SoldOutException;
 import com.boothlock.boothlock_server.global.error.UnauthorizedException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
+import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.order.dto.OrderCreateRequest;
 import com.boothlock.boothlock_server.order.dto.OrderCreateResponse;
 import com.boothlock.boothlock_server.order.dto.OrderCreationResult;
 import com.boothlock.boothlock_server.order.repository.DailyCounterRepository;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
+import com.boothlock.boothlock_server.global.error.InvalidStateException;
+import com.boothlock.boothlock_server.global.error.SessionExpiredException;
+import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
+import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
+import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
+import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
 
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.AfterEach;
@@ -26,9 +33,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -43,13 +55,14 @@ import java.util.concurrent.Future;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
 class OrderCreateServiceTests {
 
-    private static final Long MY_SESSION = 1L;
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final String TABLE_LABEL = "A-3";   // 원본 표기 — orderNo는 정규화본 "A3"이어야 한다
 
     /** 메뉴 도메인 머지 전까지 쓰는 가짜 메뉴 창구 — 테스트가 메뉴 상태를 직접 조종한다 */
@@ -107,8 +120,23 @@ class OrderCreateServiceTests {
     @Autowired
     private EntityManager entityManager;
 
+    @Autowired
+    private TableRepository tableRepository;
+
+    @Autowired
+    private TableSessionRepository tableSessionRepository;
+
+    @Autowired
+    private OrderNumberingService numberingService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     private TransactionTemplate tx;
     private Long boothId;
+    private TableEntity table;
+    /** 주문 저장 트랜잭션이 세션 생존을 확인하므로(OrderWriter.touchIfSessionActive) 실제 활성 세션 행이 있어야 한다 */
+    private Long mySession;
 
     @BeforeEach
     void setUp() {
@@ -119,9 +147,11 @@ class OrderCreateServiceTests {
         menuLookup.clear();
         menuLookup.put(new MenuLookup.MenuInfo(3L, "김치전", 8000, false, true));
         menuLookup.put(new MenuLookup.MenuInfo(5L, "제로콜라", 5000, false, true));
-        boothId = boothRepository.save(
-                new BoothEntity("테스트 부스", "카카오뱅크 3333-01-1234567 (홍길동)", "18:00~02:00")
-        ).getId();
+        BoothEntity booth = boothRepository.save(
+                new BoothEntity("테스트 부스", "카카오뱅크 3333-01-1234567 (홍길동)", "18:00~02:00"));
+        boothId = booth.getId();
+        table = tableRepository.save(new TableEntity(booth, TABLE_LABEL, "create-svc-table-token"));
+        mySession = openSession("create-svc-session-token");
     }
 
     @AfterEach
@@ -129,7 +159,21 @@ class OrderCreateServiceTests {
         // 롤백이 없으므로 남긴 데이터를 직접 치운다 — 안 치우면 다른 테스트 클래스의 조회 결과가 오염된다
         orderRepository.deleteAll();
         dailyCounterRepository.deleteAll();
+        tableSessionRepository.deleteAll();
+        tableRepository.deleteById(table.getId());
         boothRepository.deleteById(boothId);   // 내가 만든 부스만 — deleteAll은 부스 파트 데이터까지 지운다
+    }
+
+    private Long openSession(String sessionToken) {
+        return tableSessionRepository.save(new TableSessionEntity(table, sessionToken, LocalDateTime.now(KST))).getId();
+    }
+
+    /** 퇴실(O6)이 하는 일과 같은 기록 — ended_at·ended_at_key를 채운다 (테이블 파트 코드를 부르지 않고 흉내) */
+    private void endSession(Long sessionId) {
+        tx.executeWithoutResult(s -> {
+            TableSessionEntity session = tableSessionRepository.findById(sessionId).orElseThrow();
+            session.end(LocalDateTime.now(KST));
+        });
     }
 
     private OrderCreateRequest request(Long menuId, int qty) {
@@ -138,7 +182,7 @@ class OrderCreateServiceTests {
 
     private OrderCreationResult create(String idempotencyKey, OrderCreateRequest request) {
         // 서비스가 트랜잭션 경계를 스스로 관리한다 — 호출자가 감싸면 멱등 복구 경로가 막힌다
-        return orderCreateService.create(boothId, MY_SESSION, TABLE_LABEL, idempotencyKey, request);
+        return orderCreateService.create(boothId, mySession, TABLE_LABEL, idempotencyKey, request);
     }
 
     @Test
@@ -174,7 +218,7 @@ class OrderCreateServiceTests {
         menuLookup.put(new MenuLookup.MenuInfo(3L, "김치전(대)", 12000, false, true));  // 메뉴 가격 인상
         create("idem-2", request(3L, 1));
 
-        List<OrderEntity> orders = orderRepository.findBySessionIdOrderByCreatedAtDescIdDesc(MY_SESSION);
+        List<OrderEntity> orders = orderRepository.findBySessionIdOrderByCreatedAtDescIdDesc(mySession);
         assertEquals(2, orders.size());
         OrderEntity older = orders.get(1);
         assertEquals(8000, older.getItems().get(0).getUnitPrice());     // 과거 주문은 옛 가격 유지
@@ -285,18 +329,18 @@ class OrderCreateServiceTests {
         // 라벨 원본은 "A-3"이지만 주문번호는 정규화본을 쓴다 — 하이픈·공백 제거 + 대문자 (명세서 §2)
         assertEquals("A3-1", create("idem-1", request(3L, 1)).response().orderNo());
         assertEquals("B12-2", orderCreateService.create(
-                boothId, MY_SESSION, " b 12 ", "idem-2", request(3L, 1)).response().orderNo());
+                boothId, mySession, " b 12 ", "idem-2", request(3L, 1)).response().orderNo());
     }
 
     @Test
     void rejectsNonAlphanumericLabel() {
         // 명세 O2는 라벨을 영숫자·하이픈으로 제한한다 — 특수문자·한글이 orderNo와 입금자명 안내로 흘러가면 안 된다
         assertThrows(InvalidRequestException.class, () ->
-                orderCreateService.create(boothId, MY_SESSION, "가나다", "idem-1", request(3L, 1)));
+                orderCreateService.create(boothId, mySession, "가나다", "idem-1", request(3L, 1)));
         assertThrows(InvalidRequestException.class, () ->
-                orderCreateService.create(boothId, MY_SESSION, "<B>", "idem-2", request(3L, 1)));
+                orderCreateService.create(boothId, mySession, "<B>", "idem-2", request(3L, 1)));
         assertThrows(InvalidRequestException.class, () ->
-                orderCreateService.create(boothId, MY_SESSION, "A#3", "idem-3", request(3L, 1)));
+                orderCreateService.create(boothId, mySession, "A#3", "idem-3", request(3L, 1)));
     }
 
     @Test
@@ -304,27 +348,27 @@ class OrderCreateServiceTests {
         // 정규화하면 "A3" 2자라 6자 검사는 통과하지만 원본은 table_label VARCHAR(20)을 넘는다 — 저장 전에 400으로 걸러야 500이 안 난다
         String longRaw = "A" + "-".repeat(30) + "3";
         assertThrows(InvalidRequestException.class, () ->
-                orderCreateService.create(boothId, MY_SESSION, longRaw, "idem-1", request(3L, 1)));
+                orderCreateService.create(boothId, mySession, longRaw, "idem-1", request(3L, 1)));
     }
 
     @Test
     void stripsUnicodeSpacesFromLabel() {
         // 자바 \s는 전각 공백(U+3000)을 못 잡는다 — \p{Z}까지 지워야 orderNo에 공백이 남지 않는다
         assertEquals("A3-1", orderCreateService.create(
-                boothId, MY_SESSION, "A　3", "idem-1", request(3L, 1)).response().orderNo());
+                boothId, mySession, "A　3", "idem-1", request(3L, 1)).response().orderNo());
         assertEquals("B7-2", orderCreateService.create(
-                boothId, MY_SESSION, "B 7", "idem-2", request(3L, 1)).response().orderNo());
+                boothId, mySession, "B 7", "idem-2", request(3L, 1)).response().orderNo());
     }
 
     @Test
     void rejectsMissingOrReservedTableLabel() {
         // C3는 소비자 주문이라 테이블이 반드시 있다. 단독 M은 수기 주문(O14) 예약 라벨이라 금지 (DB스키마 §1)
         assertThrows(InvalidRequestException.class, () ->
-                orderCreateService.create(boothId, MY_SESSION, null, "idem-1", request(3L, 1)));
+                orderCreateService.create(boothId, mySession, null, "idem-1", request(3L, 1)));
         assertThrows(InvalidRequestException.class, () ->
-                orderCreateService.create(boothId, MY_SESSION, "M", "idem-2", request(3L, 1)));
+                orderCreateService.create(boothId, mySession, "M", "idem-2", request(3L, 1)));
         assertThrows(InvalidRequestException.class, () ->
-                orderCreateService.create(boothId, MY_SESSION, "TOOLONGLABEL", "idem-3", request(3L, 1)));
+                orderCreateService.create(boothId, mySession, "TOOLONGLABEL", "idem-3", request(3L, 1)));
     }
 
     @Test
@@ -336,7 +380,7 @@ class OrderCreateServiceTests {
                 boothId, 999L, TABLE_LABEL, "shared-key", request(3L, 1)));
 
         assertEquals(1, orderRepository.count());
-        assertEquals(MY_SESSION,
+        assertEquals(mySession,
                 orderRepository.findById(mine.response().orderId()).orElseThrow().getSessionId());
     }
 
@@ -352,7 +396,7 @@ class OrderCreateServiceTests {
             futures.add(pool.submit(() -> {
                 ready.countDown();
                 start.await();       // 같은 순간에 같은 멱등키로 돌진시킨다 (더블탭 재현)
-                return orderCreateService.create(boothId, MY_SESSION, TABLE_LABEL, "race-key", request(3L, 2));
+                return orderCreateService.create(boothId, mySession, TABLE_LABEL, "race-key", request(3L, 2));
             }));
         }
         ready.await();
@@ -395,5 +439,113 @@ class OrderCreateServiceTests {
 
         assertEquals(20, create("idem-1", new OrderCreateRequest(twentyKinds)).response().items().size());
         assertEquals(30000, create("idem-2", request(3L, 30)).response().totalAmount());   // qty 상한 30
+    }
+
+    // ── 저장 트랜잭션 안 세션 생존 확인 (audit2 M2 / gap r3) ─────────────────
+
+    @Test
+    void rejectsOrderOnEndedSessionWithGoneAndConsumesNoNumber() {
+        // 인증(컨트롤러 앞단)은 통과했지만 저장 직전에 퇴실(O6)이 커밋된 상황 — 종료된 세션에 주문이 붙으면 안 된다
+        endSession(mySession);
+
+        assertThrows(SessionExpiredException.class, () -> create("idem-1", request(3L, 1)));
+        assertEquals(0, orderRepository.count());
+
+        // 세션 확인이 채번보다 먼저라 번호는 소모되지 않는다 — 다음 손님의 첫 주문이 1번
+        Long nextSession = openSession("create-svc-session-token-2");
+        assertEquals("A3-1", orderCreateService.create(
+                boothId, nextSession, TABLE_LABEL, "idem-2", request(3L, 1)).response().orderNo());
+    }
+
+    @Test
+    void rejectsOrderOnUnknownSessionWithGone() {
+        assertThrows(SessionExpiredException.class, () -> orderCreateService.create(
+                boothId, 999_999L, TABLE_LABEL, "idem-1", request(3L, 1)));
+        assertEquals(0, orderRepository.count());
+    }
+
+    @Test
+    void touchesSessionActivityWhenOrderIsSaved() {
+        LocalDateTime before = tableSessionRepository.findById(mySession).orElseThrow().getLastActivityAt();
+
+        OrderCreateResponse response = create("idem-1", request(3L, 1)).response();
+
+        LocalDateTime after = tableSessionRepository.findById(mySession).orElseThrow().getLastActivityAt();
+        assertEquals(response.createdAt().toLocalDateTime(), after);   // 주문 시각으로 갱신
+        assertFalse(after.isBefore(before));
+        assertNull(tableSessionRepository.findById(mySession).orElseThrow().getEndedAt());   // 종료 표시는 건드리지 않는다
+    }
+
+    @Test
+    void manualOrderOnEndedSessionIsConflictNotGone() {
+        // O14는 운영자 요청이라 손님용 410이 아니라 409로 "다시 시도" 신호를 준다 (gap 2단계)
+        endSession(mySession);
+
+        assertThrows(InvalidStateException.class, () -> orderCreateService.createManual(
+                boothId, mySession, "A3", TABLE_LABEL, List.of(new OrderCreateRequest.OrderItemRequest(3L, 1))));
+        assertEquals(0, orderRepository.count());
+    }
+
+    @Test
+    void manualOrderWithoutTableSkipsSessionCheck() {
+        OrderCreateResponse response = orderCreateService.createManual(
+                boothId, null, "M", null, List.of(new OrderCreateRequest.OrderItemRequest(3L, 2)));
+
+        assertEquals("M-1", response.orderNo());
+        assertEquals(16000, response.totalAmount());
+    }
+
+    // ── 수기 주문 채번 충돌 재시도 (gap "null 키 재조회") ─────────────────
+
+    @Test
+    void manualOrderNumberingConflictNeverReturnsAnotherManualOrder() {
+        // 카운터가 다음에 뽑을 번호(1)를 미리 점유한 수기 주문 행(멱등키 null, 같은 세션)을 심어 uq_orders_seq 충돌을 강제한다.
+        // 수정 전에는 충돌 뒤 findByIdempotencyKey(null)이 IS NULL 조회로 바뀌어 이 행이 "같은 키의 기존 주문"으로 잡혔고,
+        // 세션·부스가 같으니 남의 옛 주문을 방금 만든 주문인 것처럼 돌려줬다(테이블 미지정이면 sessionId null 비교 NPE).
+        LocalDate businessDate = numberingService.businessDateOf(LocalDateTime.now(KST));
+        OrderEntity squatter = new OrderEntity(boothId, mySession, "A3-1", businessDate, 1, null, 5000, true,
+                TABLE_LABEL, LocalDateTime.now(KST).minusMinutes(1));
+        squatter.addItem(new OrderItemEntity(5L, "제로콜라", 5000, 1));
+        orderRepository.save(squatter);
+
+        // 채번 증가는 실패한 저장과 같은 트랜잭션에서 롤백되므로 재시도마다 다시 1번이 나와 3회 모두 충돌한다 —
+        // 카운터와 orders가 어긋난 비정상 상태라 조용히 다른 주문을 돌려주는 대신 제약 위반으로 실패해야 한다
+        assertThrows(DataIntegrityViolationException.class, () -> orderCreateService.createManual(
+                boothId, mySession, "A3", TABLE_LABEL, List.of(new OrderCreateRequest.OrderItemRequest(3L, 1))));
+        assertEquals(1, orderRepository.count());   // 새 주문도, 잘못 돌려준 주문도 없다
+
+        // 테이블 미지정(세션 없음) 수기 주문도 같은 충돌에서 NPE 대신 제약 위반으로 끝난다
+        OrderEntity manualSquatter = new OrderEntity(boothId, null, "M-1", businessDate, 1, null, 5000, true,
+                LocalDateTime.now(KST).minusMinutes(1));
+        orderRepository.deleteAll();
+        orderRepository.save(manualSquatter);
+        assertThrows(DataIntegrityViolationException.class, () -> orderCreateService.createManual(
+                boothId, null, "M", null, List.of(new OrderCreateRequest.OrderItemRequest(3L, 1))));
+    }
+
+    // ── 멱등 재응답의 취소 항목 제외 (audit2 M3) ─────────────────
+
+    @Test
+    void replayResponseExcludesItemsCanceledInPaymentModal() {
+        OrderCreateRequest request = new OrderCreateRequest(List.of(
+                new OrderCreateRequest.OrderItemRequest(3L, 2),
+                new OrderCreateRequest.OrderItemRequest(5L, 1)));
+        OrderCreateResponse first = create("idem-1", request).response();
+        assertEquals(2, first.items().size());
+
+        // 결제 모달에서 콜라 항목을 개별 취소한 상태를 흉내낸다 — 항목은 숨김, 합계는 재계산
+        Long colaItemId = orderRepository.findByIdAndBoothId(first.orderId(), boothId).orElseThrow().getItems().stream()
+                .filter(item -> item.getMenuId().equals(5L)).findFirst().orElseThrow().getId();
+        jdbcTemplate.update("update order_item set canceled = true where id = ?", colaItemId);
+        jdbcTemplate.update("update orders set total_amount = 16000 where id = ?", first.orderId());
+
+        OrderCreationResult replayed = create("idem-1", request);   // 손님 더블탭 재요청
+
+        assertFalse(replayed.created());
+        assertEquals(1, replayed.response().items().size());
+        assertEquals(3L, replayed.response().items().get(0).menuId());
+        assertEquals(16000, replayed.response().totalAmount());
+        assertEquals(replayed.response().items().stream().mapToInt(OrderCreateResponse.OrderItemResponse::subtotal).sum(),
+                replayed.response().totalAmount());   // 항목 합 == 합계
     }
 }

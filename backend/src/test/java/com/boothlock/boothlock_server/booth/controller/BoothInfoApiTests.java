@@ -77,6 +77,25 @@ class BoothInfoApiTests {
                 .andExpect(jsonPath("$.isOpen").value(true));
     }
 
+    /** v0.5 신설 필드 — 시딩·O17로 넣은 홈 화면 정보가 O16에 그대로 보인다 */
+    @Test
+    void returnsHomeInfoFields() throws Exception {
+        BoothEntity booth = boothRepository.findAll().stream()
+                .filter(b -> b.getName().equals("운영 부스")).findFirst().orElseThrow();
+        booth.updateCategory("GOODS");
+        booth.updateMapPosition(0, 10000);
+        boothRepository.save(booth);
+        String token = login("booth-admin", "correct-password");
+
+        mockMvc.perform(get("/api/v1/admin/booth").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("운영 부스"))
+                .andExpect(jsonPath("$.tableCount").value(2))
+                .andExpect(jsonPath("$.category").value("GOODS"))
+                .andExpect(jsonPath("$.mapX").value(0))
+                .andExpect(jsonPath("$.mapY").value(10000));
+    }
+
     @Test
     void rejectsRequestWithoutToken() throws Exception {
         mockMvc.perform(get("/api/v1/admin/booth"))

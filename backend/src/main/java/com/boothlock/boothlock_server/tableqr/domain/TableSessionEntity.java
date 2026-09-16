@@ -11,10 +11,15 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import org.hibernate.annotations.DynamicUpdate;
+
 import java.time.LocalDateTime;
 import java.util.Objects;
 
 @Entity
+// 변경된 컬럼만 UPDATE — 퇴실(O6)과 동시에 들어온 활동 기록(touch)이 전체 컬럼을 쓰면
+// 이미 기록된 ended_at·ended_at_key를 NULL·0으로 되돌려 종료된 세션이 되살아난다
+@DynamicUpdate
 @Table(
         name = "table_session",
         uniqueConstraints = @UniqueConstraint(name = "uq_session_active", columnNames = {"table_id", "ended_at_key"})

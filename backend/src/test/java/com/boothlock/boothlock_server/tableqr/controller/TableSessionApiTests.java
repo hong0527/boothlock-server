@@ -20,6 +20,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -38,6 +39,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 class TableSessionApiTests {
+
+    /** 프로덕션 코드가 KST로 시각을 만든다 — 시딩도 같은 기준이어야 build.gradle의 시간대 고정에 기대지 않는다 */
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     @Autowired MockMvc mockMvc;
     @Autowired BoothRepository boothRepository;
@@ -87,7 +91,7 @@ class TableSessionApiTests {
     void restoresActiveSessionInstead() throws Exception {
         TableEntity table = tableRepository.findById(tableId).orElseThrow();
         TableSessionEntity existing = tableSessionRepository.save(
-                new TableSessionEntity(table, "existing-session-token", LocalDateTime.now().minusMinutes(5)));
+                new TableSessionEntity(table, "existing-session-token", LocalDateTime.now(KST).minusMinutes(5)));
 
         mockMvc.perform(post("/api/v1/table-sessions")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -108,6 +112,23 @@ class TableSessionApiTests {
                         .content("{\"tableToken\":\"no-such-token\"}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
+
+    /**
+     * 토큰은 바이트 단위로 같아야 한다 — 대소문자만 다른 토큰·끝에 공백이 붙은 토큰은 404다.
+     * H2는 기본이 대소문자 구분이라 DB만으로도 막히지만, MySQL은 콜레이션이 ai_ci면 대소문자를·utf8mb4_bin이면 끝 공백을 무시해
+     * 틀린 토큰이 조회된다. 서비스가 조회 뒤 equals로 대조하는지 확인한다(MySQL에서 돌리면 그 방어가 없을 때 이 테스트가 깨진다)
+     */
+    @Test
+    void rejectsTableTokenDifferingOnlyByCaseOrTrailingSpace() throws Exception {
+        for (String wrong : new String[] {"TABLE-TOKEN-1", "Table-Token-1", "table-token-1 "}) {
+            mockMvc.perform(post("/api/v1/table-sessions")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"tableToken\":\"" + wrong + "\"}"))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+        }
+        assertTrue(tableSessionRepository.findOpenByTableIds(List.of(tableId)).isEmpty(), "틀린 토큰으로 세션이 열렸다");
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.boothlock.boothlock_server.dashboard.controller;
 
+import com.boothlock.boothlock_server.dashboard.dto.CallAckResponse;
 import com.boothlock.boothlock_server.dashboard.dto.CallRequest;
 import com.boothlock.boothlock_server.dashboard.dto.CallResponse;
 import com.boothlock.boothlock_server.dashboard.dto.CancelRequest;
@@ -7,13 +8,18 @@ import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
 import com.boothlock.boothlock_server.dashboard.dto.ItemQtyUpdateRequest;
 import com.boothlock.boothlock_server.dashboard.dto.ManualOrderRequest;
 import com.boothlock.boothlock_server.dashboard.dto.PaymentConfirmRequest;
+import com.boothlock.boothlock_server.dashboard.dto.TablePaymentRequest;
+import com.boothlock.boothlock_server.dashboard.dto.TablePaymentResponse;
 import com.boothlock.boothlock_server.dashboard.service.CallService;
 import com.boothlock.boothlock_server.dashboard.service.DashboardOrderActionService;
 import com.boothlock.boothlock_server.dashboard.service.DashboardQueryService;
 import com.boothlock.boothlock_server.dashboard.service.ManualOrderService;
+import com.boothlock.boothlock_server.dashboard.service.TablePaymentService;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
+import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.order.dto.OrderCreateResponse;
+import com.boothlock.boothlock_server.tableqr.service.TableSessionAuthService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -27,10 +33,11 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 
 /**
- * [담당: 김재원] 운영자 대시보드·결제 처리·직원 호출 — API 명세서 O10~O15·C6·O21
+ * [담당: 김재원] 운영자 대시보드·결제 처리·직원 호출 — API 명세서 O10~O15·C6·O21·O24
  * 핵심 규칙: 상태 전이는 §2 상태 머신만 허용(위반 시 409), 돈 관련 처리는 누가·언제 기록.
+ * 운영자 API의 부스는 JWT로만 정하고, 손님 API(C6)의 세션은 X-Session-Token으로만 정한다 (§7-21).
  */
-@Tag(name = "대시보드·결제·호출", description = "운영자 대시보드·결제 처리·직원 호출 (명세서 O10~O15·C6·O21, 담당: 김재원)")
+@Tag(name = "대시보드·결제·호출", description = "운영자 대시보드·결제 처리·직원 호출 (명세서 O10~O15·C6·O21·O24, 담당: 김재원)")
 @RestController
 @RequestMapping("/api/v1")
 public class DashboardController {
@@ -39,32 +46,48 @@ public class DashboardController {
     private final DashboardOrderActionService orderActionService;
     private final CallService callService;
     private final ManualOrderService manualOrderService;
+    private final TablePaymentService tablePaymentService;
+    private final TableSessionAuthService sessionAuthService;
 
     public DashboardController(DashboardQueryService dashboardQueryService,
             DashboardOrderActionService orderActionService, CallService callService,
-            ManualOrderService manualOrderService) {
+            ManualOrderService manualOrderService, TablePaymentService tablePaymentService,
+            TableSessionAuthService sessionAuthService) {
         this.dashboardQueryService = dashboardQueryService;
         this.orderActionService = orderActionService;
         this.callService = callService;
         this.manualOrderService = manualOrderService;
+        this.tablePaymentService = tablePaymentService;
+        this.sessionAuthService = sessionAuthService;
     }
 
     /** O10 실시간 대시보드 (Must) — 주문+미확인 호출 한 번에, 폴링 3~5초, q=주문번호 검색 */
-    @Operation(summary = "O10 실시간 대시보드", description = "주문 목록과 미확인 호출을 한 번에 조회한다. 폴링 주기 3~5초 권장.")
+    @Operation(summary = "O10 실시간 대시보드",
+            description = "JWT 부스의 주문 목록과 미확인 호출을 한 번에 조회한다. 폴링 주기 3~5초 권장. "
+                    + "businessDate를 생략하면 현재 영업일(06:00 경계). tableId를 주면 그 테이블의 모든 세션 주문만 반환하고, "
+                    + "미존재·타 부스 테이블은 404. activeSessionOnly=true를 tableId와 함께 주면 그 테이블의 종료 안 된 세션 주문만 "
+                    + "(세션이 없으면 빈 목록). tableId 없이 activeSessionOnly=true는 400.")
     @GetMapping("/admin/orders")
     public DashboardResponse getDashboard(
             @RequestHeader("Authorization") String authorization,
+            // 임시 파라미터 시절 클라이언트가 조용히 남의 부스를 지정한 채 동작하지 않게, 보내면 명시적으로 400 (§7-21)
+            @Parameter(hidden = true)
+            @RequestParam(name = "boothId", required = false) String legacyBoothId,
             @Parameter(description = "주문 상태 필터")
             @RequestParam(required = false) OrderStatus status,
             @Parameter(description = "결제 상태 필터")
             @RequestParam(required = false) PaymentStatus paymentStatus,
-            @Parameter(description = "영업일 필터 (YYYY-MM-DD)")
+            @Parameter(description = "영업일 필터 (YYYY-MM-DD) — 생략 시 현재 영업일")
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDate,
             @Parameter(description = "주문번호 부분 검색 (예: A3-17)")
             @RequestParam(required = false) String q,
             @Parameter(description = "특정 테이블의 주문만 (POS 배치도에서 테이블 클릭 시 사용, v0.5 신설)")
-            @RequestParam(required = false) Long tableId) {
-        return dashboardQueryService.getDashboard(authorization, status, paymentStatus, businessDate, q, tableId);
+            @RequestParam(required = false) Long tableId,
+            @Parameter(description = "tableId와 함께 true면 그 테이블의 종료 안 된 세션 주문만 (결제 모달용). tableId 없이 true면 400")
+            @RequestParam(required = false, defaultValue = "false") boolean activeSessionOnly) {
+        rejectLegacyParam("boothId", legacyBoothId, "부스는 로그인 토큰으로 식별합니다.");
+        return dashboardQueryService.getDashboard(
+                authorization, status, paymentStatus, businessDate, q, tableId, activeSessionOnly);
     }
 
     /** O11 입금 확인 (Must) — UNPAID→PAID, 승인자·승인시각 자동 기록 */
@@ -98,13 +121,26 @@ public class DashboardController {
 
     /** O14 수기 주문 (Should) — 검증은 소비자 주문(C3)과 동일, isManual 표시, 미지정 시 M-{통산} */
     @Operation(summary = "O14 수기 주문", description = "tableId를 지정하면 그 테이블 세션에 귀속시킨다(없으면 자동 생성). "
-            + "생략하면 테이블 미지정 주문(M-통산번호)으로 만든다. 검증은 소비자 주문(C3)과 동일.")
+            + "생략하면 테이블 미지정 주문(M-통산번호)으로 만든다. 검증은 소비자 주문(C3)과 동일하며, "
+            + "품절·마감·잘못된 요청이면 세션을 만들지 않는다. tableId는 JWT 부스 소속이어야 한다(아니면 404).")
     @PostMapping("/admin/orders")
     @ResponseStatus(HttpStatus.CREATED)
     public OrderCreateResponse manualOrder(
             @RequestHeader("Authorization") String authorization,
             @RequestBody ManualOrderRequest request) {
         return manualOrderService.create(authorization, request);
+    }
+
+    /** O24 테이블 일괄 입금 확인 — 그 테이블 활성 세션의 미결제 주문 전부, 화면 합계와 다르면 409 */
+    @Operation(summary = "O24 테이블 일괄 입금 확인",
+            description = "테이블의 종료 안 된 세션에 속한 미결제(RECEIVED·DONE && UNPAID) 주문을 한 번에 입금 확인한다. "
+                    + "expectedTotal이 서버 합계와 다르거나 대상이 없으면 409, 한 건이라도 실패하면 전체 롤백 후 409. "
+                    + "타 부스·미존재 테이블은 404.")
+    @PostMapping("/admin/orders/table-payment")
+    public TablePaymentResponse confirmTablePayment(
+            @RequestHeader("Authorization") String authorization,
+            @RequestBody TablePaymentRequest request) {
+        return tablePaymentService.confirmTablePayment(authorization, request);
     }
 
     /** O6 결제 모달 수량 +/- (명세서 밖) — RECEIVED+UNPAID일 때만, 아니면 409 */
@@ -138,22 +174,35 @@ public class DashboardController {
     }
 
     /** C6 직원 호출 (Should) — reason: HELP|WATER|ETC, 같은 세션 30초 재호출 제한(429) */
-    @Operation(summary = "C6 직원 호출", description = "테이블에서 직원을 호출한다. 같은 세션 30초 내 재호출은 429.")
+    @Operation(summary = "C6 직원 호출", description = "테이블에서 직원을 호출한다. 세션은 X-Session-Token 헤더로 식별한다"
+            + "(누락 401, 미존재·종료 토큰 410). 같은 세션 30초 내 재호출은 429.")
     @PostMapping("/calls")
     @ResponseStatus(HttpStatus.CREATED)
     public CallResponse call(
-            // TODO(김재원): sessionId는 세션 인증(전형준 C1) 연동 전까지 임시 쿼리 파라미터 — 연동되면 토큰에서 추출하도록 교체
-            @Parameter(description = "세션 ID (임시: 세션 인증 연동 전까지 직접 지정)", required = true)
-            @RequestParam Long sessionId,
+            @Parameter(description = "테이블 세션 토큰", required = true)
+            @RequestHeader("X-Session-Token") String sessionToken,
+            @Parameter(hidden = true)
+            @RequestParam(name = "sessionId", required = false) String legacySessionId,
             @Valid @RequestBody CallRequest request) {
-        return callService.create(sessionId, request);
+        rejectLegacyParam("sessionId", legacySessionId, "세션은 X-Session-Token 헤더로 식별합니다.");
+        // C3·C4·C5와 같은 인증 계층 — 헤더 누락 401, 미존재·종료 토큰 410, 호출도 세션 활동으로 기록된다
+        return callService.create(sessionAuthService.authenticate(sessionToken).sessionId(), request);
     }
 
     /** O15 호출 확인 (Should) — 멱등 */
-    @Operation(summary = "O15 호출 확인", description = "직원 호출을 확인 처리한다. 이미 확인된 호출도 200.")
+    @Operation(summary = "O15 호출 확인", description = "직원 호출을 확인 처리한다. 이미 확인된 호출도 200. 타 부스·미존재 호출은 404.")
     @PatchMapping("/admin/calls/{callId}/ack")
     @ResponseStatus(HttpStatus.OK)
-    public void ackCall(@PathVariable Long callId) {
-        callService.ack(callId);
+    public CallAckResponse ackCall(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long callId) {
+        return callService.ack(authorization, callId);
+    }
+
+    /** 인증 전환(§7-21)으로 없앤 임시 파라미터 — 값을 신뢰하지도, 조용히 무시하지도 않는다 */
+    private void rejectLegacyParam(String name, String value, String guide) {
+        if (value != null) {
+            throw new InvalidRequestException(name + " 파라미터는 더 이상 받지 않습니다. " + guide);
+        }
     }
 }

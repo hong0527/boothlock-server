@@ -37,7 +37,8 @@ public class OrderCancelService {
         }
 
         // 세션 조건을 쿼리에 넣어 남의 주문도 "없음"이 되게 한다 — 권한 오류를 주면 주문 존재가 드러난다
-        OrderEntity order = orderRepository.findByIdAndSessionId(orderId,sessionId)
+        // 행 잠금 — 조회 후 상태 변경 사이에 입금 확인(O11)이 커밋되면 "취소됐는데 PAID"가 된다 (audit2 B3)
+        OrderEntity order = orderRepository.findByIdAndSessionIdForUpdate(orderId,sessionId)
                 .orElseThrow(() -> new NotFoundException("주문을 찾을 수 없습니다."));
 
         // JVM 기본 시간대에 기대지 않는다 — java -jar 배포에는 -Duser.timezone이 붙지 않아 UTC 서버에서 9시간 어긋난다
