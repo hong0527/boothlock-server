@@ -1,6 +1,5 @@
 import { Route, Routes } from 'react-router-dom'
 import { CartProvider } from './context/CartContext'
-import { MenuProvider } from './context/MenuContext'
 import { TableOrderProvider } from './context/TableOrderContext'
 import LoginPage from './pages/LoginPage'
 import OrderStatusPage from './pages/OrderStatusPage'
@@ -20,33 +19,36 @@ import OrderHistoryPage from './pages/customer/OrderHistoryPage'
 
 function App() {
   return (
-    <MenuProvider>
-      <TableOrderProvider>
-        <CartProvider>
-          <Routes>
-            <Route path="/" element={<LoginPage />} />
-            <Route path="/orders" element={<OrderStatusPage />} />
-            <Route path="/tables" element={<TableHomePage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/settings/menu" element={<MenuListPage />} />
-            <Route path="/settings/menu/new" element={<MenuEditPage />} />
-            <Route path="/settings/menu/:id" element={<MenuEditPage />} />
-            <Route path="/settings/account" element={<AccountPage />} />
-            <Route path="/settings/table-qr" element={<TableQrPage />} />
+    <CartProvider>
+      <Routes>
+        <Route path="/" element={<LoginPage />} />
+        <Route path="/orders" element={<OrderStatusPage />} />
+        <Route
+          path="/tables"
+          element={
+            <TableOrderProvider>
+              <TableHomePage />
+            </TableOrderProvider>
+          }
+        />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/menu" element={<MenuListPage />} />
+        <Route path="/settings/menu/new" element={<MenuEditPage />} />
+        <Route path="/settings/menu/:id" element={<MenuEditPage />} />
+        <Route path="/settings/account" element={<AccountPage />} />
+        <Route path="/settings/table-qr" element={<TableQrPage />} />
 
-            {/* 소비자(손님) 주문 플로우 — API 명세서 C1~C5 */}
-            <Route path="/t/:tableToken" element={<TableSessionPage />} />
-            <Route path="/order" element={<MenuOrderPage />} />
-            <Route path="/cart" element={<CartPage />} />
-            <Route path="/session-expired" element={<SessionExpiredPage />} />
+        {/* 소비자(손님) 주문 플로우 — API 명세서 C1~C5 */}
+        <Route path="/t/:tableToken" element={<TableSessionPage />} />
+        <Route path="/order" element={<MenuOrderPage />} />
+        <Route path="/cart" element={<CartPage />} />
+        <Route path="/session-expired" element={<SessionExpiredPage />} />
 
-            <Route path="/order-confirm" element={<OrderConfirmPage />} />
-            <Route path="/payment-info" element={<PaymentInfoPage />} />
-            <Route path="/order-history" element={<OrderHistoryPage />} />
-          </Routes>
-        </CartProvider>
-      </TableOrderProvider>
-    </MenuProvider>
+        <Route path="/order-confirm" element={<OrderConfirmPage />} />
+        <Route path="/payment-info" element={<PaymentInfoPage />} />
+        <Route path="/order-history" element={<OrderHistoryPage />} />
+      </Routes>
+    </CartProvider>
   )
 }
 

@@ -1,6 +1,7 @@
 package com.boothlock.boothlock_server.menu.controller;
 
 import com.boothlock.boothlock_server.menu.dto.MenuBoardResponse;
+import com.boothlock.boothlock_server.menu.dto.MenuListResponse;
 import com.boothlock.boothlock_server.menu.dto.MenuUploadResponse;
 import com.boothlock.boothlock_server.menu.dto.MenuResponse;
 import com.boothlock.boothlock_server.menu.service.MenuImageUploadService;
@@ -33,6 +34,12 @@ public class MenuController {
     @GetMapping("/menus")
     public MenuBoardResponse getMenus(@RequestHeader("X-Session-Token") String sessionToken) {
         return menuService.getMenuBoard(sessionToken);
+    }
+
+    /** 운영자용 메뉴 목록 — 메뉴 등록/편집 화면 전용, 숨김·품절 메뉴 포함 전체 반환 (명세서 O7·O8과 같은 파트) */
+    @GetMapping("/admin/menus")
+    public MenuListResponse getAdminMenus(@RequestHeader("Authorization") String authorization) {
+        return menuService.list(authorization);
     }
 
     /** O7 메뉴 등록 (Must) — name(1~50자)·price(0 이상)·description(알레르기 표기)·imageUrl·visible */

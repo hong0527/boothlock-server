@@ -17,5 +17,7 @@ public interface MenuRepository extends JpaRepository<MenuEntity, Long> {
 
     List<MenuEntity> findByBooth_IdAndVisibleTrueOrderByIdAsc(Long boothId);
 
+    List<MenuEntity> findByBooth_IdOrderByIdAsc(Long boothId);
+
     List<MenuEntity> findByBooth_IdAndIdIn(Long boothId, Collection<Long> ids);
 }
