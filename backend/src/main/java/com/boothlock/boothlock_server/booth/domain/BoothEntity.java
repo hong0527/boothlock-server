@@ -21,6 +21,9 @@ public class BoothEntity {
     @Column(name = "bank_account", nullable = false, length = 100)
     private String bankAccount;
 
+    @Column(name = "depositor_name", length = 50)
+    private String depositorName;
+
     @Column(name = "is_open", nullable = false)
     private boolean open = true;
 
@@ -68,6 +71,10 @@ public class BoothEntity {
         return bankAccount;
     }
 
+    public String getDepositorName() {
+        return depositorName;
+    }
+
     public boolean isOpen() {
         return open;
     }
@@ -112,6 +119,7 @@ public class BoothEntity {
 
     public void updateName(String name) { this.name = name; }
     public void updateBankAccount(String bankAccount) { this.bankAccount = bankAccount; }
+    public void updateDepositorName(String depositorName) { this.depositorName = depositorName; }
     public void updateOpen(boolean open) { this.open = open; }
     public void updateOperatingHours(String operatingHours) { this.operatingHours = operatingHours; }
 }

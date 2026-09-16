@@ -53,6 +53,7 @@ public class BoothInfoService {
         return new BoothInfoDto.Response(
                 booth.getName(),
                 booth.getBankAccount(),
+                booth.getDepositorName(),
                 booth.getOperatingHours(),
                 tableCount,
                 booth.isOpen());

@@ -790,6 +790,7 @@
 |---|---|---|---|
 | name | string | STAFF | 부스명 (소비자 화면 상단 표시) |
 | bankAccount | string | **ADMIN** | 계좌 표기 문자열 — C3 결제 안내에 그대로 노출 (기능 3.2) |
+| **depositorName** | string \| null | **ADMIN** | **예금주명 (v1.3.2 신설)** — 계좌 등록 화면 표시용 라벨. bankAccount와 같은 화면·같은 권한이지만 입금 경로 자체는 바꾸지 않아 감사 로그·웹훅 대상은 아니다. `null`로 보내면 미지정으로 초기화 |
 | operatingHours | string | STAFF | 안내용 텍스트 (예: "17:00~24:00") — 서버가 시간으로 주문을 막지는 않음 (막는 건 isOpen 스위치) |
 | tableCount | int | 읽기 전용 | 등록된 테이블 수 (O2로 관리) |
 | **category** | string | STAFF | **홈 화면 부스 분류 (v0.5 신설)** — `FOOD` / `CAFE` / `GOODS` / `ETC`. E1 응답과 필터에 쓴다 |
@@ -941,7 +942,7 @@ TableSession 1─N Call
 
 | 엔티티 | 핵심 필드 | 비고 |
 |---|---|---|
-| Booth | name, bankAccount, isOpen, operatingHours, **category, mapX, mapY** | category·mapX·mapY는 v0.5 신설 — 홈 화면(E1·E2)용. mapX·mapY는 0~10000 상대 좌표 |
+| Booth | name, bankAccount, **depositorName**(nullable), isOpen, operatingHours, **category, mapX, mapY** | category·mapX·mapY는 v0.5 신설 — 홈 화면(E1·E2)용. mapX·mapY는 0~10000 상대 좌표. depositorName은 v1.3.2 신설 |
 | Table | boothId, label(정규화 후 최대 6자·대문자), **tableToken**(unique·CSPRNG 128bit+), status(EMPTY/OCCUPIED), **posX, posY** | posX·posY는 v0.5 신설 — 운영자 배치도 표시용(px). null 허용 |
 | TableSession | tableId, **sessionToken**(unique), startedAt, endedAt(null=활성), lastActivityAt | 테이블당 활성 세션 최대 1개. MySQL은 부분 unique 인덱스가 없으므로 `unique(tableId, endedAtKey)`(활성=0, **종료 시 자기 id 기록** — epoch초는 같은 초 2건 종료 시 충돌해 v0.4.3에서 정정) 사용. 상세는 DB 스키마 v1.3 (검증 반영 — 초심자가 막히는 지점) |
 | Menu | boothId, name, price, imageUrl, description, **soldOut**, visible, **category**(nullable) | **stock 없음 (확정)** |

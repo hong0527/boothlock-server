@@ -74,6 +74,43 @@ class BoothSettingsApiTests {
     }
 
     @Test
+    void adminSetsAndClearsDepositorNameWithoutAuditLog() throws Exception {
+        String token = login("admin");
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"depositorName\":\"홍길동\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.depositorName").value("홍길동"));
+        assertEquals(0, logRepository.count());
+
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"depositorName\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.depositorName").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void blankDepositorNameIsTreatedAsUnset() throws Exception {
+        String token = login("admin");
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"depositorName\":\"   \"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.depositorName").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void staffCannotChangeDepositorName() throws Exception {
+        String token = login("staff");
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"depositorName\":\"홍길동\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+    }
+
+    @Test
     void staffCanChangeOpenButCannotChangeAccount() throws Exception {
         String token = login("staff");
         mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
