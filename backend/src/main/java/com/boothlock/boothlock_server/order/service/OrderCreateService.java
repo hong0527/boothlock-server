@@ -6,9 +6,11 @@ import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.global.error.ErrorResponse;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
+import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.global.error.OrderClosedException;
 import com.boothlock.boothlock_server.global.error.OrderRateLimitedException;
+import com.boothlock.boothlock_server.global.error.SessionExpiredException;
 import com.boothlock.boothlock_server.global.error.SoldOutException;
 import com.boothlock.boothlock_server.global.error.UnauthorizedException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
@@ -145,7 +147,26 @@ public class OrderCreateService {
                 boothId, sessionId, label, tableLabel, null,
                 totalAmount(request, menus), orderItems, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), true);
         // 멱등키가 없어 재요청 복구 분기는 항상 타지 않는다 — 채번 충돌 재시도만 의미가 있다
-        return saveWithRetry(spec, booth.getBankAccount()).response();
+        try {
+            return saveWithRetry(spec, booth.getBankAccount()).response();
+        } catch (SessionExpiredException e) {
+            // 호출자(O14)가 세션을 정한 뒤 저장 전에 퇴실(O6)이 끼어든 경우 — 운영자에게는 손님용 410이 아니라
+            // 409로 "다시 시도" 신호를 준다. 재시도하면 활성 세션이 새로 만들어진다
+            throw new InvalidStateException("테이블이 퇴실 처리되어 주문을 붙일 수 없습니다. 다시 시도해주세요.");
+        }
+    }
+
+    /**
+     * 결제 모달 수량 증가(O6 항목 +)용 — 그 메뉴를 지금 더 주문할 수 있는지 C3 5단계와 같은 기준으로 검사한다.
+     * 부스 마감이면 409 ORDER_CLOSED, 메뉴가 사라졌으면 400, 숨김·품절이면 409 SOLD_OUT. 감소·취소에는 부르지 않는다.
+     */
+    public void ensureOrderable(Long boothId, Long menuId) {
+        BoothEntity booth = boothRepository.findById(boothId)
+                .orElseThrow(() -> new NotFoundException("부스를 찾을 수 없습니다"));
+        if (!booth.isOpen()) {
+            throw new OrderClosedException();
+        }
+        resolveMenus(boothId, new OrderCreateRequest(List.of(new OrderCreateRequest.OrderItemRequest(menuId, 1))));
     }
 
     /**
@@ -159,6 +180,11 @@ public class OrderCreateService {
                 return new OrderCreationResult(toResponse(orderWriter.save(spec), bankAccount), true);
             } catch (DataIntegrityViolationException e) {
                 lastFailure = e;
+                // 멱등키가 없는 수기 주문(O14)은 채번 충돌뿐이라 바로 재시도한다 — null 키로 조회하면
+                // IS NULL 조건으로 바뀌어 남의 수기 주문이 잡히거나 세션 비교에서 NPE가 난다
+                if (spec.idempotencyKey() == null) {
+                    continue;
+                }
                 // 저장 트랜잭션이 끝난 뒤라 여기서는 재조회가 안전하다
                 OrderEntity winner = findReplayedOrder(spec.idempotencyKey(), spec.boothId(), spec.sessionId());
                 if (winner != null) {
@@ -262,7 +288,9 @@ public class OrderCreateService {
     }
 
     private OrderCreateResponse toResponse(OrderEntity order, String bankAccount) {
+        // 멱등 재응답은 결제 모달에서 항목이 취소된 뒤일 수 있다 — 취소 항목을 빼야 items 합과 totalAmount가 맞는다 (대시보드 매퍼와 같은 규칙)
         List<OrderCreateResponse.OrderItemResponse> items = order.getItems().stream()
+                .filter(item -> !item.isCanceled())
                 .map(item -> new OrderCreateResponse.OrderItemResponse(
                         item.getMenuId(), item.getMenuName(), item.getUnitPrice(), item.getQty(), item.subtotal()))
                 .toList();

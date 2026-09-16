@@ -29,7 +29,8 @@ public class OrderSummaryMapper {
                 o.getCanceledBy(), atKst(o.getCanceledAt()), o.getCancelReason(),
                 o.getApprovedBy(), atKst(o.getApprovedAt()),
                 o.getRefundedBy(), atKst(o.getRefundedAt()),
-                atKst(o.getCreatedAt()));
+                atKst(o.getCreatedAt()),
+                o.getSessionId());
     }
 
     private DashboardResponse.OrderItemSummary toItemSummary(OrderItemEntity item) {

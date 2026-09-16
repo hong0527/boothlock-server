@@ -6,9 +6,12 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.DynamicUpdate;
 
 @Entity
 @Table(name = "booth")
+@DynamicUpdate   // 변경된 컬럼만 UPDATE — 전체 컬럼을 쓰면 O17 부스 설정 변경이 동시에 채번된 next_table_seq를 되돌려
+                 // 이후 "테이블 추가"가 라벨 중복으로 계속 실패한다 (OrderEntity와 같은 이유)
 public class BoothEntity {
 
     @Id
@@ -84,8 +87,17 @@ public class BoothEntity {
         return mapY;
     }
 
-    public void updateHomeInfo(String category, Integer mapX, Integer mapY) {
-        this.category = category;
+    /** 값 검사(FOOD·CAFE·GOODS·ETC)는 쓰기 경로(O17·시딩)가 한다 — 여기선 보낸 필드만 바꾸는 부분 수정 단위 */
+    public void updateCategory(String category) { this.category = category; }
+
+    /**
+     * 두 좌표는 이 메서드로만 함께 바꾼다. 둘 다 null이면 핀 제거, 한쪽만 null이면 거부 —
+     * 반쪽 좌표는 지도에 찍을 수 없으므로 엔티티 단에서도 생기지 않게 한다 (DB스키마 v1.3 map_y).
+     */
+    public void updateMapPosition(Integer mapX, Integer mapY) {
+        if ((mapX == null) != (mapY == null)) {
+            throw new IllegalArgumentException("mapX와 mapY는 둘 다 있거나 둘 다 없어야 합니다.");
+        }
         this.mapX = mapX;
         this.mapY = mapY;
     }

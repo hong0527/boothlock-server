@@ -1,6 +1,7 @@
 package com.boothlock.boothlock_server.order.service;
 
 
+import com.boothlock.boothlock_server.global.error.SessionExpiredException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
@@ -30,10 +31,16 @@ public class OrderWriter {
     }
 
 
-    /** 채번(MANDATORY)이 이 트랜잭션에 합류한다 — 저장 실패 시 번호도 함께 롤백된다 */
+    /** 채번(MANDATORY)이 이 트랜잭션에 합류한다 — 저장 실패 시 번호도 함께 롤백된다. 종료된 세션이면 410 */
     @Transactional
     public OrderEntity save(OrderSpec spec)
     {
+        // 세션 확인을 채번보다 먼저 — 종료된 세션이면 번호를 소모하지 않고, 잠금 순서도 세션→카운터로 고정된다.
+        // 테이블 미지정 수기 주문(O14)은 세션이 없어 건너뛴다
+        if (spec.sessionId() != null
+                && orderRepository.touchIfSessionActive(spec.sessionId(), spec.createdAt()) == 0) {
+            throw new SessionExpiredException();
+        }
         LocalDate businessDate = numberingService.businessDateOf(spec.createdAt());
         int orderSeq = numberingService.nextSeq(spec.boothId(), businessDate);
         OrderEntity order = new OrderEntity(

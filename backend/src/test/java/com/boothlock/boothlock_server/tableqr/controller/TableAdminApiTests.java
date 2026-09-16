@@ -27,6 +27,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -43,6 +44,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 class TableAdminApiTests {
+
+    /** 프로덕션 코드가 KST로 시각을 만든다 — 시딩도 같은 기준이어야 build.gradle의 시간대 고정에 기대지 않는다 */
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
@@ -82,7 +86,7 @@ class TableAdminApiTests {
     @Test
     void regeneratesTokenAndKeepsActiveSession() throws Exception {
         TableSessionEntity session = tableSessionRepository.save(
-                new TableSessionEntity(table, "session-token-1", LocalDateTime.now()));
+                new TableSessionEntity(table, "session-token-1", LocalDateTime.now(KST)));
 
         mockMvc.perform(post("/api/v1/admin/tables/{tableId}/regenerate-token", table.getId())
                         .header("Authorization", "Bearer " + login("admin")))
@@ -270,7 +274,7 @@ class TableAdminApiTests {
         TableEntity occupiedWithSession = new TableEntity(booth, "B-1", "token-b1");
         occupiedWithSession.occupy();
         occupiedWithSession = tableRepository.save(occupiedWithSession);
-        tableSessionRepository.save(new TableSessionEntity(occupiedWithSession, "session-b1", LocalDateTime.now()));
+        tableSessionRepository.save(new TableSessionEntity(occupiedWithSession, "session-b1", LocalDateTime.now(KST)));
 
         TableEntity occupiedWithoutSession = new TableEntity(booth, "C-1", "token-c1");
         occupiedWithoutSession.occupy();
@@ -344,8 +348,9 @@ class TableAdminApiTests {
         occupied.occupy();
         occupied.updatePosition(120, 240);
         occupied = tableRepository.save(occupied);
+        // 세션은 최근 활동이어야 O3의 session에 실린다 — 유휴(기본 180분) 세션은 정책상 비활성이라 session이 null이다
         TableSessionEntity session = tableSessionRepository.save(
-                new TableSessionEntity(occupied, "session-b1", LocalDateTime.of(2026, 8, 22, 17, 0)));
+                new TableSessionEntity(occupied, "session-b1", LocalDateTime.now(KST).minusMinutes(30)));
 
         OrderEntity unpaid = new OrderEntity(
                 booth.getId(), session.getId(), "B1-1", LocalDate.of(2026, 8, 22),
@@ -482,8 +487,8 @@ class TableAdminApiTests {
 
         TableEntity newTable = tableRepository.findById(newTableId).orElseThrow();
         TableSessionEntity session = tableSessionRepository.save(
-                new TableSessionEntity(newTable, "session-history-1", LocalDateTime.now()));
-        session.end(LocalDateTime.now());
+                new TableSessionEntity(newTable, "session-history-1", LocalDateTime.now(KST)));
+        session.end(LocalDateTime.now(KST));
         tableSessionRepository.save(session);
 
         mockMvc.perform(delete("/api/v1/admin/tables/{tableId}", newTableId).header("Authorization", "Bearer " + token))
@@ -518,7 +523,7 @@ class TableAdminApiTests {
 
     @Test
     void deleteBlocksTableWithActiveSession() throws Exception {
-        tableSessionRepository.save(new TableSessionEntity(table, "session-active-1", LocalDateTime.now()));
+        tableSessionRepository.save(new TableSessionEntity(table, "session-active-1", LocalDateTime.now(KST)));
 
         mockMvc.perform(delete("/api/v1/admin/tables/{tableId}", table.getId())
                         .header("Authorization", "Bearer " + login("admin")))

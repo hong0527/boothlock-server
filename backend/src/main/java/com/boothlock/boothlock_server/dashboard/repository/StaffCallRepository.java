@@ -21,6 +21,13 @@ public interface StaffCallRepository extends JpaRepository<StaffCallEntity, Long
             """)
     List<StaffCallEntity> findUnackedByBoothId(@Param("boothId") Long boothId);
 
+    /** O15 호출 확인 — 호출→세션→테이블→부스로 스코프해 타 부스 호출은 조회 단계에서 404가 되게 한다 (존재 은닉) */
+    @Query("""
+            select c from StaffCallEntity c
+            where c.id = :callId and c.session.table.booth.id = :boothId
+            """)
+    Optional<StaffCallEntity> findByIdAndBoothId(@Param("callId") Long callId, @Param("boothId") Long boothId);
+
     /** C6 30초 재호출 제한 — 같은 세션의 가장 최근 호출 1건 (사유 무관) */
     Optional<StaffCallEntity> findFirstBySession_IdOrderByCreatedAtDesc(Long sessionId);
 }

@@ -1,18 +1,14 @@
 package com.boothlock.boothlock_server.dashboard.service;
 
-import com.boothlock.boothlock_server.booth.domain.StaffAccountEntity;
-import com.boothlock.boothlock_server.booth.service.BoothInfoService;
-import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
 import com.boothlock.boothlock_server.dashboard.domain.StaffCallEntity;
 import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
 import com.boothlock.boothlock_server.dashboard.repository.StaffCallRepository;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
-import com.boothlock.boothlock_server.global.error.ForbiddenException;
-import com.boothlock.boothlock_server.global.error.NotFoundException;
+import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
-import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
+import com.boothlock.boothlock_server.order.service.OrderNumberingService;
 
 import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
@@ -21,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 
@@ -29,6 +26,8 @@ import java.util.List;
 public class DashboardQueryService {
 
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
+    /** JVM 기본 시간대에 기대지 않는다 — java -jar 배포에는 -Duser.timezone이 붙지 않아 UTC 서버에서 9시간 어긋난다 */
+    private static final ZoneId KST_ZONE = ZoneId.of("Asia/Seoul");
     // MVP: 완료/취소 탭(그리고 상태 필터 없는 조회)은 최신 N건만 — 그 이전 주문은 q(주문번호 검색)로 찾는다.
     // 진행중(RECEIVED)은 처리 안 된 주문이 뒤로 밀려 안 보이면 안 되므로 제한 없음.
     // 상태 필터 없는 조회는 테이블-홈/결제 모달이 하루치 테이블별 항목·합계를 집계하는 데도 쓰여서
@@ -39,47 +38,56 @@ public class DashboardQueryService {
     private final OrderRepository orderRepository;
     private final StaffCallRepository staffCallRepository;
     private final OrderSummaryMapper orderSummaryMapper;
-    private final BoothJwtProvider jwtProvider;
-    private final BoothInfoService boothInfoService;
-    private final TableRepository tableRepository;
+    private final BoothStaffAuthenticator staffAuthenticator;
+    private final BoothTableLookup tableLookup;
+    private final OrderNumberingService numberingService;
 
     public DashboardQueryService(OrderRepository orderRepository, StaffCallRepository staffCallRepository,
-            OrderSummaryMapper orderSummaryMapper, BoothJwtProvider jwtProvider, BoothInfoService boothInfoService,
-            TableRepository tableRepository) {
+            OrderSummaryMapper orderSummaryMapper, BoothStaffAuthenticator staffAuthenticator,
+            BoothTableLookup tableLookup, OrderNumberingService numberingService) {
         this.orderRepository = orderRepository;
         this.staffCallRepository = staffCallRepository;
         this.orderSummaryMapper = orderSummaryMapper;
-        this.jwtProvider = jwtProvider;
-        this.boothInfoService = boothInfoService;
-        this.tableRepository = tableRepository;
+        this.staffAuthenticator = staffAuthenticator;
+        this.tableLookup = tableLookup;
+        this.numberingService = numberingService;
     }
 
+    /**
+     * 부스는 JWT로만 정한다 — STAFF·ADMIN 허용, 무토큰 401, SUPER_ADMIN 403 (명세서 §1.2·§7-21).
+     * activeSessionOnly는 tableId의 하위 옵션이다 — 테이블 없이 "활성 세션만"은 뜻이 없으므로 조용히 무시하지 않고 400.
+     */
     @Transactional(readOnly = true)
     public DashboardResponse getDashboard(String authorization, OrderStatus status, PaymentStatus paymentStatus,
-                                           LocalDate businessDate, String q, Long tableId) {
-        StaffAccountEntity staff = boothInfoService.authenticate(jwtProvider.verify(authorization));
-        if (staff.getBooth() == null) {
-            throw new ForbiddenException();
-        }
-        Long boothId = staff.getBooth().getId();
+                                           LocalDate businessDate, String q, Long tableId, boolean activeSessionOnly) {
+        Long boothId = staffAuthenticator.authenticate(authorization).getBooth().getId();
 
+        if (activeSessionOnly && tableId == null) {
+            throw new InvalidRequestException("activeSessionOnly는 tableId와 함께 써야 합니다.");
+        }
         if (tableId != null) {
-            // 타 부스 테이블이면 존재를 숨긴다 (§1.2 존재 은닉과 동일 원칙)
-            var table = tableRepository.findById(tableId)
-                    .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다."));
-            if (!table.getBooth().getId().equals(boothId)) {
-                throw new NotFoundException("테이블을 찾을 수 없습니다.");
-            }
+            // 필터 결과가 빈 목록인 것과 "그런 테이블 없음"을 구분한다 — 미존재·타 부스·삭제 테이블은 404 (명세서 O10)
+            tableLookup.requireTableOfBooth(tableId, boothId);
         }
 
+        LocalDate effectiveDate = resolveBusinessDate(businessDate, LocalDateTime.now(KST_ZONE));
         Limit limit = status == OrderStatus.RECEIVED ? Limit.unlimited() : DASHBOARD_LIST_LIMIT;
-        List<OrderEntity> orders =
-                orderRepository.searchForDashboard(boothId, status, paymentStatus, businessDate, q, tableId, limit);
+        List<OrderEntity> orders = orderRepository.searchForDashboard(
+                boothId, status, paymentStatus, effectiveDate, q, tableId, activeSessionOnly, limit);
         List<StaffCallEntity> calls = staffCallRepository.findUnackedByBoothId(boothId);
 
         return new DashboardResponse(
                 orders.stream().map(orderSummaryMapper::toOrderSummary).toList(),
                 calls.stream().map(this::toCallSummary).toList());
+    }
+
+    /**
+     * businessDate를 생략하면 "현재 영업일"(06:00 경계, 명세서 §2) — 달력 날짜가 아니다.
+     * 프론트가 달력 날짜(todayKst)를 보내면 00~06시에 전날 영업일 주문이 화면에서 사라지므로, 프론트는 파라미터를 빼고 이 기본값을 쓴다.
+     * 전 영업일 조회는 의도적으로 열지 않는다 — 무제한 누적 조회는 O18 정산·q 검색으로 대신한다.
+     */
+    LocalDate resolveBusinessDate(LocalDate requested, LocalDateTime nowKst) {
+        return requested != null ? requested : numberingService.businessDateOf(nowKst);
     }
 
     private DashboardResponse.CallSummary toCallSummary(StaffCallEntity c) {

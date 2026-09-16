@@ -82,9 +82,11 @@ class EventApiTests {
         eventMapRepository.deleteAll();
 
         foodBooth = boothRepository.save(new BoothEntity("컴공 주점", "카카오뱅크 3333-01-1234567 (홍길동)", "18:00~02:00"));
-        foodBooth.updateHomeInfo("FOOD", 3200, 5400);
+        foodBooth.updateCategory("FOOD");
+        foodBooth.updateMapPosition(3200, 5400);
         cafeBooth = boothRepository.save(new BoothEntity("동아리 카페", "국민은행 9999-88-7777777 (김철수)", "12:00~20:00"));
-        cafeBooth.updateHomeInfo("CAFE", 6100, 2800);
+        cafeBooth.updateCategory("CAFE");
+        cafeBooth.updateMapPosition(6100, 2800);
         boothRepository.flush();
     }
 
@@ -211,8 +213,8 @@ class EventApiTests {
     @Test
     void halfCoordinateIsTreatedAsMissing() throws Exception {
         // 좌표는 둘 다 있어야 지도에 찍을 수 있다 — 한쪽만 있으면 없는 것으로 준다
-        cafeBooth.updateHomeInfo("CAFE", 1000, null);
-        boothRepository.flush();
+        // 엔티티는 반쪽 좌표를 거부하므로 DB를 직접 고쳐 과거 데이터·수동 수정 상황을 만든다
+        jdbcTemplate.update("update booth set map_y = null where id = ?", cafeBooth.getId());
 
         mockMvc.perform(get("/api/v1/event/booths").param("category", "CAFE"))
                 .andExpect(status().isOk())

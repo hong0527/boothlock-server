@@ -52,17 +52,14 @@ public class TableQrService {
         this.customerBaseUrl = customerBaseUrl;
     }
 
-    /** O4 QR 단건 다운로드 — format=png(기본)|pdf. 타 부스 테이블은 404로 존재를 숨긴다 */
+    /** O4 QR 단건 다운로드 — format=png(기본)|pdf. 타 부스·삭제된 테이블은 404로 존재를 숨긴다(삭제된 QR을 다시 인쇄하면 안 된다) */
     @Transactional(readOnly = true)
     public QrFile downloadSingle(String authorization, Long tableId, String format) {
         BoothEntity staffBooth = authenticatedBooth(authorization);
         String resolvedFormat = resolveFormat(format);
 
-        TableEntity table = tableRepository.findById(tableId)
+        TableEntity table = tableRepository.findActiveByIdAndBoothId(tableId, staffBooth.getId())
                 .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다."));
-        if (!table.getBooth().getId().equals(staffBooth.getId())) {
-            throw new NotFoundException("테이블을 찾을 수 없습니다.");
-        }
 
         BufferedImage qrImage = composeFor(table);
         String filenameBase = "table-" + table.getLabel() + "-qr";
@@ -71,12 +68,12 @@ public class TableQrService {
                 : new QrFile(toPng(qrImage), "image/png", filenameBase + ".png");
     }
 
-    /** O4b QR 전체 일괄 PDF — 행사 준비용, 라벨 순으로 카드 1장당 1페이지 */
+    /** O4b QR 전체 일괄 PDF — 행사 준비용, 라벨 순으로 카드 1장당 1페이지. 삭제(soft delete)된 테이블은 빼서 O3 목록과 같은 집합만 인쇄한다 */
     @Transactional(readOnly = true)
     public QrFile downloadAll(String authorization) {
         BoothEntity staffBooth = authenticatedBooth(authorization);
 
-        List<TableEntity> tables = tableRepository.findByBoothId(staffBooth.getId()).stream()
+        List<TableEntity> tables = tableRepository.findByBoothIdAndActiveTrue(staffBooth.getId()).stream()
                 .sorted(TableLabelComparator.BY_LABEL)
                 .toList();
         if (tables.isEmpty()) {
