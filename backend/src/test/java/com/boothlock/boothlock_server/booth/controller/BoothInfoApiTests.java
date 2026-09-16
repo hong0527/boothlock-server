@@ -71,6 +71,7 @@ class BoothInfoApiTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("운영 부스"))
                 .andExpect(jsonPath("$.bankAccount").value("은행 1234"))
+                .andExpect(jsonPath("$.depositorName").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.operatingHours").value("10:00~20:00"))
                 .andExpect(jsonPath("$.tableCount").value(2))
                 .andExpect(jsonPath("$.isOpen").value(true));

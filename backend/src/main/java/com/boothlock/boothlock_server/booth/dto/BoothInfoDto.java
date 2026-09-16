@@ -9,6 +9,7 @@ public final class BoothInfoDto {
     public record Response(
             String name,
             String bankAccount,
+            String depositorName,
             String operatingHours,
             long tableCount,
             boolean isOpen,
