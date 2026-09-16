@@ -1,4 +1,7 @@
-export type MenuCategory = 'ALL' | 'MAIN' | 'SIDE' | 'DRINK'
+import type { MenuCategoryCode } from '../../types/customer'
+
+/** 'ALL'은 프론트 전용 탭 키 — 백엔드 category 값(MAIN·SIDE·DRINK)에는 없다 */
+export type MenuCategory = 'ALL' | MenuCategoryCode
 
 type CategoryTabsProps = {
   active: MenuCategory

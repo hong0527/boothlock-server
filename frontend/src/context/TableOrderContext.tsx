@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { apiFetch } from '../lib/apiFetch'
-import { todayKst } from '../lib/time'
+import { isOrderOfSession } from '../lib/sessionOrders'
 import type { OrderSummary } from '../types/dashboard'
 import type { TableStatusInfo } from '../types/table'
 
@@ -21,6 +21,8 @@ const columnsForViewport = () => {
 type TableOrderContextValue = {
   tables: TableStatusInfo[]
   error: string | null
+  /** 폴링을 기다리지 않고 즉시 다시 읽는다 — 퇴실 직후 카드가 바로 비게 */
+  refetch: () => Promise<TableStatusInfo[]>
   addTable: () => Promise<void>
   /** 드래그 중 로컬 좌표만 갱신(시각 피드백) — 서버 저장은 commitTablePosition이 한다 */
   moveTable: (tableId: number, x: number, y: number) => void
@@ -51,20 +53,27 @@ const findFreeGridPosition = (placed: { x: number; y: number }[]) => {
   return gridPosition(index, columns)
 }
 
-// 테이블-홈(Figma)은 카드에 항목별 수량·합계를 보여준다 — O3엔 없는 값이라 O10 주문 목록을
-// tableLabel로 묶어서 계산한다. 취소된 주문은 제외(진행+완료만 현재 테이블 이용 내역으로 침)
-const buildOrderIndexByTableLabel = (orders: OrderSummary[]) => {
-  const index = new Map<string, { items: Map<string, number>; total: number }>()
+type TableOrderAggregate = Pick<TableStatusInfo, 'orderItems' | 'orderTotal'>
+
+// 테이블-홈(Figma)은 카드에 항목별 수량·합계를 보여준다 — O3엔 없는 값이라 O10 주문 목록을 테이블별로 묶어서 계산한다.
+// O10은 그 영업일의 모든 세션 주문을 주므로 지금 앉은 손님 것만 센다 — 주문의 sessionId와 O3 session.id(세션 PK)를 맞춘다.
+// 테이블마다 `?tableId=&activeSessionOnly=true`를 따로 부르면 5초 폴링마다 테이블 수만큼 요청이 늘어서, 한 번 조회한 목록을 나눈다.
+// 취소된 주문은 제외(진행+완료만 현재 테이블 이용 내역으로 침). 세션이 없는(유휴 포함) 테이블은 빈 카드.
+const aggregateTableOrders = (
+  table: Pick<TableStatusInfo, 'session'>,
+  orders: OrderSummary[],
+): TableOrderAggregate => {
+  const items = new Map<string, number>()
+  let total = 0
   for (const order of orders) {
-    if (order.status === 'CANCELED' || !order.tableLabel) continue
-    const entry = index.get(order.tableLabel) ?? { items: new Map<string, number>(), total: 0 }
-    entry.total += order.totalAmount
+    if (order.status === 'CANCELED') continue
+    if (!isOrderOfSession(order, table.session)) continue
+    total += order.totalAmount
     for (const item of order.items) {
-      entry.items.set(item.menuName, (entry.items.get(item.menuName) ?? 0) + item.qty)
+      items.set(item.menuName, (items.get(item.menuName) ?? 0) + item.qty)
     }
-    index.set(order.tableLabel, entry)
   }
-  return index
+  return { orderItems: Array.from(items, ([menuName, qty]) => ({ menuName, qty })), orderTotal: total }
 }
 
 export function TableOrderProvider({ children }: { children: ReactNode }) {
@@ -78,21 +87,15 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
       const data: { tables: Omit<TableStatusInfo, 'orderItems' | 'orderTotal'>[] } = await res.json()
 
       // 주문 집계는 실패해도 테이블 목록 자체는 보여준다 — 카드에 항목만 비게 나올 뿐
-      let orderIndex = new Map<string, { items: Map<string, number>; total: number }>()
-      const ordersRes = await apiFetch(`/api/v1/admin/orders?businessDate=${todayKst()}`)
+      let orders: OrderSummary[] = []
+      // businessDate 생략 = 서버가 현재 영업일(06:00 경계)로 기본 처리 — 프론트 달력 날짜를 보내면 새벽에 전날 주문이 빠진다
+      const ordersRes = await apiFetch('/api/v1/admin/orders')
       if (ordersRes.ok) {
         const ordersData: { orders: OrderSummary[] } = await ordersRes.json()
-        orderIndex = buildOrderIndexByTableLabel(ordersData.orders)
+        orders = ordersData.orders
       }
 
-      const merged: TableStatusInfo[] = data.tables.map((t) => {
-        const entry = orderIndex.get(t.label)
-        return {
-          ...t,
-          orderItems: entry ? Array.from(entry.items, ([menuName, qty]) => ({ menuName, qty })) : [],
-          orderTotal: entry?.total ?? 0,
-        }
-      })
+      const merged: TableStatusInfo[] = data.tables.map((t) => ({ ...t, ...aggregateTableOrders(t, orders) }))
 
       setTables(merged)
       setError(null)
@@ -170,7 +173,7 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
 
   return (
     <TableOrderContext.Provider
-      value={{ tables, error, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable }}
+      value={{ tables, error, refetch, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable }}
     >
       {children}
     </TableOrderContext.Provider>

@@ -1,3 +1,4 @@
+import { apiUrl } from './apiBase'
 import { clearAuth, getAuthToken } from './auth'
 
 /**
@@ -18,7 +19,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
   const headers = new Headers(options.headers)
   headers.set('Authorization', `Bearer ${token}`)
 
-  const res = await fetch(path, { ...options, headers })
+  const res = await fetch(apiUrl(path), { ...options, headers })
 
   if (res.status === 401) {
     clearAuth()

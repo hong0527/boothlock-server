@@ -1,4 +1,4 @@
-import type { OrderSummary } from '../types/dashboard'
+import { PAYMENT_STATUS_LABEL, type OrderSummary } from '../types/dashboard'
 import { formatClockTime, formatElapsed } from '../lib/time'
 
 type OrderCardProps = {
@@ -6,15 +6,23 @@ type OrderCardProps = {
   now: number
   onComplete: (orderId: number) => void
   onCancel: (orderId: number) => void
-  onRevert: (orderId: number) => void
 }
 
-export default function OrderCard({ order, now, onComplete, onCancel, onRevert }: OrderCardProps) {
+export default function OrderCard({ order, now, onComplete, onCancel }: OrderCardProps) {
   return (
     <div className="flex min-h-[321px] w-full flex-col rounded-xl border border-neutral-200 bg-neutral-50 p-4">
       <div className="flex items-start justify-between">
-        <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
+        <span className="flex items-baseline gap-2 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
           {order.tableLabel ?? '테이블 미지정'}
+          {/* 결제 상태 뱃지 — 운영 수칙 "입금 확인 전 조리·전달 금지"(명세 O12)를 카드에서 바로 판단하게 */}
+          <span
+            className={`rounded-md px-1.5 py-0.5 text-xs font-medium ${
+              order.paymentStatus === 'UNPAID' ? 'bg-neutral-200 text-neutral-700' : 'bg-neutral-900 text-neutral-50'
+            }`}
+          >
+            {PAYMENT_STATUS_LABEL[order.paymentStatus]}
+          </span>
+          {order.manual && <span className="text-xs font-medium text-neutral-400">수기</span>}
         </span>
         <span className="flex flex-col items-end">
           <span className="text-base leading-[1.5] font-medium tracking-[-0.04em] text-blue-600">
@@ -57,17 +65,6 @@ export default function OrderCard({ order, now, onComplete, onCancel, onRevert }
         </div>
       )}
 
-      {order.status !== 'RECEIVED' && (
-        <div className="mt-4">
-          <button
-            type="button"
-            onClick={() => onRevert(order.orderId)}
-            className="h-[54px] w-full rounded-xl bg-neutral-600 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
-          >
-            되돌리기
-          </button>
-        </div>
-      )}
     </div>
   )
 }

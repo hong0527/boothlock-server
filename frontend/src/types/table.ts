@@ -2,11 +2,26 @@
 export type TableSessionInfo = {
   startedAt: string
   lastActivityAt: string
+  /** 세션 PK — O10 OrderSummary.sessionId와 맞춰 지금 앉은 손님 주문을 고른다 */
+  id: number
 }
 
 export type TableOrderItemSummary = {
   menuName: string
   qty: number
+}
+
+/**
+ * O6 퇴실 응답 (tableqr/dto/TableCheckoutResponse.java).
+ * 기존 구현은 unpaidWarning(boolean)만 주고, 테이블 갈래 개정 후에는 명세 O6의 id·label·status·warning(미결제 있을 때만)이 더해진다.
+ * 어느 쪽이 와도 읽을 수 있게 새 필드는 전부 선택으로 둔다.
+ */
+export type TableCheckoutResult = {
+  unpaidWarning: boolean
+  id?: number
+  label?: string
+  status?: 'EMPTY' | 'OCCUPIED'
+  warning?: string
 }
 
 export type TableStatusInfo = {
