@@ -1,3 +1,4 @@
+import { PlusIcon } from './icons'
 import type { CustomerMenuItem } from '../../types/customer'
 
 type MenuListItemProps = {
@@ -34,9 +35,7 @@ export default function MenuListItem({ menu, orderingDisabled, onAdd }: MenuList
             aria-label={`${menu.name} 담기`}
             className="text-neutral-900 disabled:text-neutral-300"
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2a1 1 0 0 1 1 1v8h8a1 1 0 1 1 0 2h-8v8a1 1 0 1 1-2 0v-8H3a1 1 0 1 1 0-2h8V3a1 1 0 0 1 1-1z" />
-            </svg>
+            <PlusIcon className="h-6 w-6" />
           </button>
         </div>
       </div>

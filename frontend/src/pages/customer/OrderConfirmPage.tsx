@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CONTROL_BASE } from '../../components/controlStyles'
+import BackButton from '../../components/customer/BackButton'
+import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { useCart } from '../../context/CartContext'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { getSessionInfo } from '../../lib/customerSession'
@@ -53,16 +54,7 @@ export default function OrderConfirmPage() {
   return (
     <div className="flex min-h-screen w-full flex-col bg-neutral-50">
       <div className="flex h-[114px] items-center bg-primary-50 px-4">
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          aria-label="뒤로가기"
-          className="flex h-8 w-8 items-center justify-center text-neutral-900"
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M15 5l-7 7 7 7" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        <BackButton />
         <h1 className="ml-3 text-heading-1 text-neutral-900">주문 확인</h1>
       </div>
 
@@ -91,7 +83,7 @@ export default function OrderConfirmPage() {
           type="button"
           onClick={handleSubmit}
           disabled={loading || items.length === 0}
-          className={`${CONTROL_BASE} bg-black text-heading-3 text-white disabled:opacity-40`}
+          className={`${CUSTOMER_BUTTON_BASE} bg-black text-heading-3 text-white disabled:opacity-40`}
         >
           {loading ? '주문 중...' : '주문하기'}
         </button>

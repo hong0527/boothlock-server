@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CONTROL_BASE } from '../../components/controlStyles'
+import BackButton from '../../components/customer/BackButton'
+import { CopyIcon, InfoIcon } from '../../components/customer/icons'
+import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import type { OrderCreateResult, OrderSummary } from '../../types/customer'
 
@@ -43,16 +45,7 @@ export default function PaymentInfoPage() {
   return (
     <div className="flex min-h-screen w-full flex-col bg-neutral-50">
       <div className="flex h-[114px] items-center bg-primary-50 px-4">
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          aria-label="뒤로가기"
-          className="flex h-8 w-8 items-center justify-center text-neutral-900"
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M15 5l-7 7 7 7" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        <BackButton />
         <h1 className="ml-3 text-heading-1 text-neutral-900">결제 안내</h1>
       </div>
 
@@ -71,10 +64,7 @@ export default function PaymentInfoPage() {
             <div className="flex flex-1 items-center gap-2">
               <span className="underline">{order.payment.bankAccount}</span>
               <button type="button" onClick={handleCopy} aria-label="계좌번호 복사" className="text-neutral-900">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <rect x="8" y="8" width="12" height="12" rx="2" />
-                  <path d="M4 16V6a2 2 0 0 1 2-2h10" />
-                </svg>
+                <CopyIcon className="h-[19px] w-[19px]" />
               </button>
             </div>
           </div>
@@ -86,10 +76,7 @@ export default function PaymentInfoPage() {
         </div>
 
         <div className="mt-3 flex items-center gap-2 rounded-[10px] bg-neutral-100 px-4 py-3">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 8h.01M11 12h1v4h1" strokeLinecap="round" />
-          </svg>
+          <InfoIcon className="h-[18px] w-[18px] text-neutral-700" />
           <p className="text-caption text-neutral-700">결제 후에는 취소가 어려워요.</p>
         </div>
 
@@ -100,14 +87,14 @@ export default function PaymentInfoPage() {
         <button
           type="button"
           onClick={() => navigate('/order-history', { replace: true })}
-          className={`${CONTROL_BASE} bg-black text-heading-3 text-white`}
+          className={`${CUSTOMER_BUTTON_BASE} bg-black text-heading-3 text-white`}
         >
           주문내역 확인
         </button>
         <button
           type="button"
           onClick={() => navigate('/order', { replace: true })}
-          className={`${CONTROL_BASE} bg-black text-heading-3 text-white`}
+          className={`${CUSTOMER_BUTTON_BASE} bg-black text-heading-3 text-white`}
         >
           완료
         </button>
