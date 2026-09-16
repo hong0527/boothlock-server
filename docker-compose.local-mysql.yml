@@ -1,0 +1,61 @@
+# 로컬 확인용: MySQL 8.0 컨테이너 + API 서버(prod 프로필) — RDS 없이 운영 설정을 그대로 돌려 본다.
+#   ※ 이 파일은 작성만 됐고 실행 검증은 되지 않았다(작성 시점에 도커 데몬이 꺼져 있었음). 대신 같은 스키마·설정을
+#      로컬 mysqld 8.4.0(포트 3399)에서 검증했다 — backend/docs/배포_운영절차.md §0 참조.
+#   기동:  docker compose -f docker-compose.local-mysql.yml up --build
+#   접속:  API http://localhost:8080 , MySQL localhost:3307 (boothlock / boothlock-local)
+#   스키마: mysql 컨테이너가 처음 뜰 때 backend/docs/schema-mysql8.sql 을 자동 적용한다 (docker-entrypoint-initdb.d)
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: boothlock-mysql-local
+    command:
+      # RDS 파라미터 그룹과 같은 값 (배포 문서 §1) — 문자셋·콜레이션·타임존
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+09:00
+    environment:
+      MYSQL_ROOT_PASSWORD: root-local
+      MYSQL_DATABASE: boothlock
+      MYSQL_USER: boothlock
+      MYSQL_PASSWORD: boothlock-local
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-local:/var/lib/mysql
+      - ./backend/docs/schema-mysql8.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uboothlock", "-pboothlock-local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: boothlock-server:latest
+    container_name: boothlock-api-local
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/boothlock?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&connectionCollation=utf8mb4_0900_ai_ci
+      SPRING_DATASOURCE_USERNAME: boothlock
+      SPRING_DATASOURCE_PASSWORD: boothlock-local
+      # 로컬 전용 값 — 운영에 절대 복사하지 않는다
+      BOOTLOCK_JWT_SECRET: local-only-jwt-secret-change-me-32-bytes-min
+      BOOTLOCK_CUSTOMER_BASE_URL: http://localhost:5173
+      BOOTLOCK_CORS_ALLOWED_ORIGINS: http://localhost:5173
+      BOOTLOCK_SWAGGER_ENABLED: "true"
+      BOOTLOCK_SEED_ENABLED: "false"
+      BOOTLOCK_SEED_FILE: /app/seed/event-seed.json
+    ports:
+      - "8080:8080"
+    volumes:
+      - uploads-local:/app/data/uploads
+      - ./seed:/app/seed:ro
+
+volumes:
+  mysql-local:
+  uploads-local:

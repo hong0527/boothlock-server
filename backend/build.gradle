@@ -28,6 +28,9 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	runtimeOnly 'com.h2database:h2'
 	runtimeOnly 'org.springframework.boot:spring-boot-h2console'
+	// 운영 DB(AWS RDS MySQL 8.0)용 JDBC 드라이버 — prod 프로필(application-prod.properties)에서만 쓰인다.
+	// 기본 프로필은 그대로 H2. 버전은 Spring Boot BOM이 관리한다.
+	runtimeOnly 'com.mysql:mysql-connector-j'
 
 	// O4·O4b QR 다운로드(전형준) — QR 이미지 생성 + PDF 조립
 	implementation 'com.google.zxing:core:3.5.3'
