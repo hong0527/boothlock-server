@@ -1,12 +1,12 @@
 -- =====================================================================================================
 -- 부스락 운영 DB 스키마 — MySQL 8.0 (AWS RDS) / 검증: MySQL 8.4.0 로컬 + Hibernate(Spring Boot 4.1) ddl-auto=validate 기동 통과
 --
--- 출처: 통합본(d021a4f) 엔티티로 Hibernate가 MySQL 방언에서 생성한 DDL(ddl-auto=create → mysqldump --no-data)을 바탕으로
---       DB스키마_v1.3.md 의 이름·순서로 정리하고, Hibernate가 만들 수 없는 것을 손으로 더했다:
+-- 출처: PR #54 최종 엔티티(f5a4a21 — #53 메뉴 분류·#57 예금주명 포함)로 Hibernate가 MySQL 방언에서 생성한 DDL
+--       (ddl-auto=create → mysqldump --no-data)을 바탕으로 DB스키마_v1.3.md 의 이름·순서로 정리하고, Hibernate가 만들 수 없는 것을 손으로 더했다:
 --         ① table_token · session_token · idempotency_key 의 COLLATE utf8mb4_bin (대소문자 구분 — 기본 ai_ci면 틀린 토큰으로 인증 통과)
---         ② orders(session_id) 인덱스 — 세션별 주문 조회(C6·O6 퇴실 미결제 집계·좌석 집계)가 매번 풀스캔이 되는 것을 막는다
---         ③ 문서의 FK 중 엔티티가 Long 컬럼으로만 참조해 Hibernate가 만들지 않은 것 (orders→booth/table_session, feedback→booth/staff_account, daily_counter→booth)
---         ④ 제약·인덱스 이름을 Hibernate 해시(FKokcuhbk…) 대신 읽을 수 있는 이름으로
+--         ② 문서의 FK 중 엔티티가 Long 컬럼으로만 참조해 Hibernate가 만들지 않은 것 (orders→booth/table_session, feedback→booth/staff_account, daily_counter→booth)
+--         ③ 제약·인덱스 이름을 Hibernate 해시(FKokcuhbk…) 대신 읽을 수 있는 이름으로
+--         ④ 문서의 DEFAULT 절 (Hibernate는 DEFAULT를 만들지 않고 엔티티 초기값으로 INSERT한다 — 수동 INSERT 편의)
 --       타입은 Hibernate 검증(validate)이 통과하도록 Hibernate가 만든 것을 따른다 — DATETIME(6), 열거형 CHECK 제약.
 --       문서(v1.3)와의 차이는 배포_운영절차.md §3 표 참조.
 --
@@ -21,6 +21,7 @@ CREATE TABLE booth (
   id              BIGINT       NOT NULL AUTO_INCREMENT,
   name            VARCHAR(50)  NOT NULL,
   bank_account    VARCHAR(100) NOT NULL,
+  depositor_name  VARCHAR(50)  NULL,                        -- 예금주명 (#57, 문서 v1.3 미기재) — C3 계좌 안내에 병기
   is_open         BOOLEAN      NOT NULL DEFAULT TRUE,
   operating_hours VARCHAR(50)  NULL,
   category        VARCHAR(20)  NULL,
@@ -118,7 +119,7 @@ CREATE TABLE orders (
   UNIQUE KEY uq_orders_seq (booth_id, business_date, order_seq),   -- 채번 중복의 물리적 차단
   UNIQUE KEY uq_orders_idempotency (idempotency_key),
   KEY idx_orders_search (booth_id, business_date, order_no),       -- 대시보드 주문번호 검색
-  KEY idx_orders_session (session_id),                             -- 세션별 주문·미결제 집계 (문서·엔티티 모두 없음 — 여기서 추가)
+  KEY idx_orders_session (session_id),                             -- 세션별 주문·미결제 집계 (엔티티 @Index, 문서 v1.3 미기재)
   CONSTRAINT fk_orders_booth   FOREIGN KEY (booth_id)   REFERENCES booth (id),
   CONSTRAINT fk_orders_session FOREIGN KEY (session_id) REFERENCES table_session (id),
   CONSTRAINT chk_orders_status         CHECK (status IN ('RECEIVED','DONE','CANCELED')),
