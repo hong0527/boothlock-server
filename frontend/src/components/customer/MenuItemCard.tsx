@@ -1,6 +1,5 @@
 import type { CustomerMenuItem } from '../../pages/customer/menuData'
-
-const PLUS_ICON = 'https://www.figma.com/api/mcp/asset/1f084f48-efdb-4a90-b67c-0d7aa466bee5.svg'
+import { PlusIcon } from './icons'
 
 type MenuItemCardProps = {
   item: CustomerMenuItem
@@ -29,7 +28,7 @@ export default function MenuItemCard({ item, onAdd }: MenuItemCardProps) {
         disabled={item.soldOut}
         className="absolute right-[16px] top-[67px] flex h-[22px] w-[34px] items-center justify-center rounded-[20px] border-0 bg-white transition-colors duration-150 hover:bg-[#d9d9d9] disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <img src={PLUS_ICON} alt="" className="size-[24px]" />
+        <PlusIcon className="size-[24px]" />
       </button>
     </article>
   )

@@ -1,4 +1,4 @@
-const CLOSE_ICON = 'https://www.figma.com/api/mcp/asset/ce022bf0-9fc6-48f9-883a-377538b5d50b/ed3a1.svg'
+import { CloseIcon } from './icons'
 
 type StaffCallModalProps = {
   open: boolean
@@ -30,7 +30,7 @@ export default function StaffCallModal({ open, onClose, onConfirm }: StaffCallMo
             아니오
           </button>
           <button type="button" onClick={onClose} aria-label="닫기" className="absolute -right-[3px] -top-[9px] size-[24px]">
-            <img src={CLOSE_ICON} alt="" className="size-[24px]" />
+            <CloseIcon className="size-[24px]" />
           </button>
         </div>
       </div>

@@ -1,8 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-
-const PERSON_ICON = 'https://www.figma.com/api/mcp/asset/a9e16f9e-2bc9-4d3d-bf71-c473be941e38.svg'
-const RECEIPT_ICON = 'https://www.figma.com/api/mcp/asset/c689f579-ecb1-439a-8ff6-372842fe701f.svg'
-const CART_ICON = 'https://www.figma.com/api/mcp/asset/0e902c1a-2b32-4d9f-bd71-1be33331e9f8.svg'
+import { CartIcon, PersonIcon, ReceiptIcon } from './icons'
 
 type CustomerBottomNavProps = {
   onStaffCall?: () => void
@@ -28,7 +25,7 @@ export default function CustomerBottomNav({
         onClick={onStaffCall ?? onCallStaff}
         className="absolute left-1/6 top-[17px] flex h-[51px] w-1/6 -translate-x-1/2 flex-col items-center gap-1 text-[14px] leading-[1.2] font-medium tracking-[-0.56px] text-black"
       >
-        <img src={PERSON_ICON} alt="" className="size-[28px]" />
+        <PersonIcon className="size-[28px]" />
         직원 호출
       </button>
       <button
@@ -36,7 +33,7 @@ export default function CustomerBottomNav({
         onClick={onOrderHistory ?? (() => navigate('/order-history'))}
         className="absolute left-1/2 top-[19px] flex h-[51px] w-1/6 -translate-x-1/2 flex-col items-center gap-1 text-[14px] leading-[1.2] font-medium tracking-[-0.56px] text-black"
       >
-        <img src={RECEIPT_ICON} alt="" className="size-[30px]" />
+        <ReceiptIcon className="size-[30px]" />
         주문내역
       </button>
       <button
@@ -44,7 +41,7 @@ export default function CustomerBottomNav({
         onClick={onCart ?? (() => navigate('/cart'))}
         className="absolute left-5/6 top-[21px] flex h-[48px] w-1/6 -translate-x-1/2 flex-col items-center gap-1 text-[14px] leading-[1.2] font-medium tracking-[-0.56px] text-black"
       >
-        <img src={CART_ICON} alt="" className="size-[28px]" />
+        <CartIcon className="size-[28px]" />
         장바구니
         {cartCount > 0 && (
           <span className="absolute -right-[3px] -top-[5px] flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black px-1 text-[11px] leading-none font-semibold text-white">
