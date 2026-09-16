@@ -2,21 +2,25 @@
 export type OrderStatus = 'RECEIVED' | 'DONE' | 'CANCELED'
 
 export type OrderItemSummary = {
+  itemId: number
   menuId: number
   menuName: string
   unitPrice: number
   qty: number
 }
 
+export type PaymentStatus = 'UNPAID' | 'PAID' | 'REFUND_NEEDED' | 'REFUNDED'
+
 export type OrderSummary = {
   orderId: number
   orderNo: string
   status: OrderStatus
+  paymentStatus: PaymentStatus
+  totalAmount: number
   items: OrderItemSummary[]
   createdAt: string
-  /**
-   * TODO: 백엔드 OrderSummary에 아직 없는 필드 — DB(orders.table_label)엔 있는데 매퍼에서 응답에 안 담고 있음.
-   * 필드 추가되면 이 optional을 없애고 실제 값을 그대로 씀.
-   */
-  tableLabel?: string | null
+  /** 수기 주문(테이블 미지정)은 세션이 없어서 null일 수 있음 */
+  tableLabel: string | null
+  /** O14 수기 주문으로 만들어졌는지 (운영자가 직접 입력) */
+  manual: boolean
 }

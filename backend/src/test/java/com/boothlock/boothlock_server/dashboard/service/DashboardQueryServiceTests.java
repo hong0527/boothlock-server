@@ -1,7 +1,11 @@
 package com.boothlock.boothlock_server.dashboard.service;
 
 import com.boothlock.boothlock_server.booth.domain.BoothEntity;
+import com.boothlock.boothlock_server.booth.domain.StaffAccountEntity;
+import com.boothlock.boothlock_server.booth.domain.StaffRole;
 import com.boothlock.boothlock_server.booth.repository.BoothRepository;
+import com.boothlock.boothlock_server.booth.repository.StaffAccountRepository;
+import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
 import com.boothlock.boothlock_server.dashboard.domain.CallReason;
 import com.boothlock.boothlock_server.dashboard.domain.StaffCallEntity;
 import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
@@ -20,13 +24,16 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
@@ -43,6 +50,12 @@ class DashboardQueryServiceTests {
     private BoothRepository boothRepository;
 
     @Autowired
+    private StaffAccountRepository staffAccountRepository;
+
+    @Autowired
+    private BoothJwtProvider jwtProvider;
+
+    @Autowired
     private TableRepository tableRepository;
 
     @Autowired
@@ -55,19 +68,30 @@ class DashboardQueryServiceTests {
     private EntityManager entityManager;
 
     private Long boothId;
+    private Long tableId;
     private Long sessionId;
+    private String authorization;
 
     @BeforeEach
     void setUp() {
-        boothId = boothRepository.save(
-                new BoothEntity("테스트 부스", "카카오뱅크 3333-01-1234567 (홍길동)", "18:00~02:00")
-        ).getId();
+        BoothEntity booth = boothRepository.save(
+                new BoothEntity("테스트 부스", "카카오뱅크 3333-01-1234567 (홍길동)", "18:00~02:00"));
+        boothId = booth.getId();
+        authorization = "Bearer " + issueToken(booth, "dashboard-staff");
 
         TableEntity table = tableRepository.save(
                 new TableEntity(entityManager.getReference(BoothEntity.class, boothId), "A3", "table-token-1"));
+        tableId = table.getId();
         sessionId = tableSessionRepository.save(
                 new TableSessionEntity(table, "session-token-1", LocalDateTime.of(2026, 8, 22, 17, 0))
         ).getId();
+    }
+
+    private String issueToken(BoothEntity booth, String loginId) {
+        String hash = PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("password");
+        StaffAccountEntity staff = staffAccountRepository.save(new StaffAccountEntity(
+                booth, loginId, hash, LocalDateTime.of(2026, 8, 22, 12, 0), StaffRole.ADMIN));
+        return jwtProvider.issue(staff, Instant.now());
     }
 
     private OrderEntity newOrder(Long boothId, int orderSeq, LocalDateTime createdAt) {
@@ -99,7 +123,7 @@ class DashboardQueryServiceTests {
         entityManager.flush();
         entityManager.clear();
 
-        DashboardResponse response = dashboardQueryService.getDashboard(boothId, null, null, null, null);
+        DashboardResponse response = dashboardQueryService.getDashboard(authorization, null, null, null, null, null);
 
         assertEquals(1, response.orders().size());
         assertEquals("A3-1", response.orders().get(0).orderNo());
@@ -110,16 +134,18 @@ class DashboardQueryServiceTests {
 
     @Test
     void excludesOtherBoothOrdersAndCalls() {
-        Long otherBoothId = boothRepository.save(
-                new BoothEntity("다른 부스", "국민은행 123-456 (김철수)", "17:00~01:00")).getId();
+        BoothEntity otherBooth = boothRepository.save(
+                new BoothEntity("다른 부스", "국민은행 123-456 (김철수)", "17:00~01:00"));
+        String otherAuthorization = "Bearer " + issueToken(otherBooth, "other-staff");
+
         newOrder(boothId, 1, LocalDateTime.of(2026, 8, 22, 18, 0));
-        newOrder(otherBoothId, 2, LocalDateTime.of(2026, 8, 22, 18, 5));
+        newOrder(otherBooth.getId(), 2, LocalDateTime.of(2026, 8, 22, 18, 5));
         newCall(CallReason.HELP, false);
 
         entityManager.flush();
         entityManager.clear();
 
-        DashboardResponse response = dashboardQueryService.getDashboard(otherBoothId, null, null, null, null);
+        DashboardResponse response = dashboardQueryService.getDashboard(otherAuthorization, null, null, null, null, null);
 
         assertEquals(1, response.orders().size());
         assertEquals("A3-2", response.orders().get(0).orderNo());
@@ -137,7 +163,7 @@ class DashboardQueryServiceTests {
         entityManager.clear();
 
         List<DashboardResponse.OrderSummary> orders =
-                dashboardQueryService.getDashboard(boothId, null, PaymentStatus.PAID, null, null).orders();
+                dashboardQueryService.getDashboard(authorization, null, PaymentStatus.PAID, null, null, null).orders();
 
         assertEquals(1, orders.size());
         assertEquals("A3-1", orders.get(0).orderNo());
@@ -152,15 +178,54 @@ class DashboardQueryServiceTests {
         entityManager.clear();
 
         List<DashboardResponse.OrderSummary> orders =
-                dashboardQueryService.getDashboard(boothId, null, null, null, "A3-7").orders();
+                dashboardQueryService.getDashboard(authorization, null, null, null, "A3-7", null).orders();
 
         assertEquals(1, orders.size());
         assertEquals("A3-7", orders.get(0).orderNo());
     }
 
     @Test
+    void filtersByTableId() {
+        TableEntity otherTable = tableRepository.save(
+                new TableEntity(entityManager.getReference(BoothEntity.class, boothId), "B1", "table-token-2"));
+        Long otherSessionId = tableSessionRepository.save(
+                new TableSessionEntity(otherTable, "session-token-2", LocalDateTime.of(2026, 8, 22, 17, 0))
+        ).getId();
+        OrderEntity otherTableOrder = new OrderEntity(
+                boothId, otherSessionId, "B1-1", LocalDate.of(2026, 8, 22),
+                1, "idem-other-table", 16000, false, LocalDateTime.of(2026, 8, 22, 18, 0));
+        otherTableOrder.addItem(new OrderItemEntity(3L, "김치전", 8000, 2));
+        orderRepository.save(otherTableOrder);
+        newOrder(boothId, 2, LocalDateTime.of(2026, 8, 22, 18, 5));   // A3(tableId) 소속
+
+        entityManager.flush();
+        entityManager.clear();
+
+        List<DashboardResponse.OrderSummary> orders =
+                dashboardQueryService.getDashboard(authorization, null, null, null, null, tableId).orders();
+
+        assertEquals(1, orders.size());
+        assertEquals("A3-2", orders.get(0).orderNo());
+    }
+
+    @Test
+    void tableIdFromOtherBoothIsNotFound() {
+        BoothEntity otherBooth = boothRepository.save(
+                new BoothEntity("다른 부스", "국민은행 123-456 (김철수)", "17:00~01:00"));
+        TableEntity otherBoothTable = tableRepository.save(
+                new TableEntity(entityManager.getReference(BoothEntity.class, otherBooth.getId()), "C1", "table-token-3"));
+
+        assertThrows(com.boothlock.boothlock_server.global.error.NotFoundException.class,
+                () -> dashboardQueryService.getDashboard(authorization, null, null, null, null, otherBoothTable.getId()));
+    }
+
+    @Test
     void returnsEmptyResultForBoothWithoutData() {
-        DashboardResponse response = dashboardQueryService.getDashboard(999L, null, null, null, null);
+        BoothEntity emptyBooth = boothRepository.save(
+                new BoothEntity("빈 부스", "은행 0000-00", null));
+        String emptyAuthorization = "Bearer " + issueToken(emptyBooth, "empty-staff");
+
+        DashboardResponse response = dashboardQueryService.getDashboard(emptyAuthorization, null, null, null, null, null);
 
         assertTrue(response.orders().isEmpty());
         assertTrue(response.calls().isEmpty());

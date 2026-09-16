@@ -5,58 +5,151 @@ import PrimaryButton from '../../components/PrimaryButton'
 import SectionHeader from '../../components/SectionHeader'
 import TextField from '../../components/TextField'
 import TopNav from '../../components/TopNav'
-import { useMenus } from '../../context/MenuContext'
+import { apiFetch } from '../../lib/apiFetch'
+import type { MenuItem } from '../../types/menu'
+
+type MenuCategory = 'MAIN' | 'SIDE' | 'DRINK'
+
+const CATEGORIES: { key: MenuCategory; label: string }[] = [
+  { key: 'MAIN', label: '메인메뉴' },
+  { key: 'SIDE', label: '사이드' },
+  { key: 'DRINK', label: '음료' },
+]
 
 export default function MenuEditPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { menus, addMenu, updateMenu } = useMenus()
-  const editing = id ? menus.find((m) => m.id === Number(id)) : undefined
+  const editingId = id ? Number(id) : undefined
 
-  const [name, setName] = useState(editing?.name ?? '')
-  const [price, setPrice] = useState(editing?.price.toString() ?? '')
-  const [soldOut, setSoldOut] = useState(editing?.soldOut ?? false)
-  const [imageUrl, setImageUrl] = useState(editing?.imageUrl)
+  const [name, setName] = useState('')
+  const [price, setPrice] = useState('')
+  const [category, setCategory] = useState<MenuCategory | null>('MAIN')
+  const [soldOut, setSoldOut] = useState(false)
+  const [imageUrl, setImageUrl] = useState<string | undefined>(undefined)
+  const [previewUrl, setPreviewUrl] = useState<string | undefined>(undefined)
+  const [uploading, setUploading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // 등록 도중 저장(POST) 성공 + 품절 반영(PATCH) 실패 시, 재시도가 같은 이름으로 또 POST하지 않도록
+  const [createdId, setCreatedId] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const imageUrlRef = useRef(imageUrl)
-  imageUrlRef.current = imageUrl
+  const previewUrlRef = useRef(previewUrl)
+  previewUrlRef.current = previewUrl
+  const uploadSeqRef = useRef(0)
 
-  // id가 바뀌면(언마운트 없이 /settings/menu/1 -> /settings/menu/2 같은 이동) 폼을 그 메뉴 값으로 다시 채운다
+  // 편집 모드면 목록 API에서 해당 메뉴를 찾아 폼을 채운다 (메뉴 단건 조회 API가 없어 목록에서 찾음)
   useEffect(() => {
-    setName(editing?.name ?? '')
-    setPrice(editing?.price.toString() ?? '')
-    setSoldOut(editing?.soldOut ?? false)
-    setImageUrl(editing?.imageUrl)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
+    if (!editingId) return
+    setError(null)
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return undefined
+    })
+    setCreatedId(null)
+    apiFetch('/api/v1/admin/menus')
+      .then((res) => {
+        if (!res.ok) throw new Error(`메뉴 정보를 불러오지 못했어요 (${res.status})`)
+        return res.json()
+      })
+      .then((data: { menus: MenuItem[] }) => {
+        const menu = data.menus.find((m) => m.id === editingId)
+        if (!menu) {
+          setError('메뉴를 찾을 수 없어요.')
+          return
+        }
+        setName(menu.name)
+        setPrice(menu.price.toString())
+        // null(미분류)을 'MAIN'으로 덮어쓰면 저장 시 그대로 굳어버려서, 값 그대로 옮긴다
+        setCategory(menu.category ?? null)
+        setSoldOut(menu.soldOut)
+        setImageUrl(menu.imageUrl)
+      })
+      .catch((err) => setError(err.message))
+  }, [editingId])
+
+  // 마지막으로 고른 사진의 blob 미리보기를 페이지 떠날 때 해제
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current)
+    }
+  }, [])
 
   const handleImagePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setImageUrl((prev) => {
-      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev)
+
+    // 업로드 도중 사진을 다시 고르면 이전 요청의 응답이 나중에 와서 결과를 덮어쓰지 않도록 순번으로 최신 요청만 반영한다
+    const seq = ++uploadSeqRef.current
+
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
       return URL.createObjectURL(file)
     })
+    setError(null)
+    setUploading(true)
+
+    const formData = new FormData()
+    formData.append('file', file)
+    apiFetch('/api/v1/admin/uploads', { method: 'POST', body: formData })
+      .then((res) => {
+        if (!res.ok) throw new Error(`사진 업로드에 실패했어요 (${res.status})`)
+        return res.json()
+      })
+      .then((data: { url: string }) => {
+        if (seq === uploadSeqRef.current) setImageUrl(data.url)
+      })
+      .catch((err) => {
+        if (seq === uploadSeqRef.current) setError(err.message)
+      })
+      .finally(() => {
+        if (seq === uploadSeqRef.current) setUploading(false)
+      })
   }
 
-  // 마지막으로 고른 사진의 blob URL을 페이지 떠날 때 해제
-  useEffect(() => {
-    return () => {
-      if (imageUrlRef.current?.startsWith('blob:')) URL.revokeObjectURL(imageUrlRef.current)
-    }
-  }, [])
-
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
-    const menu = { name, price: Number(price) || 0, soldOut, imageUrl }
-    // TODO: API 연결 시 POST /admin/menus 또는 PATCH /admin/menus/{id}로 교체
-    if (editing) {
-      updateMenu(editing.id, menu)
-    } else {
-      addMenu(menu)
+    if (saving || uploading) return
+    setError(null)
+    setSaving(true)
+
+    try {
+      // 등록 중 품절 반영(PATCH)만 실패했다면 createdId가 이미 채워져 있어, 재시도는 같은 이름으로 또 등록하지 않고 이어서 수정한다
+      const targetId = editingId ?? createdId
+      if (targetId) {
+        const res = await apiFetch(`/api/v1/admin/menus/${targetId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, price: Number(price) || 0, category, soldOut, imageUrl: imageUrl ?? null }),
+        })
+        if (!res.ok) throw new Error(`저장에 실패했어요 (${res.status})`)
+      } else {
+        const res = await apiFetch('/api/v1/admin/menus', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, price: Number(price) || 0, category, imageUrl }),
+        })
+        if (!res.ok) throw new Error(`등록에 실패했어요 (${res.status})`)
+        const created: MenuItem = await res.json()
+        setCreatedId(created.id)
+        // O7은 항상 품절 아님으로 생성돼서, 등록과 동시에 품절로 표시했다면 이어서 반영한다
+        if (soldOut) {
+          const patchRes = await apiFetch(`/api/v1/admin/menus/${created.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ soldOut: true }),
+          })
+          if (!patchRes.ok) throw new Error(`품절 반영에 실패했어요 (${patchRes.status})`)
+        }
+      }
+      navigate('/settings/menu')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '저장에 실패했어요.')
+    } finally {
+      setSaving(false)
     }
-    navigate('/settings/menu')
   }
+
+  const displayImage = previewUrl ?? imageUrl
 
   return (
     <div className="min-h-screen w-full bg-[#f4f5f7]">
@@ -69,8 +162,8 @@ export default function MenuEditPage() {
           onClick={() => fileInputRef.current?.click()}
           className="flex h-[120px] w-[120px] items-center justify-center overflow-hidden rounded-xl bg-neutral-300"
         >
-          {imageUrl ? (
-            <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+          {displayImage ? (
+            <img src={displayImage} alt="" className="h-full w-full object-cover" />
           ) : (
             <img src={cameraIcon} alt="사진 선택" className="h-10 w-10" />
           )}
@@ -86,6 +179,26 @@ export default function MenuEditPage() {
             value={price}
             onChange={(e) => setPrice(e.target.value.replace(/[^0-9]/g, ''))}
           />
+
+          <div>
+            <span className="block text-sm leading-[1.5] tracking-[-0.04em] text-neutral-400">카테고리</span>
+            <div className="mt-2 flex gap-3">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => setCategory(c.key)}
+                  className={`h-[60px] flex-1 rounded-xl border text-base leading-[1.5] tracking-[-0.04em] ${
+                    category === c.key
+                      ? 'border-neutral-600 bg-neutral-600 text-neutral-50'
+                      : 'border-neutral-100 bg-neutral-50 text-neutral-400'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div>
             <span className="block text-sm leading-[1.5] tracking-[-0.04em] text-neutral-400">품절 여부</span>
@@ -116,8 +229,10 @@ export default function MenuEditPage() {
           </div>
         </div>
 
-        <PrimaryButton type="submit" className="mt-2">
-          저장하기
+        {error && <p className="text-sm text-red-600">{error}</p>}
+
+        <PrimaryButton type="submit" disabled={saving || uploading} className="mt-2 disabled:opacity-40">
+          {uploading ? '사진 업로드 중...' : saving ? '저장 중...' : '저장하기'}
         </PrimaryButton>
       </form>
     </div>

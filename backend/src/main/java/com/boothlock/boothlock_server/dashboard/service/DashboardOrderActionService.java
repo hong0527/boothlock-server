@@ -25,6 +25,8 @@ import java.time.ZoneOffset;
 public class DashboardOrderActionService {
 
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
+    // 프론트 디자인에 취소 사유 입력 UI가 없어서, 비어있으면 이 값으로 기록한다
+    private static final String DEFAULT_CANCEL_REASON = "운영자 취소";
 
     private final OrderRepository orderRepository;
     private final BoothJwtProvider jwtProvider;
@@ -77,13 +79,32 @@ public class DashboardOrderActionService {
         StaffAccountEntity staff = authenticate(authorization);
         Long boothId = staff.getBooth().getId();
         LocalDateTime now = LocalDateTime.now(KST);
+        String recordedReason = (reason == null || reason.isBlank()) ? DEFAULT_CANCEL_REASON : reason;
 
-        int updated = orderRepository.cancelByStaff(orderId, boothId, reason, staff.getLoginId(), now);
+        int updated = orderRepository.cancelByStaff(orderId, boothId, recordedReason, staff.getLoginId(), now);
         if (updated == 0) {
             requireExisting(orderId, boothId);   // 없으면 여기서 404, 있으면 이미 취소된 주문이라 409
             throw new InvalidStateException("이미 취소된 주문입니다.");
         }
         return mapper.toOrderSummary(requireExisting(orderId, boothId));
+    }
+
+    /** O6 결제 모달 수량 +/- — RECEIVED+UNPAID일 때만, 아니면 409 */
+    @Transactional
+    public DashboardResponse.OrderSummary updateItemQty(String authorization, Long orderId, Long itemId, int qty) {
+        StaffAccountEntity staff = authenticate(authorization);
+        OrderEntity order = requireExisting(orderId, staff.getBooth().getId());
+        order.updateItemQty(itemId, qty);
+        return mapper.toOrderSummary(order);
+    }
+
+    /** O6 결제 모달 개별 "취소" — 남은 항목이 없으면 주문 전체가 CANCELED로 전환된다(OrderEntity.cancelItem 참조) */
+    @Transactional
+    public DashboardResponse.OrderSummary cancelItem(String authorization, Long orderId, Long itemId) {
+        StaffAccountEntity staff = authenticate(authorization);
+        OrderEntity order = requireExisting(orderId, staff.getBooth().getId());
+        order.cancelItem(itemId, LocalDateTime.now(KST), staff.getLoginId());
+        return mapper.toOrderSummary(order);
     }
 
     /** O21 환불 완료 — ADMIN 전용, REFUND_NEEDED만 REFUNDED로 전환 (명세서 O21) */

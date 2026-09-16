@@ -12,6 +12,7 @@ import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
 import com.boothlock.boothlock_server.order.service.OrderNumberingService;
 import com.boothlock.boothlock_server.settle.dto.SalesStatsResponse;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -55,8 +56,9 @@ public class SalesStatsService {
         LocalDate businessDate = requestedDate != null
                 ? requestedDate
                 : orderNumberingService.businessDateOf(LocalDateTime.now(KST));
+        // 정산은 그날 전체 합계라 대시보드용 30건 제한을 걸면 안 됨 — 명시적으로 무제한
         List<OrderEntity> orders = orderRepository.searchForDashboard(
-                booth.getId(), null, null, businessDate, null);
+                booth.getId(), null, null, businessDate, null, null, Limit.unlimited());
 
         long totalSales = 0;
         long paidOrderCount = 0;

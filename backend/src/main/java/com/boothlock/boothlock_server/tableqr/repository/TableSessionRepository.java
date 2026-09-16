@@ -16,6 +16,9 @@ public interface TableSessionRepository extends JpaRepository<TableSessionEntity
 
     Optional<TableSessionEntity> findByTableIdAndEndedAtIsNull(Long tableId);
 
+    /** 테이블 삭제 시 이용 이력(종료된 세션 포함) 여부 판단 — 이력이 있으면 완전 삭제 대신 soft delete만 한다 */
+    boolean existsByTableId(Long tableId);
+
     /** O3 좌석 현황 — 부스의 테이블들 중 활성 세션이 있는 테이블만 한 번에 조회한다 */
     List<TableSessionEntity> findByTableIdInAndEndedAtIsNull(List<Long> tableIds);
 

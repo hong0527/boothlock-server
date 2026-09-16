@@ -9,7 +9,8 @@ public record MenuResponse(
         String imageUrl,
         String description,
         boolean soldOut,
-        boolean visible
+        boolean visible,
+        String category
 ) {
     public static MenuResponse from(MenuEntity menu) {
         return new MenuResponse(
@@ -19,7 +20,8 @@ public record MenuResponse(
                 menu.getImageUrl(),
                 menu.getDescription(),
                 menu.isSoldOut(),
-                menu.isVisible()
+                menu.isVisible(),
+                menu.getCategory()
         );
     }
 }

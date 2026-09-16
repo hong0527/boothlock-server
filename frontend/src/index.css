@@ -32,3 +32,52 @@ body {
   margin: 0;
   font-family: var(--font-sans);
 }
+
+/*
+ * Figma 타이포 스케일 (fileKey OZSYaIZ3UgdVIAdzmq5R8y) — text-heading-1/2/3, text-body-1/2/3, text-caption는
+ * 프로젝트 전역에서 이미 쓰이고 있었지만 실제 정의가 없어 전부 무효 클래스였다(브라우저 기본 16px/400로만 렌더링됨).
+ * @theme의 --text-* 토큰은 font-size(+line-height)만 지정되고 font-weight는 별도 유틸이 필요해서,
+ * 크기·굵기·자간을 한 번에 묶어야 하는 이 스케일은 @utility로 정의한다.
+ */
+@utility text-heading-1 {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: normal;
+  letter-spacing: -0.04em;
+}
+@utility text-heading-2 {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: normal;
+  letter-spacing: -0.04em;
+}
+@utility text-heading-3 {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.04em;
+}
+@utility text-body-1 {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -0.04em;
+}
+@utility text-body-2 {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -0.04em;
+}
+@utility text-body-3 {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: -0.04em;
+}
+@utility text-caption {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: normal;
+  letter-spacing: -0.04em;
+}

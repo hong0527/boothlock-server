@@ -1,13 +1,15 @@
 package com.boothlock.boothlock_server.tableqr.controller;
 
-import com.boothlock.boothlock_server.global.error.NotImplementedException;
 import com.boothlock.boothlock_server.tableqr.dto.QrFile;
 import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusListResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableStatusResponse;
 import com.boothlock.boothlock_server.tableqr.service.TableAdminService;
 import com.boothlock.boothlock_server.tableqr.service.TableQrService;
 import com.boothlock.boothlock_server.tableqr.service.TableSessionService;
@@ -104,10 +106,45 @@ public class TableController {
         return tableAdminService.regenerateToken(authorization, tableId);
     }
 
-    /** O6 퇴실·초기화 (Should) — 세션 무효(410), 멱등, 미결제 시 warning */
+    /**
+     * 테이블 1개 자동 채번 등록 (명세서 밖, 프론트 "테이블 추가" 버튼 전용) — O2와 달리 라벨을 클라이언트가
+     * 정하지 않고 부스별 영구 카운터로 서버가 채번한다("T-1", "T-2"...). 삭제해도 번호가 재사용되지 않는다.
+     */
+    @Operation(summary = "테이블 1개 자동 추가", description = "부스별 영구 카운터로 다음 번호(T-N)를 채번해 테이블 1개를 등록한다.")
+    @PostMapping("/admin/tables")
+    @ResponseStatus(HttpStatus.CREATED)
+    public TableAdminResponse addSingleTable(@RequestHeader("Authorization") String authorization) {
+        return tableAdminService.addSingleTable(authorization);
+    }
+
+    /**
+     * 테이블 삭제 (명세서 밖) — 마지막 번호의 테이블만 삭제 가능(그 외 409). 사용 중(활성 세션 있음)이면 409.
+     * 이용 이력이 없으면 완전 삭제(QR 포함)하고 번호를 반납해 다음 추가 때 되살아나며, 이력이 있으면
+     * 기존처럼 soft delete만 하고 번호는 반납하지 않는다.
+     */
+    @Operation(summary = "테이블 삭제", description = "마지막 번호의 테이블만 삭제할 수 있다. 이용 이력이 없으면 완전 삭제(QR 폐기)+번호 반납, "
+            + "이력이 있으면 soft delete만 한다. 사용 중인 테이블은 409로 거부한다.")
+    @DeleteMapping("/admin/tables/{tableId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteTable(@RequestHeader("Authorization") String authorization, @PathVariable Long tableId) {
+        tableAdminService.deleteTable(authorization, tableId);
+    }
+
+    /** O22 테이블 배치 좌표 저장 (Should) — 응답은 O3 항목과 같은 형태 */
+    @Operation(summary = "O22 테이블 배치 좌표 저장",
+            description = "운영자 배치도에서 끌어다 놓은 테이블 위치(px, 캔버스 좌상단 원점)를 저장한다.")
+    @PatchMapping("/admin/tables/{tableId}/position")
+    public TableStatusResponse updatePosition(@RequestHeader("Authorization") String authorization,
+                                               @PathVariable Long tableId,
+                                               @Valid @RequestBody TablePositionRequest request) {
+        return tableAdminService.updatePosition(authorization, tableId, request);
+    }
+
+    /** O6 퇴실·초기화 (Should) — 세션 종료+테이블 비움, 이미 퇴실 처리됐으면 410, 미결제 있어도 warning만 */
+    @Operation(summary = "O6 퇴실·초기화", description = "활성 세션을 종료하고 테이블을 빈 자리로 되돌린다. 이미 퇴실 처리됐으면 410. 미결제 주문이 있어도 막지 않고 warning만 준다.")
     @PostMapping("/admin/tables/{tableId}/checkout")
-    public Object checkout(@PathVariable Long tableId) {
-        // TODO(전형준): 명세서 O6
-        throw new NotImplementedException("O6 퇴실");
+    public TableCheckoutResponse checkout(@RequestHeader("Authorization") String authorization,
+                                           @PathVariable Long tableId) {
+        return tableAdminService.checkoutTable(authorization, tableId);
     }
 }

@@ -13,6 +13,7 @@ public record DashboardResponse(List<OrderSummary> orders, List<CallSummary> cal
     public record OrderSummary(
             Long orderId,
             String orderNo,
+            String tableLabel,
             OrderStatus status,
             PaymentStatus paymentStatus,
             PaymentMethod paymentMethod,
@@ -29,7 +30,7 @@ public record DashboardResponse(List<OrderSummary> orders, List<CallSummary> cal
             OffsetDateTime createdAt) {
     }
 
-    public record OrderItemSummary(Long menuId, String menuName, int unitPrice, int qty) {
+    public record OrderItemSummary(Long itemId, Long menuId, String menuName, int unitPrice, int qty) {
     }
 
     public record CallSummary(Long callId, String tableLabel, String reason, OffsetDateTime createdAt) {
