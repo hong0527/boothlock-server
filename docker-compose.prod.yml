@@ -1,10 +1,11 @@
-# 운영: EC2 1대에서 API 서버 컨테이너만 띄운다. DB는 별도 서버 없이 H2 파일(팀 결정 — 파일럿 규모, RDS 안 씀).
+# 운영: EC2 1대에서 API + 프론트(nginx 정적 서빙)를 컨테이너 2개로 같이 띄운다 (팀 결정 — 파일럿 규모, HTTPS·별도 프론트 호스팅 없음).
 #   준비:  cp .env.prod.example .env.prod  → 값 채우기 (커밋 금지, .gitignore 등록)
 #          mkdir -p data/db data/uploads/menu data/uploads/event && sudo chown -R 10001:10001 data
 #   기동:  docker compose -f docker-compose.prod.yml up -d --build
 #   로그:  docker compose -f docker-compose.prod.yml logs -f api
 #   백업:  DB 파일은 ./data/db 호스트 폴더 — EC2가 죽으면 같이 사라진다. 필요하면 tar czf로 수동 백업
-# TLS 종단(HTTPS)은 이 파일 밖 — 같은 EC2의 nginx/Caddy 또는 ALB가 443을 받아 127.0.0.1:8080으로 넘긴다 (배포 문서 §4).
+# HTTPS는 지금 안 쓴다(도메인 미확보) — 프론트(80)만 외부에 열고, API는 프론트 컨테이너가 도커 내부망으로만 중계한다
+#   (frontend/nginx.conf의 /api·/uploads proxy_pass) — 그래서 CORS 설정이 필요 없고 8080도 퍼블릭에 열 필요가 없다.
 services:
   api:
     build:
@@ -18,7 +19,8 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: prod
     ports:
-      # 호스트 루프백에만 노출 — 외부는 리버스 프록시(443)를 거친다. 프록시 없이 직접 열려면 "8080:8080"
+      # 호스트 루프백에만 노출 — EC2 안에서 curl로 진단할 때만 쓴다. 실제 트래픽은 frontend 컨테이너가
+      # 도커 내부망(서비스명 api)으로 중계하므로 이 포트를 퍼블릭에 열 필요가 없다
       - "127.0.0.1:8080:8080"
     volumes:
       # H2 DB 파일 — 컨테이너를 내렸다 올려도(재배포) 그대로 남는다. EC2가 죽으면 이것도 같이 사라진다(팀 결정)
@@ -33,6 +35,25 @@ services:
         limits:
           # t3.small(2GiB) 기준. JVM은 JAVA_TOOL_OPTIONS의 MaxRAMPercentage=70으로 이 한도 안에서 힙을 잡는다
           memory: 1200m
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      # VITE_API_BASE_URL을 안 넘긴다 — 비워두면 프론트가 상대경로(/api/...)로 호출하고, nginx가 같은
+      # 오리진에서 받아 api 컨테이너로 중계한다(내부망). 그래서 EC2 주소가 바뀌어도 프론트를 다시 빌드할 필요가 없다
+    image: boothlock-frontend:latest
+    container_name: boothlock-frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
     logging:
       driver: json-file
       options:
