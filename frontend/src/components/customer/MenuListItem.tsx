@@ -12,7 +12,14 @@ export default function MenuListItem({ menu, orderingDisabled, onAdd }: MenuList
   const disabled = menu.soldOut || orderingDisabled
 
   return (
-    <div className="relative flex h-[112px] w-full gap-[19px] rounded-[12px] border border-neutral-200 bg-white p-4">
+    // 카드 전체를 눌러도 담기게 — + 아이콘은 그대로 두되 장식으로만(중첩 버튼 방지를 위해 span)
+    <button
+      type="button"
+      onClick={onAdd}
+      disabled={disabled}
+      aria-label={`${menu.name} 담기`}
+      className="relative flex h-[112px] w-full gap-[19px] rounded-[12px] border border-neutral-200 bg-white p-4 text-left disabled:opacity-60"
+    >
       <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-[12px] bg-[#d9d9d9]">
         {menu.imageUrl && <img src={assetUrl(menu.imageUrl)} alt="" className="h-full w-full object-cover" />}
         {menu.soldOut && (
@@ -29,17 +36,11 @@ export default function MenuListItem({ menu, orderingDisabled, onAdd }: MenuList
         </div>
         <div className="flex items-center justify-between">
           <span className="text-body-1 text-neutral-900">{menu.price.toLocaleString()}원</span>
-          <button
-            type="button"
-            onClick={onAdd}
-            disabled={disabled}
-            aria-label={`${menu.name} 담기`}
-            className="text-neutral-900 disabled:text-neutral-300"
-          >
+          <span className="text-neutral-900">
             <PlusIcon className="h-6 w-6" />
-          </button>
+          </span>
         </div>
       </div>
-    </div>
+    </button>
   )
 }
