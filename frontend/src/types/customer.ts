@@ -38,27 +38,6 @@ export type PaymentGuide = {
   depositorNameRule: string
 }
 
-/** C3 주문 생성 응답의 주문 항목 (subtotal 있음) */
-export type OrderCreateItem = {
-  menuId: number
-  menuName: string
-  unitPrice: number
-  qty: number
-  subtotal: number
-}
-
-/** C3 주문 생성 응답 */
-export type OrderCreateResult = {
-  orderId: number
-  orderNo: string
-  status: 'RECEIVED' | 'DONE' | 'CANCELED'
-  paymentStatus: CustomerPaymentStatus
-  totalAmount: number
-  items: OrderCreateItem[]
-  payment: PaymentGuide
-  createdAt: string
-}
-
 /** C4 내 주문 조회 응답의 주문 항목 (subtotal 없음) */
 export type OrderSummaryItem = {
   menuId: number
