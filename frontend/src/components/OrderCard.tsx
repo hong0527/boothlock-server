@@ -1,4 +1,5 @@
 import { PAYMENT_STATUS_LABEL, type OrderSummary } from '../types/dashboard'
+import { displayTableLabel } from '../lib/tableLabel'
 import { formatClockTime, formatElapsed } from '../lib/time'
 
 type OrderCardProps = {
@@ -13,7 +14,7 @@ export default function OrderCard({ order, now, onComplete, onCancel }: OrderCar
     <div className="flex min-h-[321px] w-full flex-col rounded-xl border border-neutral-200 bg-neutral-50 p-4">
       <div className="flex items-start justify-between">
         <span className="flex items-baseline gap-2 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
-          {order.tableLabel ?? '테이블 미지정'}
+          {order.tableLabel ? displayTableLabel(order.tableLabel) : '테이블 미지정'}
           {/* 결제 상태 뱃지 — 운영 수칙 "입금 확인 전 조리·전달 금지"(명세 O12)를 카드에서 바로 판단하게 */}
           <span
             className={`rounded-md px-1.5 py-0.5 text-xs font-medium ${

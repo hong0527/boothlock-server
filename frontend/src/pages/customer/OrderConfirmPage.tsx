@@ -6,6 +6,7 @@ import { useCart } from '../../context/CartContext'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { getSessionInfo, getSessionToken } from '../../lib/customerSession'
 import { cartFingerprint, createIdempotencyKeyStore } from '../../lib/idempotencyKey'
+import { displayTableLabel } from '../../lib/tableLabel'
 
 type OrderErrorBody = { error: { code: string; message: string } }
 
@@ -64,7 +65,9 @@ export default function OrderConfirmPage() {
 
       <div className="flex-1 px-[18px] py-6">
         <div className="rounded-[10px] border border-[#b8dcd3] bg-primary-50 p-6">
-          <p className="text-body-3 text-neutral-500">테이블 번호: {sessionInfo?.tableLabel}</p>
+          <p className="text-body-3 text-neutral-500">
+            테이블 번호: {sessionInfo?.tableLabel && displayTableLabel(sessionInfo.tableLabel)}
+          </p>
           <div className="mt-3 divide-y divide-neutral-100 border-t border-neutral-100">
             {items.map((item) => (
               <div key={item.menuId} className="flex items-center justify-between py-3 text-body-1 text-neutral-900">
