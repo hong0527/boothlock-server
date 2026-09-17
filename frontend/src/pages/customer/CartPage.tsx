@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
 import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { useCart } from '../../context/CartContext'
+import { assetUrl } from '../../lib/apiBase'
 
 export default function CartPage() {
   const navigate = useNavigate()
@@ -17,7 +18,11 @@ export default function CartPage() {
       <div className="flex-1 overflow-y-auto px-6">
         {items.map((item) => (
           <div key={item.menuId} className="flex items-start gap-[19px] border-b border-neutral-100 py-6">
-            <div className="h-20 w-20 shrink-0 rounded-[12px] bg-[#d9d9d9]" />
+            <div className="h-20 w-20 shrink-0 overflow-hidden rounded-[12px] bg-[#d9d9d9]">
+              {item.imageUrl && (
+                <img src={assetUrl(item.imageUrl)} alt="" className="h-full w-full object-cover" />
+              )}
+            </div>
             <div className="flex flex-1 flex-col justify-between self-stretch">
               <div className="flex items-start justify-between">
                 <span className="text-body-1 text-neutral-900">{item.name}</span>

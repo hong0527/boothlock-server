@@ -30,6 +30,7 @@ export type CartItem = {
   menuId: number
   name: string
   unitPrice: number
+  imageUrl?: string | null
   qty: number
 }
 

@@ -22,7 +22,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       if (existing) {
         return prev.map((i) => (i.menuId === menu.id ? { ...i, qty: i.qty + 1 } : i))
       }
-      return [...prev, { menuId: menu.id, name: menu.name, unitPrice: menu.price, qty: 1 }]
+      return [...prev, { menuId: menu.id, name: menu.name, unitPrice: menu.price, imageUrl: menu.imageUrl, qty: 1 }]
     })
   }
 

@@ -3,6 +3,7 @@ import CategoryTabs, { type MenuCategory } from '../../components/customer/Categ
 import CustomerBottomNav from '../../components/customer/CustomerBottomNav'
 import CustomerTopBar from '../../components/customer/CustomerTopBar'
 import MenuListItem from '../../components/customer/MenuListItem'
+import StaffCallConfirmModal from '../../components/customer/StaffCallConfirmModal'
 import { useCart } from '../../context/CartContext'
 import { readApiError } from '../../lib/apiError'
 import { customerApiFetch } from '../../lib/customerApiFetch'
@@ -24,6 +25,7 @@ export default function MenuOrderPage() {
   const [category, setCategory] = useState<MenuCategory>('ALL')
   const [error, setError] = useState<string | null>(null)
   const [callMessage, setCallMessage] = useState<string | null>(null)
+  const [showCallConfirm, setShowCallConfirm] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -56,7 +58,9 @@ export default function MenuOrderPage() {
   }, [menus, category])
 
   // C6 직원 호출 — 세션은 customerApiFetch가 X-Session-Token 헤더로 실어 보낸다 (410이면 거기서 재스캔 화면으로 이동)
+  // 실수로 눌러도 바로 호출되지 않게 재확인 팝업(Figma 289:4115)을 한 번 거친다
   const handleCallStaff = async () => {
+    setShowCallConfirm(false)
     try {
       const res = await customerApiFetch('/api/v1/calls', {
         method: 'POST',
@@ -107,7 +111,11 @@ export default function MenuOrderPage() {
         )}
       </div>
 
-      <CustomerBottomNav cartCount={totalQty} onCallStaff={handleCallStaff} />
+      <CustomerBottomNav cartCount={totalQty} onCallStaff={() => setShowCallConfirm(true)} />
+
+      {showCallConfirm && (
+        <StaffCallConfirmModal onConfirm={handleCallStaff} onCancel={() => setShowCallConfirm(false)} />
+      )}
     </div>
   )
 }
