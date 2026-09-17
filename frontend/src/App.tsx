@@ -16,7 +16,6 @@ import MenuListPage from './pages/settings/MenuListPage'
 import TableQrPage from './pages/settings/TableQrPage'
 import SettingsPage from './pages/SettingsPage'
 import TableHomePage from './pages/TableHomePage'
-import MenuPage from './pages/customer/MenuPage'
 import OrderConfirmPage from './pages/customer/OrderConfirmPage'
 import PaymentInfoPage from './pages/customer/PaymentInfoPage'
 import OrderHistoryPage from './pages/customer/OrderHistoryPage'
@@ -27,7 +26,6 @@ function App() {
       <Routes>
         <Route path="/" element={<LoginPage />} />
         <Route path="/orders" element={<OrderStatusPage />} />
-        <Route path="/customer/menu" element={<MenuPage />} />
 
         {/* 방문자 홈 — Figma 92:2 / 95:368 / 212:704 */}
         <Route path="/home" element={<HomePage />} />

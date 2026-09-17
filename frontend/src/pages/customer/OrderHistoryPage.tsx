@@ -103,7 +103,14 @@ export default function OrderHistoryPage() {
         )}
       </div>
 
-      <div className="px-[18px] pb-8">
+      <div className="flex flex-col gap-[6px] px-[18px] pb-8">
+        <button
+          type="button"
+          onClick={() => navigate('/payment-info')}
+          className="h-[50px] w-full rounded-[12px] border border-neutral-900 text-body-1 text-neutral-900"
+        >
+          결제 안내
+        </button>
         <button
           type="button"
           onClick={() => navigate('/order')}

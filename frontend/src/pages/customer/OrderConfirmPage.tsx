@@ -6,7 +6,6 @@ import { useCart } from '../../context/CartContext'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { getSessionInfo, getSessionToken } from '../../lib/customerSession'
 import { cartFingerprint, createIdempotencyKeyStore } from '../../lib/idempotencyKey'
-import type { OrderCreateResult } from '../../types/customer'
 
 type OrderErrorBody = { error: { code: string; message: string } }
 
@@ -44,10 +43,10 @@ export default function OrderConfirmPage() {
         return
       }
 
-      const order: OrderCreateResult = await res.json()
+      await res.json()
       idempotencyRef.current.clear()
       clear()
-      navigate('/payment-info', { state: { order }, replace: true })
+      navigate('/order-history', { replace: true })
     } catch {
       // 410(퇴실·만료)으로 customerApiFetch가 세션을 지우고 이동 중이면 네트워크 오류 문구가 잠깐 비치지 않게 한다
       if (getSessionToken()) setError('서버에 연결할 수 없어요. 네트워크 상태를 확인해주세요.')
