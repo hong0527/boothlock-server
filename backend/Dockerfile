@@ -23,7 +23,7 @@ FROM eclipse-temurin:21-jre
 # 고정 UID/GID — 호스트에 바인드 마운트한 업로드 폴더를 이 번호로 chown 한다 (배포 문서 참조)
 RUN groupadd --system --gid 10001 app \
  && useradd  --system --uid 10001 --gid app --home-dir /app --shell /usr/sbin/nologin app \
- && mkdir -p /app/data/uploads/menu /app/data/uploads/event /app/seed \
+ && mkdir -p /app/data/db /app/data/uploads/menu /app/data/uploads/event /app/seed \
  && chown -R app:app /app
 WORKDIR /app
 
@@ -37,8 +37,8 @@ ENV TZ=Asia/Seoul \
     BOOTLOCK_UPLOAD_MENU_DIR=/app/data/uploads/menu \
     BOOTLOCK_UPLOAD_EVENT_DIR=/app/data/uploads/event
 
-# 메뉴 사진(O9)·행사 약도(E2) — 컨테이너를 갈아도 남아야 하므로 볼륨
-VOLUME ["/app/data/uploads"]
+# DB 파일(H2)·메뉴 사진(O9)·행사 약도(E2) — 컨테이너를 갈아도 남아야 하므로 볼륨
+VOLUME ["/app/data/db", "/app/data/uploads"]
 EXPOSE 8080
 
 # E1(부스 목록)은 인증 없이 200을 준다. /map은 약도 등록 전 404라 쓰지 않는다
