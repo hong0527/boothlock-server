@@ -10,7 +10,16 @@ export type IdempotencyKeyStore = {
   clear: () => void
 }
 
-export function createIdempotencyKeyStore(generate: () => string = () => crypto.randomUUID()): IdempotencyKeyStore {
+// crypto.randomUUID()는 보안 컨텍스트(HTTPS·localhost)에서만 동작한다 — 지금 배포는 평문 HTTP라
+// 실제 기기(HTTPS 아님)에서 호출 즉시 TypeError가 나서 fetch 이전에 조용히 실패했다(실측).
+// crypto.getRandomValues는 보안 컨텍스트 제한이 없어 HTTP에서도 동작한다.
+function generateRandomId(): string {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export function createIdempotencyKeyStore(generate: () => string = generateRandomId): IdempotencyKeyStore {
   let current: { key: string; fingerprint: string } | null = null
   return {
     keyFor(fingerprint) {
