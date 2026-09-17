@@ -11,6 +11,9 @@ import type { CustomerMenuItem } from '../../types/customer'
 
 type MenuBoardResponse = { boothName: string; isOpen: boolean; menus: CustomerMenuItem[] }
 
+// '전체' 탭에서 메인메뉴 → 사이드 → 음료 순으로 보여준다. 분류 없는 메뉴는 맨 뒤
+const CATEGORY_ORDER: Record<string, number> = { MAIN: 0, SIDE: 1, DRINK: 2 }
+
 export default function MenuOrderPage() {
   const sessionInfo = getSessionInfo()
   const { addItem, totalQty } = useCart()
@@ -44,10 +47,13 @@ export default function MenuOrderPage() {
     }
   }, [])
 
-  const visibleMenus = useMemo(
-    () => (category === 'ALL' ? menus : menus.filter((menu) => menu.category === category)),
-    [menus, category],
-  )
+  const visibleMenus = useMemo(() => {
+    if (category !== 'ALL') return menus.filter((menu) => menu.category === category)
+    // Array.sort는 안정 정렬이라 같은 분류 안에서의 원래 순서는 그대로 유지된다
+    return [...menus].sort(
+      (a, b) => (CATEGORY_ORDER[a.category ?? ''] ?? 99) - (CATEGORY_ORDER[b.category ?? ''] ?? 99),
+    )
+  }, [menus, category])
 
   // C6 직원 호출 — 세션은 customerApiFetch가 X-Session-Token 헤더로 실어 보낸다 (410이면 거기서 재스캔 화면으로 이동)
   const handleCallStaff = async () => {
