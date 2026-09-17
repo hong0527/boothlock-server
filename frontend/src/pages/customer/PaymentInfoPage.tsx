@@ -71,13 +71,6 @@ export default function PaymentInfoPage() {
           <p className="pt-20 text-center text-body-1 text-neutral-400">미결제 주문이 없어요.</p>
         ) : (
           <>
-            <p className="text-center text-heading-2 text-neutral-900">
-              아래 계좌로
-              <br />
-              지금까지 주문하신 금액을 한 번에 입금해주세요.
-            </p>
-            <p className="mt-2 text-center text-body-2 text-neutral-400">입금이 확인되면 조리가 시작됩니다.</p>
-
             <div className="mt-8 rounded-[10px] border border-[#b8dcd3] bg-primary-50 p-5">
               <p className="text-body-2 text-neutral-900">입금 계좌</p>
               <div className="mt-3 flex items-start gap-1 text-body-2 text-neutral-900">
