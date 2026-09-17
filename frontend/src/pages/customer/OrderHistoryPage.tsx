@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { getSessionInfo } from '../../lib/customerSession'
+import { displayTableLabel } from '../../lib/tableLabel'
 import { formatClockTime } from '../../lib/time'
 import type { OrderSummary } from '../../types/customer'
 
@@ -62,7 +63,7 @@ export default function OrderHistoryPage() {
             <div key={order.orderId} className="rounded-[10px] border border-[#b8dcd3] bg-primary-50 p-5">
               <div className="flex items-center justify-between text-body-3 text-neutral-500">
                 <div>
-                  <p>테이블 번호: {sessionInfo?.tableLabel}</p>
+                  <p>테이블 번호: {sessionInfo?.tableLabel && displayTableLabel(sessionInfo.tableLabel)}</p>
                   <p>주문 시간: {formatClockTime(order.createdAt)}</p>
                 </div>
                 <span>{STATUS_LABEL[order.status]}</span>
