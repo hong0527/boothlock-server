@@ -18,7 +18,8 @@ export default function MenuListItem({ menu, orderingDisabled, onAdd }: MenuList
       onClick={onAdd}
       disabled={disabled}
       aria-label={`${menu.name} 담기`}
-      className="relative flex h-[112px] w-full gap-[19px] rounded-[12px] border border-neutral-200 bg-white p-4 text-left disabled:opacity-60"
+      // 눌렀을 때 살짝 줄어드는 효과 — 앱 다른 곳(HomePage 등)과 같은 active:scale 패턴, 클릭 인식을 눈에 보이게 한다
+      className="relative flex h-[112px] w-full gap-[19px] rounded-[12px] border border-neutral-200 bg-white p-4 text-left transition-transform duration-150 active:scale-[0.97] active:bg-neutral-50 disabled:active:scale-100 disabled:opacity-60"
     >
       <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-[12px] bg-[#d9d9d9]">
         {menu.imageUrl && <img src={assetUrl(menu.imageUrl)} alt="" className="h-full w-full object-cover" />}
