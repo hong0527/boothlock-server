@@ -254,7 +254,8 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
-      <div className="flex max-h-[85vh] w-full max-w-[1100px] flex-col rounded-2xl bg-neutral-50">
+      {/* 높이를 max-h가 아니라 h로 고정 — 주문내역 길이에 따라 창 크기가 늘었다 줄었다 하지 않게 항상 같은 크기로 뜬다 */}
+      <div className="flex h-[85vh] w-full max-w-[1100px] flex-col rounded-2xl bg-neutral-50">
         <div className="flex items-center justify-between border-b border-neutral-200 px-6 py-5">
           <div className="flex items-baseline gap-3">
             <span className="text-[28px] leading-[1.2] font-bold tracking-[-0.04em] text-neutral-900">
