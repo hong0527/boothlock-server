@@ -1,0 +1,7 @@
+# 이미지 빌드 컨텍스트에서 제외 — 특히 node_modules는 호스트(Windows 등) 바이너리가 섞여 있어
+# 컨테이너 안 npm ci 결과를 덮어쓰면 안 된다
+node_modules/
+dist/
+*.log
+.env
+.env.*
