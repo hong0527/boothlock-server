@@ -133,6 +133,13 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
 
   const deleteTable = async (tableId: number) => {
     const res = await apiFetch(`/api/v1/admin/tables/${tableId}`, { method: 'DELETE' })
+    // 404는 실패가 아니라 이미 지워진 상태다 — 버튼 연타나 다른 기기의 동시 삭제로 중복 요청이 나가도
+    // (실제로 재현됨: 같은 테이블에 DELETE 두 번 보내면 하나는 204, 하나는 404) "실패했다"고 잘못 띄우지 않는다
+    if (res.status === 404) {
+      setError(null)
+      setTables((prev) => prev.filter((t) => t.id !== tableId))
+      return
+    }
     if (!res.ok) {
       setError(
         res.status === 409 ? '사용 중인 테이블은 삭제할 수 없어요.' : `테이블을 삭제하지 못했어요 (${res.status})`,
