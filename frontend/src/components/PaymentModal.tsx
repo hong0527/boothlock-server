@@ -216,18 +216,22 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   ): Promise<Response | undefined> => {
     if (busy) return undefined
     setBusy(true)
-    const res = await action()
-    setBusy(false)
-    if (!res.ok) {
-      const { code } = await readApiError(res)
-      setError(res.status === 409 && code && codeMap[code] ? codeMap[code] : `${failMessage} (${res.status})`)
+    try {
+      const res = await action()
+      if (!res.ok) {
+        const { code } = await readApiError(res)
+        setError(res.status === 409 && code && codeMap[code] ? codeMap[code] : `${failMessage} (${res.status})`)
+        await refetch()
+        return res
+      }
+      setError(null)
+      // 방금 등록한 주문이 결제 완료 흐름의 미결제 합계 계산에 바로 반영되도록 새로고침을 기다린 뒤 돌려준다
       await refetch()
       return res
+    } finally {
+      // action()이 던지면(토큰 만료·네트워크 오류) busy가 안 풀려서 이후 모든 버튼이 영원히 잠긴다
+      setBusy(false)
     }
-    setError(null)
-    // 방금 등록한 주문이 결제 완료 흐름의 미결제 합계 계산에 바로 반영되도록 새로고침을 기다린 뒤 돌려준다
-    await refetch()
-    return res
   }
 
   // O14 수기 주문 추가 — 세션이 없는(빈) 테이블이면 서버가 세션까지 만들어 OCCUPIED로 바꾼다(수기등록).
@@ -305,10 +309,12 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     }
   }
 
-  // 이 메뉴 줄 전체를 취소한다 — 담아둔 draft가 있으면 그것도 같이 비우고, 기존 주문 항목 전부는
-  // 취소 대기 상태로 표시한다
+  // 이 메뉴 줄 전체를 취소한다 — 담아둔 draft가 있으면 그것도 같이 비운다. 실제 주문 항목은 그 줄이
+  // 접수·미결제(editable)일 때만 취소 대기로 표시한다 — 완료·입금확인된 항목은 서버가 어차피 409로
+  // 거부하므로, draft만 지우면 되는 상황에서 헛되이 에러를 띄우지 않는다.
   const cancelGroup = (group: GroupedItem) => {
     removeDraftItem(group.menuId)
+    if (group.status !== 'RECEIVED' || group.paymentStatus !== 'UNPAID') return
     setAdjustments((prev) => {
       const next = { ...prev }
       for (const entry of group.entries) {
@@ -325,29 +331,33 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     if (entries.length === 0) return true
     if (busy) return false
     setBusy(true)
-    for (const [key, adj] of entries) {
-      const [orderIdStr, itemIdStr] = key.split(':')
-      const res = 'canceled' in adj
-        ? await cancelItem(Number(orderIdStr), Number(itemIdStr))
-        : await updateItemQty(Number(orderIdStr), Number(itemIdStr), adj.qty)
-      if (!res.ok) {
-        const { code } = await readApiError(res)
-        setError(code && ITEM_ACTION_409[code] ? ITEM_ACTION_409[code] : `수량 변경에 실패했어요 (${res.status})`)
-        setBusy(false)
-        await refetch()
-        return false
+    try {
+      for (const [key, adj] of entries) {
+        const [orderIdStr, itemIdStr] = key.split(':')
+        const res = 'canceled' in adj
+          ? await cancelItem(Number(orderIdStr), Number(itemIdStr))
+          : await updateItemQty(Number(orderIdStr), Number(itemIdStr), adj.qty)
+        if (!res.ok) {
+          const { code } = await readApiError(res)
+          setError(code && ITEM_ACTION_409[code] ? ITEM_ACTION_409[code] : `수량 변경에 실패했어요 (${res.status})`)
+          await refetch()
+          return false
+        }
+        // 성공한 건 바로 걷어낸다 — 뒤에서 실패해 재시도할 때 이미 반영된 항목을 다시 건드리지 않는다
+        setAdjustments((prev) => {
+          const next = { ...prev }
+          delete next[key]
+          return next
+        })
       }
-      // 성공한 건 바로 걷어낸다 — 뒤에서 실패해 재시도할 때 이미 반영된 항목을 다시 건드리지 않는다
-      setAdjustments((prev) => {
-        const next = { ...prev }
-        delete next[key]
-        return next
-      })
+      setError(null)
+      await refetch()
+      return true
+    } finally {
+      // cancelItem·updateItemQty가 던지면(토큰 만료·네트워크 오류) busy가 안 풀려서 모달의 모든 조작이
+      // 잠기고, 유일한 탈출구가 X(변경사항 버리고 닫기)뿐이던 문제 — finally로 항상 풀어준다
+      setBusy(false)
     }
-    setBusy(false)
-    setError(null)
-    await refetch()
-    return true
   }
 
   // 확인·비우기·결제완료 공통 진입점 — 담아둔 새 메뉴와 +/-·취소 변경을 한 번에 커밋한다
@@ -363,20 +373,23 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     const note = paidCount > 0 ? `\n입금확인된 ${paidCount}건은 '환불필요'로 바뀝니다.` : ''
     if (!window.confirm(`이 테이블의 접수 주문 ${receivedOrders.length}건을 모두 취소할까요?${note}`)) return
     setBusy(true)
-    for (const order of receivedOrders) {
-      const res = await cancelOrder(order.orderId, '테이블 전체 취소')
-      if (!res.ok) {
-        setError(`전체 취소 중 일부가 실패했어요 (${res.status})`)
-        setBusy(false)
-        refetch()
-        return
+    try {
+      for (const order of receivedOrders) {
+        const res = await cancelOrder(order.orderId, '테이블 전체 취소')
+        if (!res.ok) {
+          setError(`전체 취소 중 일부가 실패했어요 (${res.status})`)
+          refetch()
+          return
+        }
       }
+      setError(null)
+      // 방금 취소된 주문의 항목을 가리키던 adjustments가 남아있으면 나중에 엉뚱한 주문에 적용될 수 있다
+      setAdjustments({})
+      refetch()
+    } finally {
+      // cancelOrder가 던지면(토큰 만료·네트워크 오류) busy가 안 풀려서 모달이 잠기는 문제 — finally로 방지
+      setBusy(false)
     }
-    setBusy(false)
-    setError(null)
-    // 방금 취소된 주문의 항목을 가리키던 adjustments가 남아있으면 나중에 엉뚱한 주문에 적용될 수 있다
-    setAdjustments({})
-    refetch()
   }
 
   // O6 퇴실 — 성공하면 모달을 닫는다. 응답의 warning(미결제 남음)은 닫기 전에 한 번 보여준다
@@ -514,6 +527,10 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
               {groupedItems.map((group) => {
                 // 서버(OrderEntity.canEditItems)는 접수+미결제만 수정을 허용한다 — 완료·입금확인 항목은 버튼을 미리 막아 409 헛클릭을 없앤다
                 const editable = group.status === 'RECEIVED' && group.paymentStatus === 'UNPAID'
+                // 완료·입금확인된 줄이어도 방금 "+"로 담아둔 draft가 있으면, 그 draft만큼은 되돌릴 수 있어야 한다 —
+                // 안 그러면 눌러놓고 취소할 방법이 담은 메뉴 칩밖에 없어서 헷갈린다
+                const hasDraftForMenu = draft.some((d) => d.menuId === group.menuId)
+                const canRemove = editable || hasDraftForMenu
                 return (
                   <div key={group.key} className="border-b border-neutral-200 px-6 py-5">
                     <div className="flex items-baseline justify-between">
@@ -544,7 +561,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
                         <button
                           type="button"
                           onClick={() => decrementGroup(group)}
-                          disabled={busy || !editable}
+                          disabled={busy || !canRemove}
                           className="h-8 w-8 rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
                         >
                           -
@@ -563,7 +580,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
                         <button
                           type="button"
                           onClick={() => cancelGroup(group)}
-                          disabled={busy || !editable}
+                          disabled={busy || !canRemove}
                           className="rounded-xl border border-neutral-900 px-4 py-2 text-base font-semibold text-neutral-900 disabled:opacity-30"
                         >
                           취소

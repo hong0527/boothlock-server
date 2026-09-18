@@ -17,6 +17,9 @@ export default function TableHomePage() {
   const [editMode, setEditMode] = useState(false)
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
   const [viewportWidth, setViewportWidth] = useState(() => document.documentElement.clientWidth)
+  // 추가·삭제 중 연타를 막는다 — 안 막으면 "테이블 삭제"를 두 번 눌렀을 때 같은 테이블에 DELETE가 두 번
+  // 나가서 하나는 204, 하나는 404가 뜬다(실제 재현됨). 성공했는데도 실패한 것처럼 보이는 원인이었다.
+  const [tableActionBusy, setTableActionBusy] = useState(false)
 
   // 운영자 화면은 태블릿 폭 기준 — 회전 등으로 폭이 바뀌어도 드래그 가능 범위를 다시 계산한다
   useEffect(() => {
@@ -43,11 +46,26 @@ export default function TableHomePage() {
 
   // 개별 카드마다 삭제 버튼을 두지 않고, 항상 라벨이 가장 큰(마지막) 테이블만 지운다
   // (서버도 마지막 테이블만 삭제를 허용 — 그 외엔 409, 사용 중이면 마찬가지로 409)
-  const handleDeleteLastTable = () => {
-    if (tables.length === 0) return
+  const handleDeleteLastTable = async () => {
+    if (tables.length === 0 || tableActionBusy) return
     const lastTable = tables.reduce((max, t) => (compareTableLabels(t.label, max.label) > 0 ? t : max))
-    if (window.confirm(`${displayTableLabel(lastTable.label)}을(를) 삭제할까요?`)) {
-      deleteTable(lastTable.id)
+    if (!window.confirm(`${displayTableLabel(lastTable.label)}을(를) 삭제할까요?`)) return
+    setTableActionBusy(true)
+    try {
+      await deleteTable(lastTable.id)
+    } finally {
+      // apiFetch는 토큰 만료·네트워크 오류일 때 던지기도 한다 — finally가 없으면 그때 버튼이 영원히 잠긴다
+      setTableActionBusy(false)
+    }
+  }
+
+  const handleAddTable = async () => {
+    if (tableActionBusy) return
+    setTableActionBusy(true)
+    try {
+      await addTable()
+    } finally {
+      setTableActionBusy(false)
     }
   }
 
@@ -58,10 +76,10 @@ export default function TableHomePage() {
       <div className="flex justify-end gap-3 px-10 py-6">
         {editMode ? (
           <>
-            <PillButton type="button" onClick={addTable}>
+            <PillButton type="button" onClick={handleAddTable} disabled={tableActionBusy}>
               테이블 추가
             </PillButton>
-            <PillButton type="button" onClick={handleDeleteLastTable} disabled={tables.length === 0}>
+            <PillButton type="button" onClick={handleDeleteLastTable} disabled={tables.length === 0 || tableActionBusy}>
               테이블 삭제
             </PillButton>
             <PillButton type="button" onClick={() => setEditMode(false)}>
