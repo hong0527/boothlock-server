@@ -10,6 +10,7 @@ type BoothInfo = { bankAccount: string; depositorName?: string | null }
 export default function AccountPage() {
   const [bankName, setBankName] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
+  const [keepUnregisteredAccount, setKeepUnregisteredAccount] = useState(false)
   const [depositorName, setDepositorName] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -28,6 +29,7 @@ export default function AccountPage() {
         // 미등록 안내값은 예금주명의 null처럼 빈 입력값으로 처리한다 (하이픈 주변 공백 허용).
         const isUnregistered = /^계좌 미입력\s*-\s*로그인 후 설정에서 등록$/.test(bankAccount)
         const [name, ...rest] = (isUnregistered ? '' : bankAccount).split(' ')
+        setKeepUnregisteredAccount(isUnregistered)
         setBankName(name ?? '')
         setAccountNumber(rest.join(' '))
         setDepositorName(data.depositorName ?? '')
@@ -49,7 +51,8 @@ export default function AccountPage() {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          bankAccount: `${bankName} ${accountNumber}`.trim(),
+          // 미등록 안내값을 화면에서만 비운 경우에는 기존 계좌를 유지한다.
+          bankAccount: keepUnregisteredAccount ? undefined : `${bankName} ${accountNumber}`.trim(),
           depositorName: depositorName.trim() || null,
         }),
       })
@@ -75,7 +78,10 @@ export default function AccountPage() {
           label="은행명"
           placeholder="은행명 입력"
           value={bankName}
-          onChange={(e) => setBankName(e.target.value)}
+          onChange={(e) => {
+            setBankName(e.target.value)
+            setKeepUnregisteredAccount(false)
+          }}
           disabled={loading}
         />
         <TextField
@@ -83,7 +89,10 @@ export default function AccountPage() {
           placeholder="'-'를 제외하고 계좌번호 입력"
           inputMode="numeric"
           value={accountNumber}
-          onChange={(e) => setAccountNumber(e.target.value.replace(/-/g, ''))}
+          onChange={(e) => {
+            setAccountNumber(e.target.value.replace(/-/g, ''))
+            setKeepUnregisteredAccount(false)
+          }}
           disabled={loading}
         />
         <TextField
