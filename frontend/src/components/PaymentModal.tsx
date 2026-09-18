@@ -38,6 +38,36 @@ type FlatItem = {
   paymentStatus: PaymentStatus
 }
 
+// 주문내역은 "이 테이블이 지금 뭘 시켰나"를 보여주는 계산서라 같은 메뉴가 서로 다른 주문(수기 확인을 여러 번
+// 눌렀거나, 손님이 추가 주문한 경우)에 나뉘어 있어도 한 줄로 합쳐 보여준다 — 주문보드는 반대로 확인 단위(주문)
+// 그대로 카드를 나눠 보여줘야 해서 여기서 합치는 것과 다른 요구다. entries[0]이 가장 최근 주문의 항목이 되도록
+// items(주문 최신순 배열)를 그대로 순서 보존해서 담는다 — +/- 는 그 최근 항목부터 조정한다.
+type GroupedItem = {
+  key: string
+  menuId: number
+  menuName: string
+  unitPrice: number
+  qty: number
+  status: OrderStatus
+  paymentStatus: PaymentStatus
+  entries: { orderId: number; itemId: number; qty: number }[]
+}
+
+// 수기 주문 담기(제출 전) — 클릭마다 바로 createManualOrder를 부르면 치킨·콜라·감튀를 연달아 눌렀을 때
+// 서로 다른 주문 3건으로 쪼개져 주문보드에 따로 뜬다. 여기 담아뒀다가 "주문 등록"에서 한 번에 보낸다.
+type DraftItem = {
+  menuId: number
+  name: string
+  price: number
+  qty: number
+}
+
+// 주문내역의 +/-·취소도 새 메뉴 담기와 똑같이 "확인을 눌러야 서버에 반영되는" 임시 변경이다 — 여기 즉시
+// updateItemQty·cancelItem을 부르면 X로 닫아도 이미 서버에 반영돼 되돌릴 수가 없다. 그래서 실제 항목
+// (orderId·itemId)별로 원하는 최종 수량 또는 취소 여부만 로컬에 들고 있다가, 확인·비우기·결제완료 시점에
+// 한 번에 커밋한다. 키는 `${orderId}:${itemId}`.
+type Adjustment = { qty: number } | { canceled: true }
+
 // 항목 수정(수량·개별 취소)이 409로 거부되는 이유를 코드별로 — 백엔드 DashboardOrderActionService 검사 순서와 같다
 const ITEM_ACTION_409: Record<string, string> = {
   SOLD_OUT: '품절된 메뉴라 수량을 늘릴 수 없어요',
@@ -73,8 +103,12 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   const [menus, setMenus] = useState<MenuItem[]>([])
   const [menusError, setMenusError] = useState<string | null>(null)
   const [category, setCategory] = useState<(typeof MENU_CATEGORY_TABS)[number]['key']>('ALL')
+  const [draft, setDraft] = useState<DraftItem[]>([])
+  const [adjustments, setAdjustments] = useState<Record<string, Adjustment>>({})
 
-  const refetch = async () => {
+  // 반환값은 결제 확인(handleConfirmPayment)이 방금 갱신된 목록으로 미결제 합계를 다시 계산할 때 쓴다 —
+  // setOrders 직후에도 이 함수를 부른 클로저의 orders/unpaidAmount는 그 렌더의 스냅샷이라 안 바뀐다
+  const refetch = async (): Promise<OrderSummary[]> => {
     try {
       // businessDate 생략 = 현재 영업일. activeSessionOnly=true — 그 테이블의 종료 안 된 세션(지금 앉은 손님) 주문만 서버가 골라 준다.
       // 세션이 없는 테이블은 빈 목록. 이전 손님의 PAID·DONE이 결제 대상·전체 취소 대상에 섞이지 않는다 (audit2 ②-2·②-3)
@@ -83,8 +117,10 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       const data: { orders: OrderSummary[] } = await res.json()
       setOrders(data.orders)
       setLoadError(null)
+      return data.orders
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : '주문 내역을 불러오지 못했어요.')
+      return orders
     }
   }
 
@@ -93,6 +129,12 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     const id = setInterval(refetch, POLL_INTERVAL_MS)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table.id])
+
+  // 테이블을 바꿔 다시 열면 이전 테이블에 담다 만 임시 목록·변경사항이 새 테이블로 넘어가면 안 된다
+  useEffect(() => {
+    setDraft([])
+    setAdjustments({})
   }, [table.id])
 
   useEffect(() => {
@@ -113,11 +155,57 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   const unpaidOrders = visibleOrders.filter(isUnpaid)
   const unpaidAmount = unpaidTotal(visibleOrders)
 
+  const itemKey = (orderId: number, itemId: number) => `${orderId}:${itemId}`
+
   // Figma는 "주문" 단위 그룹핑이 없다 — 주문들의 항목을 한 줄씩 평탄화해서 보여준다
-  const items: FlatItem[] = visibleOrders.flatMap((o) =>
+  const rawItems: FlatItem[] = visibleOrders.flatMap((o) =>
     o.items.map((item) => ({ orderId: o.orderId, itemId: item.itemId, menuId: item.menuId, menuName: item.menuName,
       unitPrice: item.unitPrice, qty: item.qty, status: o.status, paymentStatus: o.paymentStatus })),
   )
+
+  // 아직 서버에 반영 안 된 로컬 변경(adjustments)을 화면 표시용으로만 얹는다 — 실제 서버 값(rawItems)은 안 바뀐다
+  const items: FlatItem[] = rawItems.flatMap((item) => {
+    const adj = adjustments[itemKey(item.orderId, item.itemId)]
+    if (!adj) return [item]
+    if ('canceled' in adj) return []
+    return [{ ...item, qty: adj.qty }]
+  })
+
+  // 같은 메뉴가 서로 다른 주문에 나뉘어 있어도(수기 확인을 여러 번 눌렀거나 손님이 추가 주문) 화면엔 한 줄
+  // 합계로 보여준다. orders(→ items)는 findBySessionIdOrderByCreatedAtDescIdDesc라 최신 주문이 먼저 온다 —
+  // 그래서 그룹의 entries[0]이 항상 가장 최근 주문의 항목이 된다.
+  const CATEGORY_ORDER: Record<string, number> = { MAIN: 0, SIDE: 1, DRINK: 2 }
+  const groupedItems: GroupedItem[] = (() => {
+    const groups = new Map<string, GroupedItem>()
+    for (const item of items) {
+      const key = `${item.menuId}-${item.status}-${item.paymentStatus}`
+      const group = groups.get(key)
+      const entry = { orderId: item.orderId, itemId: item.itemId, qty: item.qty }
+      if (group) {
+        group.qty += item.qty
+        group.entries.push(entry)
+      } else {
+        groups.set(key, {
+          key,
+          menuId: item.menuId,
+          menuName: item.menuName,
+          unitPrice: item.unitPrice,
+          qty: item.qty,
+          status: item.status,
+          paymentStatus: item.paymentStatus,
+          entries: [entry],
+        })
+      }
+    }
+    // 주문내역은 메인·사이드·음료 순으로 — 메뉴 목록(menus)에서 분류를 찾아 정렬한다
+    return Array.from(groups.values()).sort((a, b) => {
+      const rank = (menuId: number) => {
+        const cat = menus.find((m) => m.id === menuId)?.category
+        return cat ? CATEGORY_ORDER[cat] : 99
+      }
+      return rank(a.menuId) - rank(b.menuId)
+    })
+  })()
 
   const visibleMenus = menus.filter((m) => m.visible && (category === 'ALL' || m.category === category))
 
@@ -125,38 +213,148 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     action: () => Promise<Response>,
     failMessage: string,
     codeMap: Record<string, string> = ITEM_ACTION_409,
-  ) => {
-    if (busy) return
+  ): Promise<Response | undefined> => {
+    if (busy) return undefined
     setBusy(true)
     const res = await action()
     setBusy(false)
     if (!res.ok) {
       const { code } = await readApiError(res)
       setError(res.status === 409 && code && codeMap[code] ? codeMap[code] : `${failMessage} (${res.status})`)
-      refetch()
-      return
+      await refetch()
+      return res
     }
     setError(null)
-    refetch()
+    // 방금 등록한 주문이 결제 완료 흐름의 미결제 합계 계산에 바로 반영되도록 새로고침을 기다린 뒤 돌려준다
+    await refetch()
+    return res
   }
 
   // O14 수기 주문 추가 — 세션이 없는(빈) 테이블이면 서버가 세션까지 만들어 OCCUPIED로 바꾼다(수기등록).
-  // 같은 메뉴를 계속 누르면 매번 새 주문을 만들지 않고, 이미 있는 미결제 항목의 수량만 늘린다
-  // (그래야 "떡볶이 3번 클릭 = 떡볶이 x3 한 줄"이 되고, 항목마다 따로 뜨지 않는다).
+  // 새 메뉴는 즉시 주문을 만들지 않고 draft에 담아둔다 — 치킨·콜라를 연달아 눌러도 확인을 누르는 순간
+  // createManualOrder 한 번으로 묶여 주문보드에 한 건으로 뜬다. 이미 등록 완료된(미결제) 주문의 항목은
+  // 여기서 건드리지 않는다 — 그 항목의 수량을 늘리면 이번 확인이 이전 주문에 합쳐져 카드가 하나로
+  // 뭉개진다(감사). 같은 메뉴를 다시 누르면 그때마다 새 draft·새 주문으로 분리돼야 카드가 매번 따로 뜬다.
+  const addToDraft = (menuId: number, name: string, price: number) => {
+    setDraft((prev) => {
+      const idx = prev.findIndex((d) => d.menuId === menuId)
+      if (idx >= 0) {
+        return prev.map((d) => (d.menuId === menuId ? { ...d, qty: d.qty + 1 } : d))
+      }
+      return [...prev, { menuId, name, price, qty: 1 }]
+    })
+  }
+
   const handleAddMenu = (menu: MenuItem) => {
     if (menu.soldOut) return
-    const existing = items.find(
-      (item) => item.menuId === menu.id && item.status === 'RECEIVED' && item.paymentStatus === 'UNPAID',
+    addToDraft(menu.id, menu.name, menu.price)
+  }
+
+  const adjustDraftQty = (menuId: number, delta: number) => {
+    setDraft((prev) =>
+      prev.map((d) => (d.menuId === menuId ? { ...d, qty: d.qty + delta } : d)).filter((d) => d.qty > 0),
     )
-    if (existing) {
-      runAction(() => updateItemQty(existing.orderId, existing.itemId, existing.qty + 1), '수량 변경에 실패했어요')
-      return
-    }
-    runAction(
-      () => createManualOrder([{ menuId: menu.id, qty: 1 }], table.id),
-      '메뉴 추가에 실패했어요',
+  }
+
+  const removeDraftItem = (menuId: number) => {
+    setDraft((prev) => prev.filter((d) => d.menuId !== menuId))
+  }
+
+  // 담아둔 메뉴를 확인/비우기/결제완료 중 아무 버튼이나 누르는 순간 한 번에 새 주문 1건으로 등록한다 —
+  // 별도의 "등록" 버튼 없이, 그 버튼들이 원래 하던 동작(닫기·퇴실·결제) 앞에 얹혀서 나간다.
+  // 실패하면(품절 등) false를 돌려줘 호출부가 원래 동작을 진행하지 않고 에러만 보여준 채 멈춘다.
+  const submitDraftIfAny = async (): Promise<boolean> => {
+    if (draft.length === 0) return true
+    const res = await runAction(
+      () => createManualOrder(draft.map((d) => ({ menuId: d.menuId, qty: d.qty })), table.id),
+      '주문 등록에 실패했어요',
       MANUAL_ADD_409,
     )
+    if (!res?.ok) return false
+    setDraft([])
+    return true
+  }
+
+  // 주문내역 줄의 "+"는 메뉴 버튼을 다시 누르는 것과 완전히 같다 — 기존 주문 수량을 늘리는 게 아니라
+  // draft(담은 메뉴)에 1개 더 담는다. 그래야 "담은 메뉴"에 바로 보여서 확인 전에 뭘 더 시켰는지 한눈에
+  // 보이고, 이미 등록된 주문은 건드리지 않아 카드가 하나로 뭉개지지 않는다(위 handleAddMenu와 같은 이유).
+  // 품절됐으면 메뉴 버튼처럼 막는다.
+  const incrementGroup = (group: GroupedItem) => {
+    const menu = menus.find((m) => m.id === group.menuId)
+    if (menu?.soldOut) return
+    addToDraft(group.menuId, group.menuName, group.unitPrice)
+  }
+
+  // "-"는 방금 "+"로 담은아둔 draft부터 줄인다 — +2 해놓고 바로 -1 하면 아직 등록도 안 한 기존 주문을
+  // 건드릴 게 아니라 담아둔 2개 중 1개를 빼는 게 맞다(안 헷갈리게). 담아둔 게 없을 때만 진짜 기존 주문
+  // (adjustments)으로 넘어간다 — 서버에 바로 반영하지 않고 확인·비우기·결제완료 때 커밋, X면 사라진다.
+  // 가장 최근 주문의 항목(entries[0])부터 건드린다 — 어느 주문을 조정할지 매번 고를 필요가 없다.
+  // 최근 항목이 1개뿐이면 0개로 줄이는 게 아니라 그 항목 자체를 취소 대기 상태로 표시한다 —
+  // updateItemQty는 qty 1 미만을 허용하지 않는다
+  const decrementGroup = (group: GroupedItem) => {
+    if (draft.some((d) => d.menuId === group.menuId)) {
+      adjustDraftQty(group.menuId, -1)
+      return
+    }
+    const latest = group.entries[0]
+    const key = itemKey(latest.orderId, latest.itemId)
+    if (latest.qty > 1) {
+      setAdjustments((prev) => ({ ...prev, [key]: { qty: latest.qty - 1 } }))
+    } else {
+      setAdjustments((prev) => ({ ...prev, [key]: { canceled: true } }))
+    }
+  }
+
+  // 이 메뉴 줄 전체를 취소한다 — 담아둔 draft가 있으면 그것도 같이 비우고, 기존 주문 항목 전부는
+  // 취소 대기 상태로 표시한다
+  const cancelGroup = (group: GroupedItem) => {
+    removeDraftItem(group.menuId)
+    setAdjustments((prev) => {
+      const next = { ...prev }
+      for (const entry of group.entries) {
+        next[itemKey(entry.orderId, entry.itemId)] = { canceled: true }
+      }
+      return next
+    })
+  }
+
+  // 담아둔 +/-·취소를 실제로 서버에 반영한다 — draft와 마찬가지로 확인/비우기/결제완료 시점에만 불린다.
+  // 실패하면(그 사이 완료·입금확인 등으로 상태가 바뀜) 나머지를 멈추고 최신 목록으로 새로고침한다.
+  const applyAdjustmentsIfAny = async (): Promise<boolean> => {
+    const entries = Object.entries(adjustments)
+    if (entries.length === 0) return true
+    if (busy) return false
+    setBusy(true)
+    for (const [key, adj] of entries) {
+      const [orderIdStr, itemIdStr] = key.split(':')
+      const res = 'canceled' in adj
+        ? await cancelItem(Number(orderIdStr), Number(itemIdStr))
+        : await updateItemQty(Number(orderIdStr), Number(itemIdStr), adj.qty)
+      if (!res.ok) {
+        const { code } = await readApiError(res)
+        setError(code && ITEM_ACTION_409[code] ? ITEM_ACTION_409[code] : `수량 변경에 실패했어요 (${res.status})`)
+        setBusy(false)
+        await refetch()
+        return false
+      }
+      // 성공한 건 바로 걷어낸다 — 뒤에서 실패해 재시도할 때 이미 반영된 항목을 다시 건드리지 않는다
+      setAdjustments((prev) => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+    }
+    setBusy(false)
+    setError(null)
+    await refetch()
+    return true
+  }
+
+  // 확인·비우기·결제완료 공통 진입점 — 담아둔 새 메뉴와 +/-·취소 변경을 한 번에 커밋한다
+  const commitPending = async (): Promise<boolean> => {
+    if (!(await applyAdjustmentsIfAny())) return false
+    if (!(await submitDraftIfAny())) return false
+    return true
   }
 
   const handleCancelAll = async () => {
@@ -176,6 +374,8 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     }
     setBusy(false)
     setError(null)
+    // 방금 취소된 주문의 항목을 가리키던 adjustments가 남아있으면 나중에 엉뚱한 주문에 적용될 수 있다
+    setAdjustments({})
     refetch()
   }
 
@@ -202,7 +402,15 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // "결제 완료" = 미결제 합계를 확인받고 O24 일괄 입금확인 → 성공하면 O6 퇴실. 미결제 0건이면 O24 없이 바로 퇴실
   const handleConfirmPayment = async () => {
     if (checkingOut || busy) return
-    if (unpaidOrders.length === 0) {
+    if (!(await commitPending())) return
+    // commitPending이 이미 refetch를 기다렸어도, 그 안에서 만들어진 orders 클로저는 이 함수의 것과 다르다 —
+    // 방금 등록·수정한 내역까지 포함한 최신 목록으로 직접 다시 계산해야 미결제 합계가 안 어긋난다
+    const freshOrders = await refetch()
+    const freshVisible = freshOrders.filter((o) => o.status !== 'CANCELED')
+    const freshUnpaid = freshVisible.filter(isUnpaid)
+    const freshUnpaidAmount = unpaidTotal(freshVisible)
+
+    if (freshUnpaid.length === 0) {
       // 화면 목록엔 없는데 O3가 미결제를 세고 있으면(이전 영업일·목록 미반영) 그대로 남는다는 것을 알린다
       const serverNote =
         table.unpaidOrderCount > 0
@@ -216,12 +424,12 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     }
 
     const ok = window.confirm(
-      `미결제 ${unpaidOrders.length}건 · 합계 ${unpaidAmount.toLocaleString()}원\n계좌이체 입금을 확인하고 퇴실 처리할까요?`,
+      `미결제 ${freshUnpaid.length}건 · 합계 ${freshUnpaidAmount.toLocaleString()}원\n계좌이체 입금을 확인하고 퇴실 처리할까요?`,
     )
     if (!ok) return
 
     setCheckingOut(true)
-    const res = await confirmTablePayment(table.id, unpaidAmount, 'BANK_TRANSFER')
+    const res = await confirmTablePayment(table.id, freshUnpaidAmount, 'BANK_TRANSFER')
     if (!res.ok) {
       setCheckingOut(false)
       if (res.status === 409) {
@@ -241,7 +449,10 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // "테이블 비우기" = 입금확인 없이 O6만. 미결제가 남는다는 것을 확인받는다
   const handleVacate = async () => {
     if (checkingOut || busy) return
-    const unpaidCount = Math.max(unpaidOrders.length, table.unpaidOrderCount)
+    if (!(await commitPending())) return
+    const freshOrders = await refetch()
+    const freshUnpaidCount = freshOrders.filter((o) => o.status !== 'CANCELED').filter(isUnpaid).length
+    const unpaidCount = Math.max(freshUnpaidCount, table.unpaidOrderCount)
     const message =
       unpaidCount > 0
         ? `미결제 ${unpaidCount}건이 그대로 남습니다. 입금 확인 없이 테이블을 비울까요?`
@@ -267,7 +478,17 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
               </span>
             )}
           </div>
-          <button type="button" onClick={onClose} aria-label="닫기">
+          {/* X는 서버에 아무것도 반영하지 않고 담아둔 새 메뉴·수량 변경을 그대로 버리고 닫는다 —
+              실제로 반영하려면 아래 확인·비우기·결제완료 중 하나를 눌러야 한다(commitPending) */}
+          <button
+            type="button"
+            onClick={() => {
+              setDraft([])
+              setAdjustments({})
+              onClose()
+            }}
+            aria-label="닫기"
+          >
             <img src={closeIcon} alt="" className="h-9 w-9" />
           </button>
         </div>
@@ -290,56 +511,58 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
             </div>
 
             <div className="flex-1 overflow-y-auto">
-              {items.map((item) => {
+              {groupedItems.map((group) => {
                 // 서버(OrderEntity.canEditItems)는 접수+미결제만 수정을 허용한다 — 완료·입금확인 항목은 버튼을 미리 막아 409 헛클릭을 없앤다
-                const editable = item.status === 'RECEIVED' && item.paymentStatus === 'UNPAID'
+                const editable = group.status === 'RECEIVED' && group.paymentStatus === 'UNPAID'
                 return (
-                  <div key={item.itemId} className="border-b border-neutral-200 px-6 py-5">
+                  <div key={group.key} className="border-b border-neutral-200 px-6 py-5">
                     <div className="flex items-baseline justify-between">
                       <span className="flex items-baseline gap-2 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
-                        {item.menuName}
+                        {group.menuName}
                         <span
                           className={`rounded-md px-1.5 py-0.5 text-xs font-medium ${
-                            item.paymentStatus === 'UNPAID' ? 'bg-neutral-200 text-neutral-700' : 'bg-neutral-900 text-neutral-50'
+                            group.paymentStatus === 'UNPAID' ? 'bg-neutral-200 text-neutral-700' : 'bg-neutral-900 text-neutral-50'
                           }`}
                         >
-                          {PAYMENT_STATUS_LABEL[item.paymentStatus]}
+                          {PAYMENT_STATUS_LABEL[group.paymentStatus]}
                         </span>
-                        {item.status === 'DONE' && (
+                        {group.status === 'DONE' && (
                           <span className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-xs font-medium text-neutral-500">완료</span>
                         )}
                       </span>
                       <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
-                        {(item.unitPrice * item.qty).toLocaleString()}원
+                        {(group.unitPrice * group.qty).toLocaleString()}원
                       </span>
                     </div>
 
                     <div className="mt-2 flex items-center justify-between">
                       <span className="text-base leading-[1.5] tracking-[-0.04em] text-neutral-900">
-                        {item.unitPrice.toLocaleString()}원
+                        {group.unitPrice.toLocaleString()}원
                       </span>
                       {/* 입금확인·완료된 주문은 서버가 수정을 409로 거부한다 — 버튼을 미리 막아 헛클릭을 없앤다 */}
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => runAction(() => updateItemQty(item.orderId, item.itemId, item.qty - 1), '수량 변경에 실패했어요')}
-                          disabled={item.qty <= 1 || busy || !editable}
+                          onClick={() => decrementGroup(group)}
+                          disabled={busy || !editable}
                           className="h-8 w-8 rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
                         >
                           -
                         </button>
-                        <span className="w-6 text-center text-lg font-semibold text-neutral-900">{item.qty}</span>
+                        <span className="w-6 text-center text-lg font-semibold text-neutral-900">{group.qty}</span>
+                        {/* +는 기존 주문을 안 건드리고 draft에 담는 것뿐이라 editable(접수·미결제) 여부와 무관하다 —
+                            품절만 막는다(메뉴 버튼과 동일 기준) */}
                         <button
                           type="button"
-                          onClick={() => runAction(() => updateItemQty(item.orderId, item.itemId, item.qty + 1), '수량 변경에 실패했어요')}
-                          disabled={busy || !editable}
+                          onClick={() => incrementGroup(group)}
+                          disabled={busy || (menus.find((m) => m.id === group.menuId)?.soldOut ?? false)}
                           className="h-8 w-8 rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
                         >
                           +
                         </button>
                         <button
                           type="button"
-                          onClick={() => runAction(() => cancelItem(item.orderId, item.itemId), '취소에 실패했어요')}
+                          onClick={() => cancelGroup(group)}
                           disabled={busy || !editable}
                           className="rounded-xl border border-neutral-900 px-4 py-2 text-base font-semibold text-neutral-900 disabled:opacity-30"
                         >
@@ -350,7 +573,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
                   </div>
                 )
               })}
-              {items.length === 0 && !error && (
+              {groupedItems.length === 0 && !error && (
                 <p className="px-6 py-10 text-center text-neutral-300">
                   {table.session ? '주문 내역이 없어요' : '이용 중인 손님이 없어요'}
                 </p>
@@ -376,6 +599,28 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
             </div>
 
             {menusError && <p className="px-6 pt-3 text-sm text-red-600">{menusError}</p>}
+
+            {draft.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 border-b border-neutral-200 bg-neutral-100 px-6 py-3">
+                {draft.map((d) => (
+                  <span
+                    key={d.menuId}
+                    className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-neutral-900 shadow-sm"
+                  >
+                    {d.name} x{d.qty} · {(d.price * d.qty).toLocaleString()}원
+                    <button type="button" onClick={() => adjustDraftQty(d.menuId, -1)} className="text-neutral-400" aria-label="수량 감소">
+                      -
+                    </button>
+                    <button type="button" onClick={() => adjustDraftQty(d.menuId, 1)} className="text-neutral-400" aria-label="수량 증가">
+                      +
+                    </button>
+                    <button type="button" onClick={() => removeDraftItem(d.menuId)} className="text-red-500" aria-label="빼기">
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
 
             <div className="flex-1 overflow-y-auto p-6">
               <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
@@ -408,12 +653,15 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
             <span className="text-lg font-semibold">{unpaidAmount.toLocaleString()}원</span>
           </div>
           <div className="flex gap-3">
-            {/* 수기 주문만 추가하고 테이블은 그대로 둘 때 — 비우기·결제완료 없이 그냥 닫는다(X와 동작 같음).
-                busy(항목 수정·수기 추가 요청 진행 중)일 때 막는다 — 안 막으면 요청이 끝나기 전에 언마운트돼
-                실패해도(품절 등) 그 결과를 보여줄 화면이 이미 닫혀 조용히 묻힌다 */}
+            {/* 수기 주문·수량 변경만 하고 테이블은 그대로 둘 때 — 담아둔 새 메뉴와 +/-·취소를 여기서 한 번에
+                커밋한 뒤 닫는다(별도의 "등록" 버튼 없이 이 버튼이 그 역할을 겸한다). 실패하면(품절·이미 완료
+                처리됨 등) 에러만 보여주고 닫지 않는다. busy일 때는 막는다 — 안 막으면 요청이 끝나기 전에
+                언마운트돼 실패 결과를 보여줄 화면이 이미 닫혀 조용히 묻힌다 */}
             <button
               type="button"
-              onClick={onClose}
+              onClick={async () => {
+                if (await commitPending()) onClose()
+              }}
               disabled={busy}
               className="h-[60px] flex-1 rounded-xl border border-neutral-900 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900 disabled:opacity-40"
             >
