@@ -4,12 +4,10 @@ import BackButton from '../../components/customer/BackButton'
 import { CopyIcon, InfoIcon } from '../../components/customer/icons'
 import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { customerApiFetch } from '../../lib/customerApiFetch'
-import { getSessionInfo } from '../../lib/customerSession'
 import type { OrderSummary } from '../../types/customer'
 
 export default function PaymentInfoPage() {
   const navigate = useNavigate()
-  const sessionInfo = getSessionInfo()
   const [orders, setOrders] = useState<OrderSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -47,8 +45,6 @@ export default function PaymentInfoPage() {
   )
   const totalAmount = unpaidOrders.reduce((sum, order) => sum + order.totalAmount, 0)
   const bankAccount = unpaidOrders[0]?.payment.bankAccount ?? orders[0]?.payment.bankAccount ?? ''
-  const tableLabel = sessionInfo?.tableLabel ?? ''
-  const depositorNameRule = `입금자명을 '이름+${tableLabel}'로 입력해주세요 (예: 김철수${tableLabel})`
 
   const handleCopy = async () => {
     try {
@@ -82,7 +78,6 @@ export default function PaymentInfoPage() {
                   </button>
                 </div>
               </div>
-              <p className="mt-1 pl-3 text-body-2 text-neutral-900">{depositorNameRule}</p>
               <div className="mt-3 flex items-center justify-between border-t border-neutral-100 pt-3 text-body-2 text-neutral-900">
                 <span>미결제 주문 {unpaidOrders.length}건 합계</span>
                 <span>{totalAmount.toLocaleString()}원</span>
