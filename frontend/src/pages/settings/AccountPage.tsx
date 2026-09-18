@@ -24,7 +24,10 @@ export default function AccountPage() {
         return res.json()
       })
       .then((data: BoothInfo) => {
-        const [name, ...rest] = (data.bankAccount ?? '').trim().split(' ')
+        const bankAccount = (data.bankAccount ?? '').trim()
+        // 미등록 안내값은 예금주명의 null처럼 빈 입력값으로 처리한다 (하이픈 주변 공백 허용).
+        const isUnregistered = /^계좌 미입력\s*-\s*로그인 후 설정에서 등록$/.test(bankAccount)
+        const [name, ...rest] = (isUnregistered ? '' : bankAccount).split(' ')
         setBankName(name ?? '')
         setAccountNumber(rest.join(' '))
         setDepositorName(data.depositorName ?? '')
