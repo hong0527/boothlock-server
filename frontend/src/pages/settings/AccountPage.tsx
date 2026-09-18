@@ -43,6 +43,17 @@ export default function AccountPage() {
     if (saving) return
     setError(null)
     setSaved(false)
+
+    const trimmedBankName = bankName.trim()
+    const trimmedAccountNumber = accountNumber.trim()
+    // 은행명·계좌번호 중 하나만 채우고 저장하면 "12345"처럼 반쪽짜리 계좌가 그대로 저장돼(코드리뷰 지적),
+    // 손님 결제 안내 화면에 그 값이 그대로 노출된다. 둘 다 비우는 것(계좌 삭제 시도)은 그대로 두고
+    // 서버의 빈 문자열 거부(400)에 맡긴다 — 여기서 막는 건 "하나만" 채운 경우뿐이다.
+    if (Boolean(trimmedBankName) !== Boolean(trimmedAccountNumber)) {
+      setError('은행명과 계좌번호를 모두 입력해주세요.')
+      return
+    }
+
     setSaving(true)
 
     try {
@@ -52,7 +63,7 @@ export default function AccountPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           // 미등록 안내값을 화면에서만 비운 경우에는 기존 계좌를 유지한다.
-          bankAccount: keepUnregisteredAccount ? undefined : `${bankName} ${accountNumber}`.trim(),
+          bankAccount: keepUnregisteredAccount ? undefined : `${trimmedBankName} ${trimmedAccountNumber}`.trim(),
           depositorName: depositorName.trim() || null,
         }),
       })

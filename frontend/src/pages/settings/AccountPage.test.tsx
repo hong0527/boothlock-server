@@ -92,6 +92,17 @@ describe('AccountPage 저장 요청', () => {
     await submit()
     expect(stored.bankAccount).toBe('테스트은행 001234')
   })
+  it.each([['계좌번호', '001234'], ['은행명', '테스트은행']])(
+    '미등록 상태에서 %s만 입력하면 저장을 막는다 (반쪽 계좌 저장 방지)',
+    async (label, value) => {
+      await load('계좌 미입력 - 로그인 후 설정에서 등록')
+      edit(label, value)
+      await submit()
+      expect(payloads).toHaveLength(0)
+      expect(stored.bankAccount).toBe('계좌 미입력 - 로그인 후 설정에서 등록')
+      expect(JSON.stringify(render())).toContain('은행명과 계좌번호를 모두 입력해주세요')
+    },
+  )
   it('정상 계좌에서 예금주명만 저장해도 계좌를 보존한다', async () => {
     await load('테스트은행 001234')
     edit('예금주명', '테스트예금주')
