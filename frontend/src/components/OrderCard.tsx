@@ -2,16 +2,20 @@ import { PAYMENT_STATUS_LABEL, type OrderSummary } from '../types/dashboard'
 import { displayTableLabel } from '../lib/tableLabel'
 import { formatClockTime, formatElapsed } from '../lib/time'
 
+const ACTION_BUTTON_CLASS =
+  'h-[54px] flex-1 rounded-xl bg-neutral-600 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50 disabled:opacity-40'
+
 type OrderCardProps = {
   order: OrderSummary
   now: number
+  pending: boolean
   onComplete: (orderId: number) => void
   onCancel: (orderId: number) => void
   onRestore: (orderId: number) => void
   onDelete: (orderId: number) => void
 }
 
-export default function OrderCard({ order, now, onComplete, onCancel, onRestore, onDelete }: OrderCardProps) {
+export default function OrderCard({ order, now, pending, onComplete, onCancel, onRestore, onDelete }: OrderCardProps) {
   return (
     <div className="flex min-h-[321px] w-full flex-col rounded-xl border border-neutral-200 bg-neutral-50 p-4">
       <div className="flex items-start justify-between">
@@ -51,18 +55,10 @@ export default function OrderCard({ order, now, onComplete, onCancel, onRestore,
 
       {order.status === 'RECEIVED' && (
         <div className="mt-4 flex gap-4">
-          <button
-            type="button"
-            onClick={() => onCancel(order.orderId)}
-            className="h-[54px] flex-1 rounded-xl bg-neutral-600 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
-          >
+          <button type="button" onClick={() => onCancel(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
             취소
           </button>
-          <button
-            type="button"
-            onClick={() => onComplete(order.orderId)}
-            className="h-[54px] flex-1 rounded-xl bg-neutral-600 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
-          >
+          <button type="button" onClick={() => onComplete(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
             완료
           </button>
         </div>
@@ -70,18 +66,10 @@ export default function OrderCard({ order, now, onComplete, onCancel, onRestore,
 
       {order.status === 'CANCELED' && (
         <div className="mt-4 flex gap-4">
-          <button
-            type="button"
-            onClick={() => onRestore(order.orderId)}
-            className="h-[54px] flex-1 rounded-xl bg-neutral-600 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
-          >
+          <button type="button" onClick={() => onRestore(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
             취소복구
           </button>
-          <button
-            type="button"
-            onClick={() => onDelete(order.orderId)}
-            className="h-[54px] flex-1 rounded-xl bg-neutral-600 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
-          >
+          <button type="button" onClick={() => onDelete(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
             삭제
           </button>
         </div>
