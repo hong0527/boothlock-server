@@ -122,6 +122,10 @@ public class OrderEntity {
     @Column(name = "is_manual", nullable = false)
     private boolean manual = false;
 
+    // 취소 주문 삭제(명세서 밖) — 실제 삭제가 아니라 숨김. 대시보드 목록(O10)에서만 제외되고 결제·정산 데이터는 그대로 남는다
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean hidden = false;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -210,6 +214,24 @@ public class OrderEntity {
     /** 취소되지 않은 항목이 하나라도 남아 있나 */
     public boolean hasRemainingItems() {
         return items.stream().anyMatch(item -> !item.isCanceled());
+    }
+
+    /**
+     * 취소복구(명세서 밖) — CANCELED만 RECEIVED로 되돌린다. paymentStatus·환불 관련 필드는 이 결제/환불과 무관한
+     * 주문현황 관리 기능이라 건드리지 않는다(2축 상태, cancelByCustomer와 같은 원칙). 항목이 전부 개별
+     * 취소(O6)돼 실질적으로 빈 주문이면 되살릴 대상이 없으므로 막는다.
+     */
+    public void restore() {
+        if (hidden) {
+            throw new InvalidStateException("삭제된 주문은 복구할 수 없습니다.");
+        }
+        if (status != OrderStatus.CANCELED) {
+            throw new InvalidStateException("취소된 주문만 복구할 수 있습니다.");
+        }
+        if (!hasRemainingItems()) {
+            throw new InvalidStateException("모든 항목이 취소된 주문은 복구할 수 없습니다.");
+        }
+        this.status = OrderStatus.RECEIVED;
     }
 
     /** 수정 대상 항목 — 이 주문의 것이 아니거나 이미 취소된 항목은 404 (남의 주문 항목 id를 끼워 넣어도 같은 응답) */
@@ -306,6 +328,10 @@ public class OrderEntity {
 
     public boolean isManual() {
         return manual;
+    }
+
+    public boolean isHidden() {
+        return hidden;
     }
 
     public LocalDateTime getCreatedAt() {

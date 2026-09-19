@@ -56,9 +56,11 @@ public class SalesStatsService {
         LocalDate businessDate = requestedDate != null
                 ? requestedDate
                 : orderNumberingService.businessDateOf(LocalDateTime.now(KST));
-        // 정산은 그날 전체 합계라 대시보드용 30건 제한을 걸면 안 됨 — 명시적으로 무제한
+        // 정산은 그날 전체 합계라 대시보드용 30건 제한을 걸면 안 됨 — 명시적으로 무제한.
+        // excludeHidden=false — 삭제(hidden=true) 처리된 취소 주문도 환불필요·환불완료 집계에서 빠지면 안 되므로
+        // 대시보드(DashboardQueryService)와 달리 hidden 여부와 무관하게 전부 조회한다.
         List<OrderEntity> orders = orderRepository.searchForDashboard(
-                booth.getId(), null, null, businessDate, null, null, false, Limit.unlimited());
+                booth.getId(), null, null, businessDate, null, null, false, false, Limit.unlimited());
 
         long totalSales = 0;
         long paidOrderCount = 0;

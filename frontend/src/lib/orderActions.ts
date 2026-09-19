@@ -37,6 +37,22 @@ export function cancelOrder(orderId: number, reason?: string) {
   })
 }
 
+/**
+ * 취소복구(명세서 밖) — 취소 탭의 주문을 다시 진행(RECEIVED) 탭으로 되돌린다. 결제/환불 상태는 바뀌지 않는다.
+ * 취소 상태가 아니거나 이미 삭제됐거나 모든 항목이 취소된 주문이면 409.
+ */
+export function restoreOrder(orderId: number) {
+  return apiFetch(`/api/v1/admin/orders/${orderId}/restore`, { method: 'POST' })
+}
+
+/**
+ * 취소 주문 삭제(명세서 밖) — 실제 데이터 삭제가 아니라 주문현황 목록·탭 건수에서만 제외한다.
+ * 결제·환불·정산 데이터는 그대로 보존된다. CANCELED가 아니거나 이미 삭제된 주문이면 409.
+ */
+export function deleteOrder(orderId: number) {
+  return apiFetch(`/api/v1/admin/orders/${orderId}`, { method: 'DELETE' })
+}
+
 /** O14 수기 주문 — tableId 지정 시 그 테이블 세션에 귀속(없으면 자동 생성), 생략 시 테이블 미지정(M-통산) */
 export function createManualOrder(items: { menuId: number; qty: number }[], tableId?: number) {
   return apiFetch('/api/v1/admin/orders', {

@@ -7,9 +7,11 @@ type OrderCardProps = {
   now: number
   onComplete: (orderId: number) => void
   onCancel: (orderId: number) => void
+  onRestore: (orderId: number) => void
+  onDelete: (orderId: number) => void
 }
 
-export default function OrderCard({ order, now, onComplete, onCancel }: OrderCardProps) {
+export default function OrderCard({ order, now, onComplete, onCancel, onRestore, onDelete }: OrderCardProps) {
   return (
     <div className="flex min-h-[321px] w-full flex-col rounded-xl border border-neutral-200 bg-neutral-50 p-4">
       <div className="flex items-start justify-between">
@@ -62,6 +64,25 @@ export default function OrderCard({ order, now, onComplete, onCancel }: OrderCar
             className="h-[54px] flex-1 rounded-xl bg-neutral-600 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
           >
             완료
+          </button>
+        </div>
+      )}
+
+      {order.status === 'CANCELED' && (
+        <div className="mt-4 flex gap-4">
+          <button
+            type="button"
+            onClick={() => onRestore(order.orderId)}
+            className="h-[54px] flex-1 rounded-xl bg-neutral-600 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
+          >
+            취소복구
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(order.orderId)}
+            className="h-[54px] flex-1 rounded-xl bg-neutral-600 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
+          >
+            삭제
           </button>
         </div>
       )}

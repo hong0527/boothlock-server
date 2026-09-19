@@ -94,6 +94,11 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
      * activeSessionOnly: tableId와 함께 true면 그 테이블의 종료 안 된 세션(ended_at IS NULL and ended_at_key = 0) 주문만 —
      * 결제 모달이 "지금 앉은 손님" 주문만 보는 수단이다(O24 대상 범위와 같은 세션 조건). tableId 없이 true인 요청은 서비스가 400으로 막는다.
      * ended_at_key = 0을 함께 거는 이유는 TableSessionRepository 주석(uq_session_active 인덱스)과 같다.
+     * excludeHidden: 삭제(hide) 처리된 취소 주문을 DB 단계에서부터 뺄지 — limit과 같은 문장 안에서 걸어야 한다.
+     * WHERE 없이 애플리케이션에서만 걸러내면(예: Java stream filter) "최근 N건"을 자른 뒤에 hidden을 지우는 꼴이 되어,
+     * hidden 행이 그 N건 자리를 대신 차지해 정상 취소 주문이 조용히 밀려난다(실측: hidden 500건+정상 1건일 때 그 1건이
+     * 사라짐). O18 매출 집계(SalesStatsService)는 hidden 여부와 무관하게 전부 봐야 하므로 false로 호출한다 —
+     * 이 파라미터로 두 호출자의 hidden 처리 범위를 분리한다(정산 쿼리 자체는 바뀌지 않음).
      */
     @EntityGraph(attributePaths = "items")
     @Query("""
@@ -107,6 +112,7 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
                   select s.id from TableSessionEntity s
                   where s.table.id = :tableId and s.table.booth.id = :boothId
                     and (:activeSessionOnly = false or (s.endedAt is null and s.endedAtKey = 0))))
+              and (:excludeHidden = false or o.hidden = false)
             order by o.createdAt desc, o.id desc
             """)
     List<OrderEntity> searchForDashboard(
@@ -117,6 +123,7 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
             @Param("q") String q,
             @Param("tableId") Long tableId,
             @Param("activeSessionOnly") boolean activeSessionOnly,
+            @Param("excludeHidden") boolean excludeHidden,
             Limit limit);
 
     /** O11·O12 조회 — booth 범위로 스코프해 타 부스 주문은 조회 단계에서 404가 되게 한다 (존재 은닉) */
@@ -207,4 +214,22 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
             @Param("boothId") Long boothId,
             @Param("refundedBy") String refundedBy,
             @Param("refundedAt") LocalDateTime refundedAt);
+
+    /**
+     * 취소 주문 삭제(명세서 밖) — 실제 DELETE가 아니라 hidden=true만 세운다. CANCELED만 대상이고 이미 숨긴 주문은
+     * 0건으로 막아 409를 내게 한다. payment_status는 전혀 건드리지 않으므로 O18 매출 집계(SalesStatsService가
+     * searchForDashboard를 excludeHidden=false로 불러 정산을 계산)에는 영향이 없다 — 숨김 필터링은
+     * 대시보드 조회(DashboardQueryService, excludeHidden=true)에서만 DB 단계부터 적용된다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true)
+    @Query("""
+            update OrderEntity o
+               set o.hidden = true
+             where o.id = :orderId
+               and o.boothId = :boothId
+               and o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.CANCELED
+               and o.hidden = false
+            """)
+    int hideCanceledOrder(@Param("orderId") Long orderId, @Param("boothId") Long boothId);
 }

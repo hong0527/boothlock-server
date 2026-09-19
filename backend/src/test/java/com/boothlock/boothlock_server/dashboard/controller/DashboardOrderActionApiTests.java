@@ -38,6 +38,9 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -100,6 +103,14 @@ class DashboardOrderActionApiTests {
 
     private void setOrderStatus(Long orderId, OrderStatus status) {
         jdbcTemplate.update("update orders set status = ? where id = ?", status.name(), orderId);
+    }
+
+    private void cancelAllItems(Long orderId) {
+        jdbcTemplate.update("update order_item set canceled = true where order_id = ?", orderId);
+    }
+
+    private void hideOrder(Long orderId) {
+        jdbcTemplate.update("update orders set hidden = true where id = ?", orderId);
     }
 
     // ── O11 입금 확인 ────────────────────────────────────────
@@ -547,5 +558,288 @@ class DashboardOrderActionApiTests {
         mockMvc.perform(post("/api/v1/admin/orders/{orderId}/refund-done", orderId))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void refundDoneWorksOnHiddenCanceledOrder() throws Exception {
+        // 삭제(hidden=true)는 주문현황 목록에서만 숨기는 것 — 환불 처리(O21)는 계속 가능해야 한다
+        Long orderId = newRefundNeededOrder(37);
+        hideOrder(orderId);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/refund-done", orderId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentStatus").value("REFUNDED"))
+                .andExpect(jsonPath("$.refundedBy").value("dashboard-admin"))
+                .andExpect(jsonPath("$.refundedAt").exists());
+
+        OrderEntity saved = orderRepository.findByIdAndBoothId(orderId, boothId).orElseThrow();   // 실제 삭제 아님
+        assertEquals(PaymentStatus.REFUNDED, saved.getPaymentStatus());
+        assertEquals(OrderStatus.CANCELED, saved.getStatus());                // 주문 상태는 그대로 CANCELED
+        assertTrue(saved.isHidden());                                        // hidden도 그대로 유지
+        assertEquals("dashboard-admin", saved.getRefundedBy());
+        assertNotNull(saved.getRefundedAt());
+        assertEquals(1, saved.getItems().size());                            // 주문 데이터(항목) 훼손 없음
+    }
+
+    // ── 취소복구 (주문현황 관리, 명세서 밖) ──────────────────
+
+    @Test
+    void restoresCanceledOrderToReceivedWithoutTouchingPaymentStatus() throws Exception {
+        Long orderId = newOrder(boothId, 26);
+        setPaymentStatus(orderId, PaymentStatus.REFUND_NEEDED);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderId").value(orderId))
+                .andExpect(jsonPath("$.status").value("RECEIVED"))
+                .andExpect(jsonPath("$.paymentStatus").value("REFUND_NEEDED"))
+                .andExpect(jsonPath("$.totalAmount").value(16000))
+                .andExpect(jsonPath("$.items[0].menuName").value("김치전"))
+                .andExpect(jsonPath("$.items[0].qty").value(2));
+
+        OrderEntity saved = orderRepository.findById(orderId).orElseThrow();
+        assertEquals(orderId, saved.getId());
+        assertEquals(OrderStatus.RECEIVED, saved.getStatus());
+        assertEquals(PaymentStatus.REFUND_NEEDED, saved.getPaymentStatus());   // 결제/환불 축은 그대로
+    }
+
+    @Test
+    void restorePreservesTableLabelAndSessionId() throws Exception {
+        OrderEntity order = new OrderEntity(
+                boothId, 777L, "A3-30", LocalDate.of(2026, 9, 1),
+                30, "idem-table-" + boothId + "-30", 16000, false,
+                "A-3", LocalDateTime.of(2026, 9, 1, 18, 0));
+        order.addItem(new OrderItemEntity(3L, "김치전", 8000, 2));
+        Long orderId = orderRepository.save(order).getId();
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tableLabel").value("A-3"))
+                .andExpect(jsonPath("$.sessionId").value(777));
+
+        OrderEntity saved = orderRepository.findById(orderId).orElseThrow();
+        assertEquals("A-3", saved.getTableLabel());
+        assertEquals(777L, saved.getSessionId());
+    }
+
+    @Test
+    void rejectsRestoreWhenNotCanceled() throws Exception {
+        Long orderId = newOrder(boothId, 27);   // RECEIVED 그대로
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+    }
+
+    @Test
+    void rejectsRestoreWhenAllItemsCanceled() throws Exception {
+        // 항목이 전부 개별 취소(O6)돼 실질적으로 빈 주문이면 복구 대상이 없다
+        Long orderId = newOrder(boothId, 28);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+        cancelAllItems(orderId);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+
+        assertEquals(OrderStatus.CANCELED, orderRepository.findById(orderId).orElseThrow().getStatus());
+    }
+
+    @Test
+    void rejectsRestoreOfHiddenOrder() throws Exception {
+        // 삭제(숨김) 처리된 주문은 다시 복구할 수 없다
+        Long orderId = newOrder(boothId, 29);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+        hideOrder(orderId);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+    }
+
+    @Test
+    void rejectsRestoreForUnknownOrder() throws Exception {
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", 999999L)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void hidesOtherBoothOrderAsNotFoundOnRestore() throws Exception {
+        BoothEntity otherBooth = boothRepository.save(new BoothEntity("다른 부스", "국민은행 5678", null));
+        Long otherOrderId = newOrder(otherBooth.getId(), 1);
+        setOrderStatus(otherOrderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", otherOrderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void rejectsRestoreWithoutAuthorization() throws Exception {
+        Long orderId = newOrder(boothId, 31);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", orderId))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    // ── 취소 주문 삭제 (주문현황 관리, 명세서 밖) ────────────
+
+    @Test
+    void deletesCanceledOrderWithoutRemovingRowOrTouchingPayment() throws Exception {
+        Long orderId = newOrder(boothId, 32);
+        setPaymentStatus(orderId, PaymentStatus.REFUND_NEEDED);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(delete("/api/v1/admin/orders/{orderId}", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+
+        OrderEntity saved = orderRepository.findByIdAndBoothId(orderId, boothId).orElseThrow();   // row가 그대로 있어야 한다
+        assertTrue(saved.isHidden());
+        assertEquals(OrderStatus.CANCELED, saved.getStatus());
+        assertEquals(PaymentStatus.REFUND_NEEDED, saved.getPaymentStatus());   // 결제/환불 축 불변
+        assertEquals(1, saved.getItems().size());                             // 항목도 그대로 보존
+    }
+
+    @Test
+    void deletedOrderDisappearsFromDashboardListButStaysInRepository() throws Exception {
+        Long orderId = newOrder(boothId, 33);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+        hideOrder(orderId);
+
+        mockMvc.perform(get("/api/v1/admin/orders")
+                        .header("Authorization", "Bearer " + token)
+                        .param("status", "CANCELED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orders.length()").value(0));
+
+        assertNotNull(orderRepository.findById(orderId).orElseThrow());
+    }
+
+    @Test
+    void rejectsDeleteWhenNotCanceled() throws Exception {
+        Long orderId = newOrder(boothId, 34);   // RECEIVED 그대로
+
+        mockMvc.perform(delete("/api/v1/admin/orders/{orderId}", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+    }
+
+    @Test
+    void rejectsDoubleDelete() throws Exception {
+        Long orderId = newOrder(boothId, 35);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(delete("/api/v1/admin/orders/{orderId}", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(delete("/api/v1/admin/orders/{orderId}", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+    }
+
+    @Test
+    void rejectsDeleteForUnknownOrder() throws Exception {
+        mockMvc.perform(delete("/api/v1/admin/orders/{orderId}", 999999L)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void hidesOtherBoothOrderAsNotFoundOnDelete() throws Exception {
+        BoothEntity otherBooth = boothRepository.save(new BoothEntity("다른 부스", "국민은행 5678", null));
+        Long otherOrderId = newOrder(otherBooth.getId(), 1);
+        setOrderStatus(otherOrderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(delete("/api/v1/admin/orders/{orderId}", otherOrderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void rejectsDeleteWithoutAuthorization() throws Exception {
+        Long orderId = newOrder(boothId, 36);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(delete("/api/v1/admin/orders/{orderId}", orderId))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void serializesConcurrentRestoreAndDeleteForSameOrder() throws Exception {
+        // 같은 주문에 취소복구(POST .../restore)와 삭제(DELETE .../{id})가 동시에 들어와도 행 잠금(취소복구는
+        // FOR UPDATE 조회, 삭제는 조건부 UPDATE)으로 직렬화되어 정확히 하나만 성공해야 한다.
+        // serializesConcurrentPaymentConfirmationsForSameOrder(O11)와 같은 이유·같은 패턴의 검증이다.
+        Long orderId = newOrder(boothId, 38);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        Callable<Integer> restoreAttempt = () -> {
+            ready.countDown();
+            start.await();
+            return mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", orderId)
+                            .header("Authorization", "Bearer " + token))
+                    .andReturn().getResponse().getStatus();
+        };
+        Callable<Integer> deleteAttempt = () -> {
+            ready.countDown();
+            start.await();
+            return mockMvc.perform(delete("/api/v1/admin/orders/{orderId}", orderId)
+                            .header("Authorization", "Bearer " + token))
+                    .andReturn().getResponse().getStatus();
+        };
+
+        List<Future<Integer>> futures = List.of(executor.submit(restoreAttempt), executor.submit(deleteAttempt));
+        ready.await();
+        start.countDown();
+        List<Integer> statuses = futures.stream().map(f -> {
+            try {
+                return f.get(10, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }).collect(Collectors.toList());
+        executor.shutdown();
+
+        int restoreStatus = statuses.get(0);   // futures 순서 그대로 — restoreAttempt 결과
+        int deleteStatus = statuses.get(1);    // deleteAttempt 결과
+
+        long successCount = statuses.stream().filter(s -> s == 200 || s == 204).count();
+        long conflictCount = statuses.stream().filter(s -> s == 409).count();
+        assertEquals(1, successCount, "정확히 하나만 성공해야 함: " + statuses);
+        assertEquals(1, conflictCount, "나머지 하나는 409(INVALID_STATE)여야 함: " + statuses);
+
+        OrderEntity finalState = orderRepository.findByIdAndBoothId(orderId, boothId).orElseThrow();
+        assertEquals(1, finalState.getItems().size());   // 어느 쪽이 이기든 주문 데이터(항목)는 훼손되지 않는다
+
+        // 복구가 이겼으면 RECEIVED+hidden=false, 삭제가 이겼으면 CANCELED+hidden=true — 그 외 조합은 없어야 한다
+        if (restoreStatus == 200 && deleteStatus == 409) {
+            assertEquals(OrderStatus.RECEIVED, finalState.getStatus());
+            assertTrue(!finalState.isHidden());
+        } else if (deleteStatus == 204 && restoreStatus == 409) {
+            assertEquals(OrderStatus.CANCELED, finalState.getStatus());
+            assertTrue(finalState.isHidden());
+        } else {
+            throw new AssertionError("예상 밖 상태 조합 — restoreStatus=" + restoreStatus + ", deleteStatus=" + deleteStatus
+                    + ", final=" + finalState.getStatus() + "/" + finalState.isHidden());
+        }
     }
 }

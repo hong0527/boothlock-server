@@ -561,4 +561,55 @@ class DashboardQueryApiTests {
                 .andExpect(jsonPath("$.orders.length()").value(501 + 4));   // 시딩 RECEIVED 4건 포함, 상한 없음
         assertEquals(1002 + 6, orderRepository.count());
     }
+
+    // ── 취소 주문 삭제(hidden) — Limit 500과의 상호작용 ──────
+
+    @Test
+    void hiddenCanceledOrdersAreExcludedBeforeTheFiveHundredLimitIsApplied() throws Exception {
+        // 회귀 재현: hidden 제외를 애플리케이션(Java)에서만 하면 "최근 500건"을 DB가 먼저 잘라버려서,
+        // 그 500건이 전부 hidden이면 501번째로 밀린 진짜 보여줘야 할 취소 주문이 통째로 사라진다.
+        // hidden 제외가 DB 쿼리(WHERE)에서 limit과 함께 걸려야 이 케이스에서 살아남는다.
+        OrderEntity visible = new OrderEntity(
+                boothId, null, "M-VISIBLE", day, 9000, null, 1000, true, null, day.atTime(6, 0));
+        visible.addItem(new OrderItemEntity(3L, "김치전", 1000, 1));
+        List<OrderEntity> bulk = new ArrayList<>();
+        bulk.add(visible);
+        for (int seq = 9001; seq <= 9500; seq++) {   // 500건, visible보다 전부 최근 시각
+            OrderEntity hidden = new OrderEntity(
+                    boothId, null, "M-HIDDEN-" + seq, day, seq, null, 1000, true, null,
+                    day.atTime(6, 0).plusMinutes(seq - 9000));
+            hidden.addItem(new OrderItemEntity(3L, "김치전", 1000, 1));
+            bulk.add(hidden);
+        }
+        orderRepository.saveAll(bulk);
+        jdbcTemplate.update(
+                "update orders set status = 'CANCELED' where booth_id = ? and order_seq between 9000 and 9500", boothId);
+        jdbcTemplate.update(
+                "update orders set hidden = true where booth_id = ? and order_seq between 9001 and 9500", boothId);
+
+        mockMvc.perform(dashboard(staffToken).param("status", "CANCELED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orders.length()").value(1))
+                .andExpect(jsonPath("$.orders[0].orderNo").value("M-VISIBLE"));
+    }
+
+    @Test
+    void paymentStatusFilterStillReturnsNonHiddenRefundNeededOrders() throws Exception {
+        // 삭제(hidden)는 주문현황 목록 전용이어야 한다 — paymentStatus=REFUND_NEEDED로 찾는 조회에서도
+        // hidden이 아닌 환불필요 주문은 그대로 나와야 하고, hidden인 것만 빠져야 한다
+        OrderEntity visible = new OrderEntity(
+                boothId, null, "M-RN-VISIBLE", day, 9600, null, 4000, true, null, day.atTime(12, 0));
+        OrderEntity hidden = new OrderEntity(
+                boothId, null, "M-RN-HIDDEN", day, 9601, null, 4000, true, null, day.atTime(12, 1));
+        orderRepository.saveAll(List.of(visible, hidden));
+        jdbcTemplate.update(
+                "update orders set status = 'CANCELED', payment_status = 'REFUND_NEEDED' "
+                        + "where booth_id = ? and order_seq in (9600, 9601)", boothId);
+        jdbcTemplate.update("update orders set hidden = true where booth_id = ? and order_seq = 9601", boothId);
+
+        mockMvc.perform(dashboard(staffToken).param("paymentStatus", "REFUND_NEEDED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orders.length()").value(1))
+                .andExpect(jsonPath("$.orders[0].orderNo").value("M-RN-VISIBLE"));
+    }
 }

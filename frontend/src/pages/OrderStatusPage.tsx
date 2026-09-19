@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import OrderCard from '../components/OrderCard'
 import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
-import { ackCall, cancelOrder as cancelOrderRequest, completeOrder as completeOrderRequest } from '../lib/orderActions'
+import {
+  ackCall,
+  cancelOrder as cancelOrderRequest,
+  completeOrder as completeOrderRequest,
+  deleteOrder as deleteOrderRequest,
+  restoreOrder as restoreOrderRequest,
+} from '../lib/orderActions'
 import { displayTableLabel } from '../lib/tableLabel'
 import { formatElapsed } from '../lib/time'
 import {
@@ -92,11 +98,33 @@ export default function OrderStatusPage() {
     refetchAll()
   }
 
-  // 취소는 종결이다(명세 O13 — 되돌리는 API 없음). 오취소 복구는 O14 수기 주문 재입력으로 한다
   const cancelOrder = async (orderId: number) => {
     const res = await cancelOrderRequest(orderId)
     if (!res.ok) {
       setError(`주문을 취소 처리하지 못했어요 (${res.status})`)
+      return
+    }
+    setError(null)
+    refetchAll()
+  }
+
+  // 취소복구 — CANCELED→RECEIVED만 되돌리고 결제/환불 상태는 건드리지 않는다
+  const restoreOrder = async (orderId: number) => {
+    const res = await restoreOrderRequest(orderId)
+    if (!res.ok) {
+      setError(`주문을 복구하지 못했어요 (${res.status})`)
+      return
+    }
+    setError(null)
+    refetchAll()
+  }
+
+  // 삭제 — 실제 데이터 삭제가 아니라 주문현황 목록에서만 제외(hidden 처리)
+  const deleteOrder = async (orderId: number) => {
+    if (!window.confirm('이 취소 주문을 삭제할까요?')) return
+    const res = await deleteOrderRequest(orderId)
+    if (!res.ok) {
+      setError(`주문을 삭제하지 못했어요 (${res.status})`)
       return
     }
     setError(null)
@@ -161,6 +189,8 @@ export default function OrderStatusPage() {
             now={now}
             onComplete={completeOrder}
             onCancel={cancelOrder}
+            onRestore={restoreOrder}
+            onDelete={deleteOrder}
           />
         ))}
         {visibleOrders.length === 0 && !error && (
