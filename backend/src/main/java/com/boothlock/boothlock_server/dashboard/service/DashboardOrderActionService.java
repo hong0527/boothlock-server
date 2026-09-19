@@ -168,9 +168,6 @@ public class DashboardOrderActionService {
     @Transactional
     public DashboardResponse.OrderSummary restore(String authorization, Long orderId) {
         StaffAccountEntity staff = authenticate(authorization);
-        if (staff.getRole() != StaffRole.ADMIN) {
-            throw new ForbiddenException();
-        }
         Long boothId = staff.getBooth().getId();
         OrderEntity order = requireExistingForUpdate(orderId, boothId);
         order.restore();
@@ -184,9 +181,6 @@ public class DashboardOrderActionService {
     @Transactional
     public void hideCanceledOrder(String authorization, Long orderId) {
         StaffAccountEntity staff = authenticate(authorization);
-        if (staff.getRole() != StaffRole.ADMIN) {
-            throw new ForbiddenException();
-        }
         Long boothId = staff.getBooth().getId();
 
         int updated = orderRepository.hideCanceledOrder(orderId, boothId);
