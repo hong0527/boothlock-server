@@ -99,6 +99,15 @@ class SalesStatsApiTests {
                 15_000, 10_000, 5_000, 2, 1, 4_000, 1, 3_000);
     }
     @Test
+    void countsHiddenCanceledOrdersInRefundNeededSummary() throws Exception {
+        // 취소 주문 삭제(hidden=true)는 주문현황 목록에서만 빠져야 하고, O18 매출 집계(환불필요 건수·금액)에는
+        // 영향을 주면 안 된다 — searchForDashboard를 excludeHidden=false로 불러야 하는 이유
+        Long orderId = newOrder(boothId, EXPLICIT_DATE, 1, 4_000, PaymentStatus.REFUND_NEEDED,
+                PaymentMethod.BANK_TRANSFER, OrderStatus.CANCELED);
+        jdbcTemplate.update("update orders set hidden = true where id = ?", orderId);
+        expectStats(request(token, EXPLICIT_DATE.toString()), 0, 0, 0, 0, 1, 4_000, 0, 0);
+    }
+    @Test
     void returnsZeroSummaryWhenRequestedDateHasNoOrders() throws Exception {
         expectStats(request(token, EXPLICIT_DATE.toString()), 0, 0, 0, 0, 0, 0, 0, 0);
     }

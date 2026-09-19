@@ -164,6 +164,33 @@ public class DashboardController {
         return orderActionService.cancelItem(authorization, orderId, itemId);
     }
 
+    /**
+     * 취소복구 (명세서 밖) — 취소 탭의 주문을 진행(RECEIVED) 탭으로 되돌린다. 결제/환불 상태(paymentStatus)는
+     * 손대지 않는다. 취소 상태가 아니거나, 이미 삭제된 주문이거나, 모든 항목이 취소돼 빈 주문이면 409.
+     */
+    @Operation(summary = "취소복구", description = "취소된 주문을 다시 접수(RECEIVED) 상태로 되돌린다. 결제 상태는 변경하지 않는다. "
+            + "취소 상태가 아니거나 이미 삭제됐거나 모든 항목이 취소된 주문이면 409.")
+    @PostMapping("/admin/orders/{orderId}/restore")
+    public DashboardResponse.OrderSummary restore(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId) {
+        return orderActionService.restore(authorization, orderId);
+    }
+
+    /**
+     * 취소 주문 삭제 (명세서 밖) — 실제 데이터 삭제가 아니라 대시보드 목록에서만 숨긴다. 결제·환불·정산 데이터에는
+     * 영향이 없다. CANCELED가 아니거나 이미 삭제된 주문이면 409.
+     */
+    @Operation(summary = "취소 주문 삭제", description = "취소된 주문을 주문현황 목록·탭 건수에서 제외한다. 주문·항목·결제·환불 데이터는 "
+            + "그대로 보존되며 정산에는 영향을 주지 않는다. CANCELED가 아니거나 이미 삭제된 주문은 409.")
+    @DeleteMapping("/admin/orders/{orderId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteCanceledOrder(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId) {
+        orderActionService.hideCanceledOrder(authorization, orderId);
+    }
+
     /** O21 환불 완료 (Should·ADMIN 전용) — REFUND_NEEDED→REFUNDED, 처리자 기록 */
     @Operation(summary = "O21 환불 완료", description = "REFUND_NEEDED 상태의 주문을 환불 완료 처리한다. ADMIN 전용. REFUND_NEEDED가 아니면 409.")
     @PostMapping("/admin/orders/{orderId}/refund-done")

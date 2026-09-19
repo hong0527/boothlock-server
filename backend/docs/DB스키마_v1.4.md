@@ -139,6 +139,7 @@ erDiagram
 | approved_by / approved_at | VARCHAR(50) / DATETIME | NULL | 입금 승인자·시각 |
 | refunded_by / refunded_at | VARCHAR(50) / DATETIME | NULL | |
 | is_manual | BOOLEAN | NOT NULL DEFAULT FALSE | 응답 필드명은 `manual` |
+| hidden | BOOLEAN | NOT NULL DEFAULT FALSE | **v1.4 신설(명세서 밖)** — 취소 주문 삭제. 실제 삭제가 아니라 대시보드 목록·탭 건수에서만 제외, 결제·정산 데이터는 그대로 |
 | created_at | DATETIME | NOT NULL | 마이크로초 절삭 저장 |
 | _UNIQUE_ | | **uq_orders_seq (booth_id, business_date, order_seq)** | 채번 최후 방어선 |
 | _INDEX_ | | **idx_orders_search (booth_id, business_date, order_no)** | O10 검색·영업일 조회 |
@@ -308,6 +309,7 @@ CREATE TABLE orders (
   refunded_by     VARCHAR(50)  NULL,
   refunded_at     DATETIME(6)  NULL,
   is_manual       BOOLEAN      NOT NULL DEFAULT FALSE,
+  hidden          BOOLEAN      NOT NULL DEFAULT FALSE,
   created_at      DATETIME(6)  NOT NULL,
   CONSTRAINT fk_orders_booth   FOREIGN KEY (booth_id)   REFERENCES booth(id),
   CONSTRAINT fk_orders_session FOREIGN KEY (session_id) REFERENCES table_session(id),

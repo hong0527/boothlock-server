@@ -114,6 +114,7 @@ CREATE TABLE orders (
   refunded_by     VARCHAR(50)  NULL,
   refunded_at     DATETIME(6)  NULL,
   is_manual       BOOLEAN      NOT NULL DEFAULT FALSE,
+  hidden          BOOLEAN      NOT NULL DEFAULT FALSE,       -- 취소 주문 삭제(주문현황 목록에서만 제외, 데이터·정산은 보존)
   created_at      DATETIME(6)  NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_orders_seq (booth_id, business_date, order_seq),   -- 채번 중복의 물리적 차단

@@ -160,6 +160,39 @@ public class DashboardOrderActionService {
         return mapper.toOrderSummary(requireExistingForUpdate(orderId, boothId));
     }
 
+    /**
+     * 취소복구(명세서 밖) — 취소 탭의 주문을 다시 진행(RECEIVED) 탭으로 되돌린다. 결제/환불 처리 기능이 아니므로
+     * paymentStatus·환불 필드는 절대 건드리지 않는다(OrderEntity.restore 참조). 상태 판정에 항목 컬렉션이
+     * 필요해 O11·O12처럼 조건부 UPDATE 한 문장으로 끝내지 못하고, O6와 같은 잠금 조회 후 엔티티 메서드 패턴을 쓴다.
+     */
+    @Transactional
+    public DashboardResponse.OrderSummary restore(String authorization, Long orderId) {
+        StaffAccountEntity staff = authenticate(authorization);
+        Long boothId = staff.getBooth().getId();
+        OrderEntity order = requireExistingForUpdate(orderId, boothId);
+        order.restore();
+        return mapper.toOrderSummary(order);
+    }
+
+    /**
+     * 취소 주문 삭제(명세서 밖) — 실제로 지우지 않고 hidden=true만 세워 대시보드 목록에서만 제외한다
+     * (O6 항목 취소가 canceled 플래그로 숨기는 것과 같은 원칙). CANCELED가 아니거나 이미 삭제된 주문은 409.
+     */
+    @Transactional
+    public void hideCanceledOrder(String authorization, Long orderId) {
+        StaffAccountEntity staff = authenticate(authorization);
+        Long boothId = staff.getBooth().getId();
+
+        int updated = orderRepository.hideCanceledOrder(orderId, boothId);
+        if (updated == 0) {
+            OrderEntity existing = requireExistingForUpdate(orderId, boothId);   // 없으면 여기서 404
+            if (existing.isHidden()) {
+                throw new InvalidStateException("이미 삭제된 주문입니다.");
+            }
+            throw new InvalidStateException("취소된 주문만 삭제할 수 있습니다.");
+        }
+    }
+
     /** 대시보드 공용 인증기 — 무토큰·위조 401, SUPER_ADMIN 403, boothId 클레임이 계정 현재 부스와 다르면 401 */
     private StaffAccountEntity authenticate(String authorization) {
         return staffAuthenticator.authenticate(authorization);

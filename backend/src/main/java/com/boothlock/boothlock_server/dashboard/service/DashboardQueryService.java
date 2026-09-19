@@ -72,8 +72,12 @@ public class DashboardQueryService {
 
         LocalDate effectiveDate = resolveBusinessDate(businessDate, LocalDateTime.now(KST_ZONE));
         Limit limit = status == OrderStatus.RECEIVED ? Limit.unlimited() : DASHBOARD_LIST_LIMIT;
+        // excludeHidden=true — 삭제(hidden=true) 처리된 취소 주문을 limit(500건)과 같은 쿼리에서 DB 단계부터 뺀다.
+        // limit을 먼저 적용하고 나중에(Java에서) hidden을 지우면 hidden 행이 그 자리를 차지해 정상 취소 주문이
+        // 밀려날 수 있어(실측됨) DB WHERE절에서 함께 처리한다. O18 매출 집계(SalesStatsService)는 이 메서드를
+        // excludeHidden=false로 불러 hidden 여부와 무관하게 전부 보므로 정산·환불 데이터는 영향받지 않는다.
         List<OrderEntity> orders = orderRepository.searchForDashboard(
-                boothId, status, paymentStatus, effectiveDate, q, tableId, activeSessionOnly, limit);
+                boothId, status, paymentStatus, effectiveDate, q, tableId, activeSessionOnly, true, limit);
         List<StaffCallEntity> calls = staffCallRepository.findUnackedByBoothId(boothId);
 
         return new DashboardResponse(

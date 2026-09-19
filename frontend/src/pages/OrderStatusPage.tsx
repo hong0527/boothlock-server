@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import OrderCard from '../components/OrderCard'
 import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
-import { ackCall, cancelOrder as cancelOrderRequest, completeOrder as completeOrderRequest } from '../lib/orderActions'
+import {
+  ackCall,
+  cancelOrder as cancelOrderRequest,
+  completeOrder as completeOrderRequest,
+  deleteOrder as deleteOrderRequest,
+  restoreOrder as restoreOrderRequest,
+} from '../lib/orderActions'
 import { displayTableLabel } from '../lib/tableLabel'
 import { formatElapsed } from '../lib/time'
 import {
@@ -37,6 +43,8 @@ export default function OrderStatusPage() {
   const [activeStatus, setActiveStatus] = useState<OrderStatus>('RECEIVED')
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  // 같은 주문에 대한 액션 버튼 연타로 요청이 중복 전송되는 걸 막는다 (예: 취소복구 더블클릭 → 두 번째 요청이 409)
+  const [pendingOrderId, setPendingOrderId] = useState<number | null>(null)
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000)
@@ -82,25 +90,39 @@ export default function OrderStatusPage() {
     setError(null)
   }
 
-  const completeOrder = async (orderId: number) => {
-    const res = await completeOrderRequest(orderId)
-    if (!res.ok) {
-      setError(`주문을 완료 처리하지 못했어요 (${res.status})`)
-      return
+  // 같은 주문에 대한 중복 요청을 막고 완료 후 pending을 해제한다
+  const runOrderAction = async (orderId: number, action: () => Promise<Response>, failMessage: string) => {
+    if (pendingOrderId === orderId) return
+    setPendingOrderId(orderId)
+    try {
+      const res = await action()
+      if (!res.ok) {
+        setError(`${failMessage} (${res.status})`)
+        return
+      }
+      setError(null)
+      refetchAll()
+    } finally {
+      setPendingOrderId(null)
     }
-    setError(null)
-    refetchAll()
   }
 
-  // 취소는 종결이다(명세 O13 — 되돌리는 API 없음). 오취소 복구는 O14 수기 주문 재입력으로 한다
-  const cancelOrder = async (orderId: number) => {
-    const res = await cancelOrderRequest(orderId)
-    if (!res.ok) {
-      setError(`주문을 취소 처리하지 못했어요 (${res.status})`)
-      return
-    }
-    setError(null)
-    refetchAll()
+  const completeOrder = (orderId: number) =>
+    runOrderAction(orderId, () => completeOrderRequest(orderId), '주문을 완료 처리하지 못했어요')
+
+  const cancelOrder = (orderId: number) =>
+    runOrderAction(orderId, () => cancelOrderRequest(orderId), '주문을 취소 처리하지 못했어요')
+
+  // 취소복구 — CANCELED→RECEIVED만 되돌리고 결제/환불 상태는 건드리지 않는다
+  const restoreOrder = (orderId: number) => {
+    if (!window.confirm('이 주문을 진행 상태로 복구할까요?')) return
+    return runOrderAction(orderId, () => restoreOrderRequest(orderId), '주문을 복구하지 못했어요')
+  }
+
+  // 삭제 — 실제 데이터 삭제가 아니라 주문현황 목록에서만 제외(hidden 처리)
+  const deleteOrder = (orderId: number) => {
+    if (!window.confirm('이 취소 주문을 삭제할까요?')) return
+    return runOrderAction(orderId, () => deleteOrderRequest(orderId), '주문을 삭제하지 못했어요')
   }
 
   return (
@@ -159,8 +181,11 @@ export default function OrderStatusPage() {
             key={order.orderId}
             order={order}
             now={now}
+            pending={pendingOrderId === order.orderId}
             onComplete={completeOrder}
             onCancel={cancelOrder}
+            onRestore={restoreOrder}
+            onDelete={deleteOrder}
           />
         ))}
         {visibleOrders.length === 0 && !error && (
