@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import boothlockLogo from '../assets/icons/boothlock-logo.svg'
 import PrimaryButton from '../components/PrimaryButton'
 import TextField from '../components/TextField'
 import { apiUrl } from '../lib/apiBase'
@@ -57,8 +58,8 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-white px-6">
       <div className="flex w-full max-w-[600px] flex-col items-center">
-        {/* 로고/이미지 영역 (Figma: Rectangle 20, 236:331) */}
-        <div className="h-[184px] w-full bg-neutral-200" />
+        {/* 부스락 로고 (Figma: Group, 529:1018) */}
+        <img src={boothlockLogo} alt="부스락" className="h-[148px] w-auto" />
 
         <form className="mt-16 flex w-full flex-col gap-6" onSubmit={handleSubmit}>
           <TextField
@@ -77,10 +78,17 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
           />
           {error && <p className="text-sm text-red-600">{error}</p>}
-          <PrimaryButton type="submit" disabled={loading} className="mt-12 disabled:opacity-40">
+          <PrimaryButton type="submit" disabled={loading} className="mt-12 bg-primary-300! disabled:opacity-40">
             {loading ? '로그인 중...' : '로그인'}
           </PrimaryButton>
         </form>
+
+        <div className="text-body-2 mt-12 flex items-center gap-3">
+          <span className="text-neutral-400">아직 부스락 회원이 아니신가요?</span>
+          <span className="text-neutral-900 underline [text-underline-position:from-font] decoration-solid">
+            회원가입
+          </span>
+        </div>
       </div>
     </div>
   )
