@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import boothlockLogo from '../assets/icons/boothlock-logo.svg'
 import PrimaryButton from '../components/PrimaryButton'
 import TextField from '../components/TextField'
@@ -85,9 +85,9 @@ export default function LoginPage() {
 
         <div className="text-body-2 mt-12 flex items-center gap-3">
           <span className="text-neutral-400">아직 부스락 회원이 아니신가요?</span>
-          <span className="text-neutral-900 underline [text-underline-position:from-font] decoration-solid">
+          <Link to="/signup" className="text-neutral-900 underline [text-underline-position:from-font] decoration-solid">
             회원가입
-          </span>
+          </Link>
         </div>
       </div>
     </div>

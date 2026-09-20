@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router-dom'
 import { CartProvider } from './context/CartContext'
 import { TableOrderProvider } from './context/TableOrderContext'
 import LoginPage from './pages/LoginPage'
+import SignupPage from './pages/SignupPage'
 import CodeScanPage from './pages/CodeScanPage'
 import HomePage from './pages/HomePage'
 import OrderStatusPage from './pages/OrderStatusPage'
@@ -25,6 +26,8 @@ function App() {
     <CartProvider>
       <Routes>
         <Route path="/" element={<LoginPage />} />
+        {/* 임시 데모 (Figma 237:344) — 실제 백엔드 회원가입 API 없음, SignupPage.tsx 상단 주석 참고 */}
+        <Route path="/signup" element={<SignupPage />} />
         <Route path="/orders" element={<OrderStatusPage />} />
 
         {/* 방문자 홈 — Figma 92:2 / 95:368 / 212:704 */}

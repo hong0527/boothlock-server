@@ -21,6 +21,7 @@
 | **v0.6** | **2026-09-16** | **통합 PR 반영 — 코드가 정본.** ① 신규 절: **O23 항목 수량 변경·O23b 항목 개별 취소·O24 테이블 일괄 입금 확인·O25 테이블 1개 자동 추가·O26 테이블 삭제·O27 운영자 메뉴 목록**(main이 명세 밖에서 먼저 만든 API를 명세에 편입) ② 변경 절: O3(합집합 응답·`session.id`·유휴 세션 `session:null`·`needsCleanup`), O6(멱등 200·`{unpaidWarning,id,label,status,warning?}`), O10(`Authorization` 필수·`boothId` 400·`activeSessionOnly`·`businessDate` 기본=현재 영업일·`sessionId`·`itemId`), O11~O13 응답 형태 정정, O14(검증 순서·409), O15(JWT·`{callId,acked}`), O16/O17(category·mapX·mapY·**depositorName** — main #57 병합), O22(0~10000·반올림), C1(유휴 세션 재발급·응답 필드 정정), C2·O7·O8(`category`), C3(저장 직전 종료 410), C4·C5(취소 항목 제외·행 잠금), C6(`X-Session-Token`), E1(미결제 예외·삭제 테이블 제외) ③ **§1.2 유휴 만료를 SeatIdlePolicy 공용 정의로 통일**, §1.1·§7-21 무인증 전환 완료로 정정 ④ **미결제 정의 통일**(RECEIVED·DONE && UNPAID) ⑤ §7 신규: CORS, 잠금 뒤 읽기, 토큰 대조 ⑥ 확정 필요 표 갱신, §5 시더로 대체, §8 부록 갱신. 결제는 계좌이체만(PG 없음). 근거: 갈래 보고서 port-table·port-order·port-dash·port-fix·port-fix2·port-menu·port-cors·port-booth, verify-int2, e2e, deploy-mysql |
 | v0.6.1 | 2026-09-20 | Figma 최종 디자인 확인 반영 — E1 좌석 표시를 3단계(여유/보통/만석)에서 **2단계(여유/혼잡)** 로 단순화. `empty/total ≥ 0.5 → 여유`, 그 외 0 포함 → 혼잡 |
 | v0.6.2 | 2026-09-20 | Figma 최종 디자인 확인 반영 — 결제 안내 계좌 카드에 예금주 노출. C3·C4 `payment`에 `depositorName` 필드 추가(booth 설정값 그대로, `null` 가능). 기존 O16/O17 표의 "C3 결제 안내에는 나가지 않는다" 제약을 철회 |
+| **v0.6.3** | **2026-09-20** | **팀 결정으로 "회원가입 API 없음"을 철회 — O0 신설.** `POST /api/v1/admin/auth/signup`이 부스+ADMIN 계정을 함께 만들고 O1과 같은 형태로 즉시 로그인 처리한다. **알려진 위험(§O0 경고 참고): 신원 확인 없이 임의의 boothName으로 계정 생성 가능** — 운영 배포 전 재검토 필요. Figma node `237:344`(회원가입 화면) 프론트 구현 포함 |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -509,6 +510,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 
 | # | Method | Path | 기능명세 | 우선순위 |
 |---|---|---|---|---|
+| **O0** | POST | `/api/v1/admin/auth/signup` | **8.1 운영진 회원가입 (v0.6.3 신설 — "회원가입 API 없음" 결정 철회)** | Should |
 | O1 | POST | `/api/v1/admin/auth/login` | 8.1 운영진 로그인 | Must |
 | O2 | POST | `/api/v1/admin/tables/bulk` | 4.6 테이블 일괄 등록 | Must |
 | O3 | GET | `/api/v1/admin/tables` | 4.4 좌석 현황 (POS 배치도 소스) | Should |
@@ -539,6 +541,22 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | **O26** | DELETE | `/api/v1/admin/tables/{tableId}` | **4.6 테이블 삭제 (v0.6 편입)** | Should |
 | **O27** | GET | `/api/v1/admin/menus` | **6.1 운영자 메뉴 목록 (v0.6 편입)** | Must |
 
+## O0. POST /api/v1/admin/auth/signup (기능 8.1, v0.6.3 신설)
+
+**인증 없음.** 부스 + ADMIN 계정을 한 트랜잭션에서 함께 만들고, 성공하면 O1과 같은 형태로 바로 로그인 처리(JWT 발급)한다.
+
+**Request**: `{ "boothName": "...", "loginId": "...", "password": "..." }`
+
+**Response 200**: O1과 동일한 `{ accessToken, expiresIn, staff }` 형태. `staff.role`은 항상 `ADMIN`
+
+**규칙**
+- `boothName` 1~50자, `loginId` 1~50자, `password` 8자 이상 — 아니면 `400 INVALID_REQUEST`
+- `loginId` 중복이면 `409 INVALID_STATE`("이미 사용 중인 아이디입니다.") — 이때 방금 만든 부스 행도 롤백되어 고아로 남지 않는다
+- 새 부스의 `bankAccount`는 계좌 미등록 안내 문구로 채워진다(`AccountPage.tsx`가 이 문구를 보고 미등록으로 판단) — 계좌는 로그인 후 O17로 등록
+- `category`·`mapX`·`mapY`·`operatingHours`는 비워두고 시작(전부 O17로 나중에 채움)
+
+> **⚠️ 알려진 위험 — 반드시 인지할 것**: 이 엔드포인트는 신원 확인 없이 누구나 임의의 `boothName`으로 ADMIN 계정을 만들 수 있다. 사업자등록이 없는 임시 축제 부스가 대상이라 "이 사람이 그 점포의 진짜 담당자인가"를 검증할 방법이 없고, 남의 점포명을 그대로 사칭해 손님이 QR로 주문·입금하게 만드는 사기가 이론상 가능하다. v0.6 이전에는 이 위험 때문에 "회원가입 API 없음, 계정은 시더로만 생성"이 명시적 결정이었다(§5) — v0.6.3에서 이 결정을 뒤집었으나 신원 확인 절차를 새로 만들지는 않았다. 운영 배포 전 재검토 필요.
+
 ## O1. POST /api/v1/admin/auth/login (기능 8.1)
 
 **Request**: `{ "loginId": "...", "password": "..." }`
@@ -559,7 +577,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 - `401 LOGIN_FAILED`: 불일치 (남은 횟수 미노출)
 - `429 LOGIN_LOCKED`: **5회째 실패부터** 30초 잠금, 이후 실패마다 2배(60·120·240·480), **최대 600초**. `details.retryAfterSeconds`(잠금 중 재시도는 남은 초 + 1). 성공 시 실패 카운터·잠금 초기화(`resetLoginFailures`). IP 단위 throttle은 **앱에 없음**(프록시 단 처리 전제)
 
-**규칙**: 비밀번호 bcrypt 저장. 회원가입 API 없음 — 계정은 시더(§5). `loginId`는 부스명에서 유추 불가한 값으로
+**규칙**: 비밀번호 bcrypt 저장. **v0.6.3부터 O0 회원가입으로도 계정이 생긴다** — 시더(§5)는 여전히 파일럿 참여 부스를 미리 심는 용도로 남아있음. 시더로 만드는 계정의 `loginId`는 부스명에서 유추 불가한 값으로(O0로 셀프 등록하는 계정은 이 권고가 강제되지 않음)
 
 ## O2. POST /api/v1/admin/tables/bulk — 테이블 일괄 등록 (기능 4.6)
 
