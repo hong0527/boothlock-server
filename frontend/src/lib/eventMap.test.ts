@@ -8,17 +8,17 @@ describe('crowdLevel — 명세 E1 권장 임계값', () => {
     expect(crowdLevel(6, 3)).toBe('여유')
   })
 
-  it('0 < empty/total < 0.5 → 보통', () => {
-    expect(crowdLevel(10, 4)).toBe('보통')
-    expect(crowdLevel(10, 1)).toBe('보통')
+  it('0 < empty/total < 0.5 → 혼잡', () => {
+    expect(crowdLevel(10, 4)).toBe('혼잡')
+    expect(crowdLevel(10, 1)).toBe('혼잡')
   })
 
-  it('empty = 0 → 만석', () => {
-    expect(crowdLevel(10, 0)).toBe('만석')
+  it('empty = 0 → 혼잡', () => {
+    expect(crowdLevel(10, 0)).toBe('혼잡')
   })
 
-  it('테이블이 없는 부스(total 0)는 만석으로 표시 (앉을 자리가 없다는 뜻)', () => {
-    expect(crowdLevel(0, 0)).toBe('만석')
+  it('테이블이 없는 부스(total 0)는 혼잡으로 표시 (앉을 자리가 없다는 뜻)', () => {
+    expect(crowdLevel(0, 0)).toBe('혼잡')
   })
 })
 
