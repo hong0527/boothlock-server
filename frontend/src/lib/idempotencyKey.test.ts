@@ -28,9 +28,9 @@ describe('createIdempotencyKeyStore', () => {
     expect(store.keyFor('1x2')).toBe('key-3')
   })
 
-  it('기본 생성기는 UUID 형식', () => {
+  it('기본 생성기는 32자 16진수 (HTTP 비보안 컨텍스트에서도 동작해야 하므로 randomUUID 대신 getRandomValues 사용)', () => {
     const store = createIdempotencyKeyStore()
-    expect(store.keyFor('x')).toMatch(/^[0-9a-f-]{36}$/)
+    expect(store.keyFor('x')).toMatch(/^[0-9a-f]{32}$/)
   })
 })
 
