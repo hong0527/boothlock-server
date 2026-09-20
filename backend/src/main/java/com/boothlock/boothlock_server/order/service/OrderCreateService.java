@@ -91,7 +91,7 @@ public class OrderCreateService {
         // 이미 접수된 주문의 재요청이 부스 마감 때문에 409로 뒤집히지 않는다
         OrderEntity replayed = findReplayedOrder(idempotencyKey, boothId, sessionId);
         if (replayed != null) {
-            return new OrderCreationResult(toResponse(replayed, booth.getBankAccount()), false);
+            return new OrderCreationResult(toResponse(replayed, booth.getBankAccount(), booth.getDepositorName()), false);
         }
 
         if (!booth.isOpen()) {
@@ -116,7 +116,7 @@ public class OrderCreateService {
                 // 컬럼이 timestamp(6)라 마이크로초로 잘라 넣는다 — 리눅스 now()는 나노초까지 나와서, 자르지 않으면
                 // 첫 응답(메모리 값)과 멱등 재요청 응답(DB 재조회 값)의 createdAt이 달라진다
                 totalAmount(request, menus), items, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), false);
-        return saveWithRetry(spec, booth.getBankAccount());
+        return saveWithRetry(spec, booth.getBankAccount(), booth.getDepositorName());
     }
 
     /**
@@ -148,7 +148,7 @@ public class OrderCreateService {
                 totalAmount(request, menus), orderItems, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), true);
         // 멱등키가 없어 재요청 복구 분기는 항상 타지 않는다 — 채번 충돌 재시도만 의미가 있다
         try {
-            return saveWithRetry(spec, booth.getBankAccount()).response();
+            return saveWithRetry(spec, booth.getBankAccount(), booth.getDepositorName()).response();
         } catch (SessionExpiredException e) {
             // 호출자(O14)가 세션을 정한 뒤 저장 전에 퇴실(O6)이 끼어든 경우 — 운영자에게는 손님용 410이 아니라
             // 409로 "다시 시도" 신호를 준다. 재시도하면 활성 세션이 새로 만들어진다
@@ -173,11 +173,11 @@ public class OrderCreateService {
      * 저장 시 제약 위반은 두 종류다 — 멱등키 충돌이면 기존 주문을 200으로 돌려주고,
      * 채번(uq_orders_seq) 충돌이면 번호를 새로 뽑아 최대 3회까지 재시도한다 (명세서 §2).
      */
-    private OrderCreationResult saveWithRetry(OrderWriter.OrderSpec spec, String bankAccount) {
+    private OrderCreationResult saveWithRetry(OrderWriter.OrderSpec spec, String bankAccount, String depositorName) {
         DataIntegrityViolationException lastFailure = null;
         for (int attempt = 1; attempt <= MAX_NUMBERING_ATTEMPTS; attempt++) {
             try {
-                return new OrderCreationResult(toResponse(orderWriter.save(spec), bankAccount), true);
+                return new OrderCreationResult(toResponse(orderWriter.save(spec), bankAccount, depositorName), true);
             } catch (DataIntegrityViolationException e) {
                 lastFailure = e;
                 // 멱등키가 없는 수기 주문(O14)은 채번 충돌뿐이라 바로 재시도한다 — null 키로 조회하면
@@ -188,7 +188,7 @@ public class OrderCreateService {
                 // 저장 트랜잭션이 끝난 뒤라 여기서는 재조회가 안전하다
                 OrderEntity winner = findReplayedOrder(spec.idempotencyKey(), spec.boothId(), spec.sessionId());
                 if (winner != null) {
-                    return new OrderCreationResult(toResponse(winner, bankAccount), false);
+                    return new OrderCreationResult(toResponse(winner, bankAccount, depositorName), false);
                 }
             }
         }
@@ -287,7 +287,7 @@ public class OrderCreateService {
                 .sum();
     }
 
-    private OrderCreateResponse toResponse(OrderEntity order, String bankAccount) {
+    private OrderCreateResponse toResponse(OrderEntity order, String bankAccount, String depositorName) {
         // 멱등 재응답은 결제 모달에서 항목이 취소된 뒤일 수 있다 — 취소 항목을 빼야 items 합과 totalAmount가 맞는다 (대시보드 매퍼와 같은 규칙)
         List<OrderCreateResponse.OrderItemResponse> items = order.getItems().stream()
                 .filter(item -> !item.isCanceled())
@@ -302,7 +302,7 @@ public class OrderCreateService {
                 order.getTotalAmount(),
                 items,
                 new OrderCreateResponse.PaymentGuide(
-                        PaymentMethod.BANK_TRANSFER, bankAccount, depositorNameRule(order.getOrderNo())),
+                        PaymentMethod.BANK_TRANSFER, bankAccount, depositorName, depositorNameRule(order.getOrderNo())),
                 order.getCreatedAt().atOffset(KST));
     }
 

@@ -20,6 +20,7 @@
 | v0.5.2 | 2026-09-14 | 기능 번호를 노션 병합본 체계로 되돌림, E1 서버 캐시 10초, 약도 서빙 가드, §7-21 실측 정정, O17 표 깨짐 정정 |
 | **v0.6** | **2026-09-16** | **통합 PR 반영 — 코드가 정본.** ① 신규 절: **O23 항목 수량 변경·O23b 항목 개별 취소·O24 테이블 일괄 입금 확인·O25 테이블 1개 자동 추가·O26 테이블 삭제·O27 운영자 메뉴 목록**(main이 명세 밖에서 먼저 만든 API를 명세에 편입) ② 변경 절: O3(합집합 응답·`session.id`·유휴 세션 `session:null`·`needsCleanup`), O6(멱등 200·`{unpaidWarning,id,label,status,warning?}`), O10(`Authorization` 필수·`boothId` 400·`activeSessionOnly`·`businessDate` 기본=현재 영업일·`sessionId`·`itemId`), O11~O13 응답 형태 정정, O14(검증 순서·409), O15(JWT·`{callId,acked}`), O16/O17(category·mapX·mapY·**depositorName** — main #57 병합), O22(0~10000·반올림), C1(유휴 세션 재발급·응답 필드 정정), C2·O7·O8(`category`), C3(저장 직전 종료 410), C4·C5(취소 항목 제외·행 잠금), C6(`X-Session-Token`), E1(미결제 예외·삭제 테이블 제외) ③ **§1.2 유휴 만료를 SeatIdlePolicy 공용 정의로 통일**, §1.1·§7-21 무인증 전환 완료로 정정 ④ **미결제 정의 통일**(RECEIVED·DONE && UNPAID) ⑤ §7 신규: CORS, 잠금 뒤 읽기, 토큰 대조 ⑥ 확정 필요 표 갱신, §5 시더로 대체, §8 부록 갱신. 결제는 계좌이체만(PG 없음). 근거: 갈래 보고서 port-table·port-order·port-dash·port-fix·port-fix2·port-menu·port-cors·port-booth, verify-int2, e2e, deploy-mysql |
 | v0.6.1 | 2026-09-20 | Figma 최종 디자인 확인 반영 — E1 좌석 표시를 3단계(여유/보통/만석)에서 **2단계(여유/혼잡)** 로 단순화. `empty/total ≥ 0.5 → 여유`, 그 외 0 포함 → 혼잡 |
+| v0.6.2 | 2026-09-20 | Figma 최종 디자인 확인 반영 — 결제 안내 계좌 카드에 예금주 노출. C3·C4 `payment`에 `depositorName` 필드 추가(booth 설정값 그대로, `null` 가능). 기존 O16/O17 표의 "C3 결제 안내에는 나가지 않는다" 제약을 철회 |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -418,6 +419,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
   "payment": {
     "method": "BANK_TRANSFER",
     "bankAccount": "카카오뱅크 3333-01-1234567 (홍길동)",
+    "depositorName": "홍길동",
     "depositorNameRule": "입금자명을 '이름+A3-17'로 입력해주세요 (예: 김철수A3-17)"
   },
   "createdAt": "2026-09-15T18:30:00+09:00"
@@ -437,7 +439,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 
 **규칙**
 - 멱등 재응답의 `items`는 **취소된 항목(O23b) 제외** — 합계와 항목 합이 일치
-- `payment.bankAccount`는 부스 설정값만. `payment.method`는 항상 `BANK_TRANSFER`(현금은 운영자가 O11에서 기록)
+- `payment.bankAccount`·`payment.depositorName`은 부스 설정값 그대로(둘 다 booth 테이블 값, 조립하지 않음). `depositorName`은 부스가 등록하지 않았으면 `null` — 프론트는 이 경우 예금주 줄을 표시하지 않는다. `payment.method`는 항상 `BANK_TRANSFER`(현금은 운영자가 O11에서 기록)
 - `createdAt`은 마이크로초 절삭 — 첫 응답과 멱등 재응답이 같은 값
 
 ## C4. GET /api/v1/orders — 내 주문 조회 (폴링 5~10초, 기능 2.3)
@@ -454,7 +456,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
       "paymentStatus": "UNPAID",
       "totalAmount": 21000,
       "items": [ { "menuId": 3, "menuName": "김치전", "unitPrice": 8000, "qty": 2 } ],
-      "payment": { "bankAccount": "...", "depositorNameRule": "..." },
+      "payment": { "bankAccount": "...", "depositorName": "홍길동", "depositorNameRule": "..." },
       "canCancel": true,
       "createdAt": "2026-09-15T18:30:00+09:00"
     }
@@ -816,7 +818,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | operatingHours | string | STAFF | 50자 이하. `null` 허용(지움) |
 | isOpen | boolean | STAFF | 주문 접수 스위치. false면 C3·O14·O23 증가가 `409 ORDER_CLOSED` |
 | bankAccount | string | **ADMIN** | 공백 불가, 100자 이하. STAFF가 포함해 보내면 `403`(다른 필드만이면 통과) |
-| **depositorName** | string | **ADMIN** | **예금주명 (v0.6 신설, main #57)** — 계좌 등록 화면 표시용 라벨. trim 후 50자 이하. `null`·빈 문자열·공백은 미지정(`null`)으로 저장. bankAccount와 같은 화면·같은 권한(STAFF `403`)이지만 입금 경로를 바꾸지 않는 표시값이라 **감사 로그·웹훅 대상은 아니다**. C3 결제 안내에는 나가지 않는다 |
+| **depositorName** | string | **ADMIN** | **예금주명 (v0.6 신설, main #57 / v0.6.2부터 손님 노출)** — 계좌 등록 화면 표시용 라벨. trim 후 50자 이하. `null`·빈 문자열·공백은 미지정(`null`)으로 저장. bankAccount와 같은 화면·같은 권한(STAFF `403`)이지만 입금 경로를 바꾸지 않는 표시값이라 **감사 로그·웹훅 대상은 아니다**. C3·C4 `payment.depositorName`으로 그대로 노출되어 손님이 입금 전 계좌 명의를 확인할 수 있다(`null`이면 프론트는 줄을 숨긴다) |
 | **category** | string | STAFF | `FOOD` / `CAFE` / `GOODS` / `ETC` **대문자 정확 일치**. `null`·소문자·공백·그 외 값 `400` |
 | **mapX / mapY** | int | STAFF | **둘을 함께** 보내야 한다(한쪽만 `400`). **정수만** 0~10000(소수·문자열·null `400`). null로 핀 제거는 받지 않는다(확정 필요 #4) |
 | tableCount | int | 읽기 전용 | **활성 테이블 수**(삭제 제외) |

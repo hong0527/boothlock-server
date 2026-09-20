@@ -25,7 +25,7 @@ public record OrderListResponse(List<OrderSummary> orders) {
     public record OrderItemSummary(Long menuId, String menuName, int unitPrice, int qty) {
     }
 
-    /** 입금 안내 — bankAccount는 부스 설정값만, depositorNameRule은 응답 시점 조립 (명세서 C3·C4) */
-    public record PaymentInfo(String bankAccount, String depositorNameRule) {
+    /** 입금 안내 — bankAccount·depositorName은 부스 설정값 그대로, depositorNameRule은 응답 시점 조립 (명세서 C3·C4) */
+    public record PaymentInfo(String bankAccount, String depositorName, String depositorNameRule) {
     }
 }
