@@ -1,16 +1,19 @@
 package com.boothlock.boothlock_server.settle.controller;
 
-import com.boothlock.boothlock_server.global.error.NotImplementedException;
 import com.boothlock.boothlock_server.settle.dto.FeedbackRequest;
 import com.boothlock.boothlock_server.settle.dto.SalesStatsResponse;
 import com.boothlock.boothlock_server.settle.service.FeedbackService;
 import com.boothlock.boothlock_server.settle.service.SalesStatsService;
+import com.boothlock.boothlock_server.settle.service.SettlementCsvService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,10 +30,13 @@ public class SettleController {
 
     private final FeedbackService feedbackService;
     private final SalesStatsService salesStatsService;
+    private final SettlementCsvService settlementCsvService;
 
-    public SettleController(FeedbackService feedbackService, SalesStatsService salesStatsService) {
+    public SettleController(FeedbackService feedbackService, SalesStatsService salesStatsService,
+            SettlementCsvService settlementCsvService) {
         this.feedbackService = feedbackService;
         this.salesStatsService = salesStatsService;
+        this.settlementCsvService = settlementCsvService;
     }
 
     /** O18 매출 집계 (Should) — 수단별 분리, 환불필요·환불됨 별도 집계 */
@@ -43,11 +49,18 @@ public class SettleController {
         return salesStatsService.getSales(authorization, date);
     }
 
-    /** O19 정산 CSV (Should) — 전체 원장(승인·취소·환불 이력 컬럼), UTF-8 BOM */
+    /** O19 정산 CSV (Should) — 전체 원장(승인·취소·환불 이력 컬럼), UTF-8 BOM. O18과 같은 ADMIN 전용 */
+    @Operation(summary = "O19 정산 CSV 다운로드", description = "영업일 기준 전체 주문 항목 원장을 CSV로 내려받는다.")
     @GetMapping("/admin/reports/settlement.csv")
-    public Object downloadSettlement() {
-        // TODO(백지연): 명세서 O19
-        throw new NotImplementedException("O19 정산 CSV");
+    public ResponseEntity<byte[]> downloadSettlement(
+            @RequestHeader("Authorization") String authorization,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        SettlementCsvService.Result result = settlementCsvService.generate(authorization, date);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + result.filename() + "\"")
+                .body(result.content());
     }
 
     /** O20 운영자 피드백 (Should) — 부스락 서비스 평가 (소비자 설문 아님) */

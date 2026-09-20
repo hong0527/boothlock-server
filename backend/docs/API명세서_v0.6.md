@@ -22,6 +22,7 @@
 | v0.6.1 | 2026-09-20 | Figma 최종 디자인 확인 반영 — E1 좌석 표시를 3단계(여유/보통/만석)에서 **2단계(여유/혼잡)** 로 단순화. `empty/total ≥ 0.5 → 여유`, 그 외 0 포함 → 혼잡 |
 | v0.6.2 | 2026-09-20 | Figma 최종 디자인 확인 반영 — 결제 안내 계좌 카드에 예금주 노출. C3·C4 `payment`에 `depositorName` 필드 추가(booth 설정값 그대로, `null` 가능). 기존 O16/O17 표의 "C3 결제 안내에는 나가지 않는다" 제약을 철회 |
 | **v0.6.3** | **2026-09-20** | **팀 결정으로 "회원가입 API 없음"을 철회 — O0 신설.** `POST /api/v1/admin/auth/signup`이 부스+ADMIN 계정을 함께 만들고 O1과 같은 형태로 즉시 로그인 처리한다. **알려진 위험(§O0 경고 참고): 신원 확인 없이 임의의 boothName으로 계정 생성 가능** — 운영 배포 전 재검토 필요. Figma node `237:344`(회원가입 화면) 프론트 구현 포함 |
+| v0.6.4 | 2026-09-20 | **O19 정산 CSV 구현 완료 — 마지막 501 스텁 해소.** O18과 같은 ADMIN 전용으로 확정. 행은 취소되지 않은 OrderItem 1건, 수식 주입 방지 적용. §7 부록·확정 필요 표·501 에러 설명에서 O19 관련 문구 정리 |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -162,7 +163,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | 429 | `ORDER_RATE_LIMITED` | 세션당 미결제(RECEIVED·UNPAID) 주문 8건 초과. message `"미결제 주문이 많습니다. 입금 확인 후 추가 주문해주세요."` |
 | 429 | `LOGIN_LOCKED` | 로그인 연속 실패 잠금 (`details.retryAfterSeconds`) |
 | 500 | `INTERNAL_ERROR` | 서버 오류. 디스코드 웹훅 통보는 **미구현**(TODO) — 계좌 변경 웹훅만 구현됨 |
-| 501 | `NOT_IMPLEMENTED` | 미구현 스텁 — 현재 **O19 정산 CSV**만 남음 |
+| 501 | `NOT_IMPLEMENTED` | 미구현 스텁 — v0.6.4부터 없음(O19 구현 완료) |
 
 ---
 
@@ -530,7 +531,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | O16 | GET | `/api/v1/admin/booth` | 8.3 부스 정보 조회 | Must |
 | O17 | PATCH | `/api/v1/admin/booth` | 8.3 부스 정보 수정·접수 스위치 | Must |
 | O18 | GET | `/api/v1/admin/stats/sales` | 7.1 실시간 매출 집계 (**ADMIN 전용**) | Should |
-| O19 | GET | `/api/v1/admin/reports/settlement.csv` | 7.3 정산 CSV — **미구현(501)** | Should |
+| O19 | GET | `/api/v1/admin/reports/settlement.csv` | 7.3 정산 CSV (**ADMIN 전용, v0.6.4 구현**) | Should |
 | O20 | POST | `/api/v1/admin/feedback` | 7.4 운영자 피드백 제출 | Should |
 | O21 | POST | `/api/v1/admin/orders/{orderId}/refund-done` | 5.5 환불 송금 완료 처리 (**ADMIN 전용**) | Should |
 | O22 | PATCH | `/api/v1/admin/tables/{tableId}/position` | 4.6 테이블 배치 좌표 저장 | Should |
@@ -863,9 +864,17 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 - 집계 기준 `paymentStatus = PAID`. REFUND_NEEDED/REFUNDED는 별도. `date` 영업일 기준, 생략 시 현재 영업일. 형식 오류 `400`
 - **STAFF는 `403`** (코드가 ADMIN만 허용 — v0.5 "STAFF 이상"과 다름)
 
-## O19. GET /api/v1/admin/reports/settlement.csv?date= — 정산 CSV (기능 7.3) — **미구현**
+## O19. GET /api/v1/admin/reports/settlement.csv?date= — 정산 CSV (기능 7.3, **ADMIN 전용**)
 
-현재 스텁이며 **인증 검사 전에 `501 NOT_IMPLEMENTED`** 를 돌려준다(데이터 노출 없음). 구현 시 규칙은 v0.5 그대로: `text/csv; charset=UTF-8` BOM 포함, 파일명 `settlement_{boothId}_{영업일}.csv`, 행 = OrderItem 1건(취소 항목 포함 여부는 구현 시 결정), 컬럼 `주문번호, 테이블, 주문시각, 메뉴명, 수량, 단가, 금액, 주문상태, 결제상태, 결제수단, 승인자, 승인시각, 취소자, 취소시각, 취소사유, 환불처리자, 환불처리시각`, 수식 주입 방지(`= + - @` 시작 셀에 `'`). 파일럿은 O18 화면 + DB 조회로 대체 가능
+**Response 200**: `text/csv; charset=UTF-8` BOM 포함, `Content-Disposition: attachment; filename="settlement_{boothId}_{영업일}.csv"`. 행 = 취소되지 않은 OrderItem 1건. 컬럼 `주문번호, 테이블, 주문시각, 메뉴명, 수량, 단가, 금액, 주문상태, 결제상태, 결제수단, 승인자, 승인시각, 취소자, 취소시각, 취소사유, 환불처리자, 환불처리시각`. `= + - @`로 시작하는 셀 값은 앞에 `'`를 붙여 수식 주입을 막는다(엑셀에서 셀 내용이 수식으로 실행되는 것 방지)
+
+**규칙 (v0.6.4 구현 — 명세가 "구현 시 결정"으로 남겨둔 것들)**
+- **취소 항목 제외**: 개별 취소(O23b)된 항목은 행에서 뺀다 — C4·대시보드 응답의 "취소 항목 제외" 관례와 통일, 합계가 다른 화면과 어긋나지 않게
+- **권한 = O18과 동일(ADMIN 전용)**: 명세 O19 자체엔 role 제한이 명시돼 있지 않았으나, 같은 "7 정산" 범주인 O18(매출 집계)이 ADMIN 전용이라 통일했다
+- `date` 생략 시 O18과 동일하게 현재 영업일(KST 06:00 경계) 사용
+- 삭제(hidden=true) 처리된 취소 주문도 원장에는 포함(O18과 같은 이유 — 정산은 숨김 여부와 무관하게 전부 봐야 함)
+
+**Errors**: `400`(잘못된 date) / `401` / `403`(STAFF)
 
 ## O20. POST /api/v1/admin/feedback — 운영자 피드백 (기능 7.4)
 
@@ -1077,14 +1086,14 @@ TableSession 1─N Call
 | 11 | 테이블 QR = 그 테이블의 공용 접근권(의도된 설계). 유휴 세션은 재스캔 시 새 발급되어 앞 손님 주문이 새 손님에게 넘어가지 않는다 | C1 |
 | 12 | 업로드: 매직바이트·SVG 거부·재인코딩·랜덤 파일명·nosniff. 약도 서빙은 확장자 화이트리스트 + CSP | O9·E2 |
 | 13 | 개인정보: 서버는 소비자 개인정보 미저장. 입금자명 실명은 운영자 계좌 거래내역에 남음 — 행사 후 폐기 안내 | 운영 |
-| 14 | 정산 CSV 수식 주입 방지 | O19 구현 시 |
+| 14 | 정산 CSV 수식 주입 방지 | O19 (v0.6.4 구현 완료) |
 | 15 | 목표 동시 접속 수치·부하 테스트 — 미실시(운영 미결) | 비기능 |
 | 16 | 백업: RDS 자동 백업. 오프라인 모드 기각 | 운영 |
 | 17 | HSTS·HTTPS 리다이렉트는 프록시/로드밸런서 | 배포 문서 |
 | 18 | 공개 축 노출 범위 고정 — `bankAccount`·매출·주문·토큰 절대 금지. 응답 DTO를 엔티티와 분리 | E1·E2 (응답 본문 검사 0건 누출) |
 | 19 | 공개 축 부하 대비 — 캐시 10초 + GROUP BY 한 번 | E1 |
 | 20 | 좌표 검증 — `mapX`·`mapY` 정수 0~10000, `posX`·`posY` 숫자 0~10000(반올림) | O17·O22 |
-| 21 | **복수 부스 전환 선행 조건 — 완료.** O10은 JWT 부스로만 조회(`boothId` 파라미터 400), C6는 `X-Session-Token`(`sessionId` 파라미터 400), O15는 JWT + 부스 스코프 404. 잔여 무인증 API 없음(O19 스텁 501 제외) | 통합 PR (r4 닫힘) |
+| 21 | **복수 부스 전환 선행 조건 — 완료.** O10은 JWT 부스로만 조회(`boothId` 파라미터 400), C6는 `X-Session-Token`(`sessionId` 파라미터 400), O15는 JWT + 부스 스코프 404. 잔여 무인증 API 없음 | 통합 PR (r4 닫힘) |
 | **22** | **CORS (v0.6)** — `boothlock.cors.allowed-origins`(환경변수 `BOOTLOCK_CORS_ALLOWED_ORIGINS`, 쉼표 구분, 기본 `http://localhost:5173`). 경로 `/api/**`·`/uploads/**`, 메서드 GET·POST·PATCH·PUT·DELETE·OPTIONS, 허용 헤더 `Authorization`·`X-Session-Token`·`Idempotency-Key`·`Content-Type`, 노출 헤더 `Content-Disposition`·`Retry-After`, `allowCredentials=false`(쿠키 미사용), `maxAge` 3600. **`*`·패턴·끝 슬래시·경로 포함 값은 기동 거부.** 빈 값이면 CORS 끔(같은 도메인 서빙용) — 빈 목록을 그대로 등록하면 전부 허용으로 뒤집히므로 가드가 필수. 비허용 오리진은 preflight·실제 요청 모두 403. 컨트롤러에 `@CrossOrigin`을 붙이지 않는다(이 설정과 별개로 합쳐짐). 프론트는 `credentials: 'include'`를 쓰지 않고, `imageUrl`(상대 경로)에 API 도메인을 붙인다 | `CorsConfig` |
 | **23** | **미결제 정의 통일 (v0.6)** — `UnpaidOrderRule`(RECEIVED·DONE && UNPAID) 하나를 O3·O6·O24·유휴 예외·E1 다섯 쿼리가 잇는다. 완료 처리된 미입금이 어느 화면에서도 빠지지 않게 | §2 |
 | **24** | **잠금 뒤 읽기 원칙 (v0.6)** — 판정 재료(주문 상태·항목·열린 세션·미결제 수·카운터·마지막 테이블)는 **`FOR UPDATE` 잠금을 얻은 뒤 잠금 읽기로만** 읽는다. 일반 조회·지연 로딩은 MySQL REPEATABLE READ에서 트랜잭션 첫 SELECT(인증) 시점 스냅샷을 돌려줘 잠금을 기다리는 사이 커밋된 변경을 못 본다(MySQL 8.4 실측). 컬렉션 join fetch에는 Hibernate가 FOR UPDATE를 떼므로 항목은 네이티브 `select * ... for update`로 읽는다. 같은 요청에서 먼저 올라온 엔티티는 `refresh(PESSIMISTIC_WRITE)`로 다시 읽는다. **격리 수준 설정(운영 풀 READ COMMITTED)에 기대지 않는다** — H2·MySQL RR·MySQL RC 세 조건에서 645건 통과 | port-fix2 |
@@ -1102,7 +1111,6 @@ TableSession 1─N Call
 | 이용 시간 모니터링 4.5 | Later | O3 `session.lastActivityAt` 클라이언트 확장 |
 | PG 결제 3.1 · 영수증 3.4 · 더치페이 3.3 | Later / 미채택 | **결제는 계좌이체·현금만**(확정) |
 | **인원 선택·자릿세** | **보류** | 프론트 `/party-size`는 로컬 저장만. 서버 모델 없음 |
-| **O19 정산 CSV** | **미구현(501)** | O18 + DB 조회로 대체 |
 | **총관리자 API A1~A3** | **미구현** | 시더(§5)로 대체. STAFF 계정 생성 수단 없음 |
 | O6 일괄 퇴실 `checkout-bulk` | 미구현 | 단건 반복 |
 | 500 에러 웹훅 통보 9.2 | 미구현(TODO) | 계좌 변경 웹훅만 |
@@ -1116,4 +1124,4 @@ TableSession 1─N Call
 1. 이 문서를 노션에 반영 → 프론트·운영이 v0.6 기준으로 배선 확인(O24·O6 순서, `businessDate` 생략, `manual`·`sessionId`·`itemId` 필드명, `imageUrl` 절대 주소화)
 2. 확정 필요 7건 결정 → 해당 절 갱신 후 동결
 3. 운영 준비: 시딩 파일 작성(§5), RDS 스키마 선적용(`schema-mysql8.sql`, `ddl-auto=validate`), CORS 오리진·JWT 시크릿·고객 base-url 환경변수 — 절차는 `배포_운영절차.md`
-4. 남은 백엔드 Low: O19 구현 여부, 인증 하네스 통합(확정 필요 #7), 죽은 코드 정리
+4. 남은 백엔드 Low: 인증 하네스 통합(확정 필요 #7), 죽은 코드 정리
