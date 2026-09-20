@@ -7,12 +7,6 @@ import { displayTableLabel } from '../../lib/tableLabel'
 import { formatClockTime } from '../../lib/time'
 import type { OrderSummary } from '../../types/customer'
 
-const STATUS_LABEL: Record<OrderSummary['status'], string> = {
-  RECEIVED: '접수됨',
-  DONE: '완료',
-  CANCELED: '취소됨',
-}
-
 const POLL_INTERVAL_MS = 7000
 
 export default function OrderHistoryPage() {
@@ -39,15 +33,6 @@ export default function OrderHistoryPage() {
     return () => clearInterval(id)
   }, [fetchOrders])
 
-  const cancelOrder = async (orderId: number) => {
-    const res = await customerApiFetch(`/api/v1/orders/${orderId}/cancel`, { method: 'POST' })
-    if (!res.ok) {
-      setError('주문을 취소하지 못했어요. 직원에게 요청해주세요.')
-      return
-    }
-    fetchOrders()
-  }
-
   return (
     <div className="flex min-h-screen w-full flex-col bg-neutral-50">
       <div className="flex h-[114px] items-center bg-primary-50 px-4">
@@ -61,12 +46,9 @@ export default function OrderHistoryPage() {
         <div className="flex flex-col gap-4">
           {orders.map((order) => (
             <div key={order.orderId} className="rounded-[10px] border border-[#b8dcd3] bg-primary-50 p-5">
-              <div className="flex items-center justify-between text-body-3 text-neutral-500">
-                <div>
-                  <p>테이블 번호: {sessionInfo?.tableLabel && displayTableLabel(sessionInfo.tableLabel)}</p>
-                  <p>주문 시간: {formatClockTime(order.createdAt)}</p>
-                </div>
-                <span>{STATUS_LABEL[order.status]}</span>
+              <div className="text-body-3 text-neutral-500">
+                <p>테이블 번호: {sessionInfo?.tableLabel && displayTableLabel(sessionInfo.tableLabel)}</p>
+                <p>주문 시간: {formatClockTime(order.createdAt)}</p>
               </div>
 
               <div className="mt-3 divide-y divide-neutral-100 border-t border-neutral-100">
@@ -85,16 +67,6 @@ export default function OrderHistoryPage() {
                 <span>주문 금액</span>
                 <span>{order.totalAmount.toLocaleString()}원</span>
               </div>
-
-              {order.canCancel && (
-                <button
-                  type="button"
-                  onClick={() => cancelOrder(order.orderId)}
-                  className="mt-3 w-full rounded-[10px] border border-neutral-900 py-2 text-body-2 text-neutral-900"
-                >
-                  주문 취소
-                </button>
-              )}
             </div>
           ))}
         </div>
