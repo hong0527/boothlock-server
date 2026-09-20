@@ -2,9 +2,11 @@ package com.boothlock.boothlock_server.booth.controller;
 
 import com.boothlock.boothlock_server.booth.dto.BoothInfoDto;
 import com.boothlock.boothlock_server.booth.dto.LoginDto;
+import com.boothlock.boothlock_server.booth.dto.SignupDto;
 import com.boothlock.boothlock_server.booth.service.BoothAuthService;
 import com.boothlock.boothlock_server.booth.service.BoothInfoService;
 import com.boothlock.boothlock_server.booth.service.BoothSettingsService;
+import com.boothlock.boothlock_server.booth.service.BoothSignupService;
 import com.boothlock.boothlock_server.global.error.NotImplementedException;
 
 import org.springframework.web.bind.annotation.*;
@@ -22,18 +24,29 @@ public class BoothController {
     private final BoothAuthService boothAuthService;
     private final BoothInfoService boothInfoService;
     private final BoothSettingsService boothSettingsService;
+    private final BoothSignupService boothSignupService;
 
     public BoothController(BoothAuthService boothAuthService, BoothInfoService boothInfoService,
-            BoothSettingsService boothSettingsService) {
+            BoothSettingsService boothSettingsService, BoothSignupService boothSignupService) {
         this.boothAuthService = boothAuthService;
         this.boothInfoService = boothInfoService;
         this.boothSettingsService = boothSettingsService;
+        this.boothSignupService = boothSignupService;
     }
 
     /** O1 운영진 로그인 (Must) — JWT 발급. 실패 5회 백오프 잠금, 남은 횟수 미노출 */
     @PostMapping("/admin/auth/login")
     public LoginDto.Response login(@RequestBody LoginDto.Request request) {
         return boothAuthService.login(request);
+    }
+
+    /**
+     * 임시 데모 — 부스+ADMIN 계정을 한 번에 만들고 바로 로그인 처리(JWT 발급)한다. 명세서에는 없던 기능
+     * (원래 "회원가입 API 없음" 결정을 팀이 뒤집음) — BoothSignupService 상단 주석의 위험 인지 사항 참고.
+     */
+    @PostMapping("/admin/auth/signup")
+    public LoginDto.Response signup(@RequestBody SignupDto.Request request) {
+        return boothSignupService.signup(request);
     }
 
     /** O16 부스 정보 조회 (Must) — 부스명·계좌·운영시간·접수 스위치·테이블 수 */
