@@ -26,7 +26,7 @@ function App() {
     <CartProvider>
       <Routes>
         <Route path="/" element={<LoginPage />} />
-        {/* 임시 데모 (Figma 237:344) — 실제 백엔드 회원가입 API 없음, SignupPage.tsx 상단 주석 참고 */}
+        {/* Figma 237:344 — 부스+ADMIN 계정 생성. 알려진 보안 위험은 SignupPage.tsx 상단 주석 참고 */}
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/orders" element={<OrderStatusPage />} />
 
