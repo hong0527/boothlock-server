@@ -14,8 +14,8 @@ type SignupErrorBody = {
  * 회원가입 (Figma node 237:344) — 부스 + ADMIN 계정을 한 번에 만들고 바로 로그인 처리한다.
  * 원래 API명세서 O1은 "회원가입 API 없음, 계정은 시더로만 생성"이 의도적 결정이었다 —
  * 신원 확인 없이 셀프 등록을 열면 남의 점포명을 사칭한 계좌로 손님 결제를 유도할 수 있다는 이유였음.
- * 이번엔 그 결정을 뒤집기로 팀이 정했다(백엔드: BoothSignupService 상단 주석 참고) — 이 위험은
- * 새로운 신원 확인 절차 없이는 여전하다는 점은 인지하고 있을 것.
+ * 이번엔 그 결정을 뒤집기로 팀이 정했지만, 새로운 신원 확인 절차는 만들지 않았다 — 그래서 이 화면·API
+ * 모두 기본은 꺼짐이고 시연·심사 때만 켠다 (App.tsx의 SIGNUP_ENABLED, 백엔드는 BoothSignupService 참고).
  */
 export default function SignupPage() {
   const navigate = useNavigate()

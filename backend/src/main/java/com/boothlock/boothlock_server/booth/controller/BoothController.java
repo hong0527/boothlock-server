@@ -42,7 +42,8 @@ public class BoothController {
 
     /**
      * 임시 데모 — 부스+ADMIN 계정을 한 번에 만들고 바로 로그인 처리(JWT 발급)한다. 명세서에는 없던 기능
-     * (원래 "회원가입 API 없음" 결정을 팀이 뒤집음) — BoothSignupService 상단 주석의 위험 인지 사항 참고.
+     * (원래 "회원가입 API 없음" 결정을 팀이 뒤집음) — 기본적으로 {@code boothlock.signup.enabled=false}로
+     * 꺼져 있어 403을 반환한다. BoothSignupService 상단 주석의 위험 인지 사항 참고.
      */
     @PostMapping("/admin/auth/signup")
     public LoginDto.Response signup(@RequestBody SignupDto.Request request) {
