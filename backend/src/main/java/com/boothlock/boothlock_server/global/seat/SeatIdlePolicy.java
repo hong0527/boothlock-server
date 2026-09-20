@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 
 /**
@@ -68,9 +69,15 @@ public class SeatIdlePolicy {
         this.businessCalendar = Objects.requireNonNull(businessCalendar, "businessCalendar must not be null");
     }
 
-    /** 현재 KST 벽시계 시각 — 테이블 파트의 세션 시각(시작·활동·종료)도 이 값으로 기록해 판정 기준과 같은 시계를 쓴다 */
+    /**
+     * 현재 KST 벽시계 시각 — 테이블 파트의 세션 시각(시작·활동·종료)도 이 값으로 기록해 판정 기준과 같은 시계를 쓴다.
+     * 마이크로초로 자른다 — orders·table_session 컬럼이 timestamp(6)라 안 자른 나노초 값을 그대로 넣으면 DB가
+     * 반올림할 수 있고, order 파트(OrderCreateService 등)는 이미 잘라서 넣으므로 자르지 않으면 두 값을 비교할 때
+     * (세션 시작 시각 반올림) > (직후 주문의 잘린 시각)이 되어 활동 시각이 거꾸로 간 것처럼 보일 수 있다(실측, 발생 확률은
+     * 극히 낮지만 §1.2 세션 활동 갱신을 함께 쓰는 곳 전부에 영향을 줄 여지가 있어 여기 한 곳에서 막는다).
+     */
     public LocalDateTime now() {
-        return LocalDateTime.ofInstant(clock.instant(), KST_ZONE);
+        return LocalDateTime.ofInstant(clock.instant(), KST_ZONE).truncatedTo(ChronoUnit.MICROS);
     }
 
     /** 요청 하나 안에서는 한 번만 구해 모든 테이블에 같은 기준을 쓴다 */
