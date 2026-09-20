@@ -12,7 +12,7 @@ export type EventBooth = {
   /** 약도 기준 상대 좌표 0~10000 (= 0.00%~100.00%). 미설정이면 null → 지도에 핀을 찍지 않고 목록에만 */
   mapX: number | null
   mapY: number | null
-  /** 서버는 숫자만 준다 — 여유·보통·만석 변환은 프론트(lib/eventMap.ts) */
+  /** 서버는 숫자만 준다 — 여유·혼잡 변환은 프론트(lib/eventMap.ts) */
   tables: { total: number; empty: number }
 }
 

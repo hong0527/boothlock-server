@@ -36,11 +36,10 @@ const CATEGORY_FILTERS: { value: BoothCategory | null; label: string }[] = [
   })),
 ]
 
-// 핀·뱃지 색 — 여유/보통/만석이 한눈에 갈리게. 주문 마감 부스는 회색으로 묶는다
+// 핀·뱃지 색 — 여유/혼잡이 한눈에 갈리게. 주문 마감 부스는 회색으로 묶는다
 const CROWD_PIN_CLASS: Record<CrowdLevel, string> = {
   여유: 'bg-primary-200',
-  보통: 'bg-amber-400',
-  만석: 'bg-neutral-900',
+  혼잡: 'bg-amber-400',
 }
 
 function BoothCard({ booth, onSelect }: { booth: EventBooth; onSelect?: () => void }) {

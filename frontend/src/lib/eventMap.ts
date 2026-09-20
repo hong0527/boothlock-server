@@ -1,11 +1,11 @@
 /** 홈 화면(E1·E2) 표시 계산 — 서버는 숫자만 주고 3단계 변환·좌표 환산은 프론트가 한다 (명세 E1 "임계값을 서버에 박지 않는 이유") */
 
-export type CrowdLevel = '여유' | '보통' | '만석'
+export type CrowdLevel = '여유' | '혼잡'
 
-/** 명세 E1 권장 임계값: empty/total ≥ 0.5 → 여유, > 0 → 보통, = 0 → 만석. 행사 중 체감과 어긋나면 여기만 고친다 */
+/** 명세 E1 권장 임계값: empty/total ≥ 0.5 → 여유, 그 외(0 포함) → 혼잡. 행사 중 체감과 어긋나면 여기만 고친다 */
 export function crowdLevel(total: number, empty: number): CrowdLevel {
-  if (total <= 0 || empty <= 0) return '만석'
-  return empty / total >= 0.5 ? '여유' : '보통'
+  if (total <= 0 || empty <= 0) return '혼잡'
+  return empty / total >= 0.5 ? '여유' : '혼잡'
 }
 
 /** 카드 둘째 줄 문구. 주문 마감(isOpen=false)이 좌석 수보다 먼저다 — 자리가 있어도 주문을 못 하면 헛걸음 */
