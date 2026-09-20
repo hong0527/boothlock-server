@@ -6,7 +6,6 @@ import {
   ackCall,
   cancelOrder as cancelOrderRequest,
   completeOrder as completeOrderRequest,
-  deleteOrder as deleteOrderRequest,
   restoreOrder as restoreOrderRequest,
 } from '../lib/orderActions'
 import { displayTableLabel } from '../lib/tableLabel'
@@ -113,16 +112,10 @@ export default function OrderStatusPage() {
   const cancelOrder = (orderId: number) =>
     runOrderAction(orderId, () => cancelOrderRequest(orderId), '주문을 취소 처리하지 못했어요')
 
-  // 취소복구 — CANCELED→RECEIVED만 되돌리고 결제/환불 상태는 건드리지 않는다
+  // 되돌리기 — 완료·취소된 주문을 진행(RECEIVED)으로 되돌린다. 결제/환불 상태는 건드리지 않는다
   const restoreOrder = (orderId: number) => {
     if (!window.confirm('이 주문을 진행 상태로 복구할까요?')) return
     return runOrderAction(orderId, () => restoreOrderRequest(orderId), '주문을 복구하지 못했어요')
-  }
-
-  // 삭제 — 실제 데이터 삭제가 아니라 주문현황 목록에서만 제외(hidden 처리)
-  const deleteOrder = (orderId: number) => {
-    if (!window.confirm('이 취소 주문을 삭제할까요?')) return
-    return runOrderAction(orderId, () => deleteOrderRequest(orderId), '주문을 삭제하지 못했어요')
   }
 
   return (
@@ -185,7 +178,6 @@ export default function OrderStatusPage() {
             onComplete={completeOrder}
             onCancel={cancelOrder}
             onRestore={restoreOrder}
-            onDelete={deleteOrder}
           />
         ))}
         {visibleOrders.length === 0 && !error && (
