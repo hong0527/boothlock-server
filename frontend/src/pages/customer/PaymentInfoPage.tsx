@@ -45,10 +45,16 @@ export default function PaymentInfoPage() {
   )
   const totalAmount = unpaidOrders.reduce((sum, order) => sum + order.totalAmount, 0)
   const bankAccount = unpaidOrders[0]?.payment.bankAccount ?? orders[0]?.payment.bankAccount ?? ''
+  const depositorName = unpaidOrders[0]?.payment.depositorName ?? orders[0]?.payment.depositorName ?? null
+
+  // 계좌 등록 화면(AccountPage)이 "은행명 계좌번호"를 공백 하나로 이어붙여 저장하므로 그 규칙 그대로 되돌린다.
+  // 규칙에 안 맞는 값(수기로 다르게 입력된 경우 등)이면 나누지 않고 한 줄로 보여준다.
+  const [bankName, ...rest] = bankAccount.split(' ')
+  const accountNumber = rest.join(' ')
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(bankAccount)
+      await navigator.clipboard.writeText(accountNumber || bankAccount)
       setCopied(true)
     } catch {
       setCopied(false)
@@ -67,16 +73,38 @@ export default function PaymentInfoPage() {
           <p className="pt-20 text-center text-body-1 text-neutral-400">미결제 주문이 없어요.</p>
         ) : (
           <>
+            <div className="text-center">
+              <p className="text-heading-2 text-neutral-900">
+                아래 계좌로
+                <br />
+                주문 금액을 입금해주세요.
+              </p>
+              <p className="mt-2 text-body-3 text-neutral-500">입금이 확인되면 조리가 시작됩니다.</p>
+            </div>
+
             <div className="mt-8 rounded-[10px] border border-[#b8dcd3] bg-primary-50 p-5">
               <p className="text-body-2 text-neutral-900">입금 계좌</p>
               <div className="mt-3 flex items-start gap-1 text-body-2 text-neutral-900">
                 <span className="mt-1">•</span>
-                <div className="flex flex-1 items-center gap-2">
-                  <span className="underline">{bankAccount}</span>
-                  <button type="button" onClick={handleCopy} aria-label="계좌번호 복사" className="text-neutral-900">
-                    <CopyIcon className="h-[19px] w-[19px]" />
-                  </button>
-                </div>
+                {accountNumber ? (
+                  <div className="flex flex-1 flex-col gap-1">
+                    <span>{bankName}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="underline">{accountNumber}</span>
+                      <button type="button" onClick={handleCopy} aria-label="계좌번호 복사" className="text-neutral-900">
+                        <CopyIcon className="h-[19px] w-[19px]" />
+                      </button>
+                    </div>
+                    {depositorName && <span>예금주: {depositorName}</span>}
+                  </div>
+                ) : (
+                  <div className="flex flex-1 items-center gap-2">
+                    <span className="underline">{bankAccount}</span>
+                    <button type="button" onClick={handleCopy} aria-label="계좌번호 복사" className="text-neutral-900">
+                      <CopyIcon className="h-[19px] w-[19px]" />
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="mt-3 flex items-center justify-between border-t border-neutral-100 pt-3 text-body-2 text-neutral-900">
                 <span>미결제 주문 {unpaidOrders.length}건 합계</span>

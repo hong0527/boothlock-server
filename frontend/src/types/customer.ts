@@ -36,6 +36,8 @@ export type CartItem = {
 
 export type PaymentGuide = {
   bankAccount: string
+  /** 부스 설정값(예금주명) — 부스가 등록하지 않았으면 null */
+  depositorName: string | null
   depositorNameRule: string
 }
 

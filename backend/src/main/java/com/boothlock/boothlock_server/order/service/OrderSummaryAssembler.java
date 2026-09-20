@@ -21,7 +21,7 @@ public class OrderSummaryAssembler {
         this.boothRepository = boothRepository;
     }
 
-    private OrderListResponse.OrderSummary toSummary(OrderEntity order, String bankAccount) {
+    private OrderListResponse.OrderSummary toSummary(OrderEntity order, String bankAccount, String depositorName) {
         // 결제 모달에서 개별 취소된 항목은 손님 화면(C4·C5 응답)에서도 뺀다 — 안 빼면 totalAmount와 항목 합이 어긋난다 (대시보드 매퍼와 같은 규칙)
         List<OrderListResponse.OrderItemSummary> items = order.getItems().stream()
                 .filter(item -> !item.isCanceled())
@@ -34,7 +34,7 @@ public class OrderSummaryAssembler {
                 order.getPaymentStatus(),
                 order.getTotalAmount(),
                 items,
-                new OrderListResponse.PaymentInfo(bankAccount, depositorNameRule(order.getOrderNo())),
+                new OrderListResponse.PaymentInfo(bankAccount, depositorName, depositorNameRule(order.getOrderNo())),
                 order.canCancel(),   // 판정은 엔티티가 — C5 실행 조건과 어긋나지 않게 한 곳에서 계산
                 order.getCreatedAt().atOffset(KST));
     }
@@ -50,7 +50,8 @@ public class OrderSummaryAssembler {
 
     public OrderListResponse.OrderSummary assemble(OrderEntity order)
     {
-        return toSummary(order, bankAccountOf(order.getBoothId()));
+        BoothEntity booth = boothOf(order.getBoothId());
+        return toSummary(order, booth.getBankAccount(), booth.getDepositorName());
     }
 
     public List<OrderListResponse.OrderSummary> assembleAll(List<OrderEntity> orders)
@@ -59,17 +60,16 @@ public class OrderSummaryAssembler {
             return List.of();
         }
 
-        String bankAccount = bankAccountOf(orders.get(0).getBoothId());
+        BoothEntity booth = boothOf(orders.get(0).getBoothId());
 
         return orders.stream()
-                .map(order -> toSummary(order,bankAccount))
+                .map(order -> toSummary(order, booth.getBankAccount(), booth.getDepositorName()))
                 .toList();
 
     }
 
-    private String bankAccountOf(Long boothId) {
+    private BoothEntity boothOf(Long boothId) {
         return boothRepository.findById(boothId)
-                .map(BoothEntity::getBankAccount)
                 .orElseThrow(() -> new IllegalStateException("주문의 부스를 찾을 수 없습니다 boothId=" + boothId));
     }
 }

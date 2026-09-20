@@ -607,6 +607,25 @@ class DashboardOrderActionApiTests {
     }
 
     @Test
+    void restoresDoneOrderToReceivedWithoutTouchingPaymentStatus() throws Exception {
+        // Figma 최종 디자인: 완료 탭도 취소 탭과 같은 "되돌리기" 버튼 하나 — DONE도 CANCELED와 같은 규칙으로 되돌아간다
+        Long orderId = newOrder(boothId, 39);
+        setPaymentStatus(orderId, PaymentStatus.PAID);
+        setOrderStatus(orderId, OrderStatus.DONE);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderId").value(orderId))
+                .andExpect(jsonPath("$.status").value("RECEIVED"))
+                .andExpect(jsonPath("$.paymentStatus").value("PAID"));
+
+        OrderEntity saved = orderRepository.findById(orderId).orElseThrow();
+        assertEquals(OrderStatus.RECEIVED, saved.getStatus());
+        assertEquals(PaymentStatus.PAID, saved.getPaymentStatus());   // 결제 축은 그대로
+    }
+
+    @Test
     void restorePreservesTableLabelAndSessionId() throws Exception {
         OrderEntity order = new OrderEntity(
                 boothId, 777L, "A3-30", LocalDate.of(2026, 9, 1),

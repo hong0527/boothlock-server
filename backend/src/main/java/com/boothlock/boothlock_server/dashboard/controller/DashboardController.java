@@ -165,11 +165,11 @@ public class DashboardController {
     }
 
     /**
-     * 취소복구 (명세서 밖) — 취소 탭의 주문을 진행(RECEIVED) 탭으로 되돌린다. 결제/환불 상태(paymentStatus)는
-     * 손대지 않는다. 취소 상태가 아니거나, 이미 삭제된 주문이거나, 모든 항목이 취소돼 빈 주문이면 409.
+     * 되돌리기 (명세서 밖) — 완료·취소 탭의 주문을 진행(RECEIVED) 탭으로 되돌린다. 결제/환불 상태(paymentStatus)는
+     * 손대지 않는다. 완료·취소 상태가 아니거나, 이미 삭제된 주문이거나, 모든 항목이 취소돼 빈 주문이면 409.
      */
-    @Operation(summary = "취소복구", description = "취소된 주문을 다시 접수(RECEIVED) 상태로 되돌린다. 결제 상태는 변경하지 않는다. "
-            + "취소 상태가 아니거나 이미 삭제됐거나 모든 항목이 취소된 주문이면 409.")
+    @Operation(summary = "되돌리기", description = "완료·취소된 주문을 다시 접수(RECEIVED) 상태로 되돌린다. 결제 상태는 변경하지 않는다. "
+            + "완료·취소 상태가 아니거나 이미 삭제됐거나 모든 항목이 취소된 주문이면 409.")
     @PostMapping("/admin/orders/{orderId}/restore")
     public DashboardResponse.OrderSummary restore(
             @RequestHeader("Authorization") String authorization,

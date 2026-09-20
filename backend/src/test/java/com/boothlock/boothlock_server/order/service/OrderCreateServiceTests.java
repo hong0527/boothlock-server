@@ -42,6 +42,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -164,8 +165,11 @@ class OrderCreateServiceTests {
         boothRepository.deleteById(boothId);   // 내가 만든 부스만 — deleteAll은 부스 파트 데이터까지 지운다
     }
 
+    // 마이크로초로 자른다 — 잘라서 안 넣으면 timestamp(6) 컬럼에 저장되며 DB가 반올림할 수 있고, 그러면 이 값이
+    // 직후 주문이 잘라서 넣는 활동 시각보다 찰나 앞서 보여 touchesSessionActivityWhenOrderIsSaved가 가끔 깨진다(실측)
     private Long openSession(String sessionToken) {
-        return tableSessionRepository.save(new TableSessionEntity(table, sessionToken, LocalDateTime.now(KST))).getId();
+        LocalDateTime now = LocalDateTime.now(KST).truncatedTo(ChronoUnit.MICROS);
+        return tableSessionRepository.save(new TableSessionEntity(table, sessionToken, now)).getId();
     }
 
     /** 퇴실(O6)이 하는 일과 같은 기록 — ended_at·ended_at_key를 채운다 (테이블 파트 코드를 부르지 않고 흉내) */

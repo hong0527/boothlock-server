@@ -161,9 +161,10 @@ public class DashboardOrderActionService {
     }
 
     /**
-     * 취소복구(명세서 밖) — 취소 탭의 주문을 다시 진행(RECEIVED) 탭으로 되돌린다. 결제/환불 처리 기능이 아니므로
-     * paymentStatus·환불 필드는 절대 건드리지 않는다(OrderEntity.restore 참조). 상태 판정에 항목 컬렉션이
-     * 필요해 O11·O12처럼 조건부 UPDATE 한 문장으로 끝내지 못하고, O6와 같은 잠금 조회 후 엔티티 메서드 패턴을 쓴다.
+     * 되돌리기(명세서 밖) — 완료·취소 탭의 주문을 다시 진행(RECEIVED) 탭으로 되돌린다(Figma 최종 디자인: 두 탭 모두
+     * "되돌리기" 버튼 하나). 결제/환불 처리 기능이 아니므로 paymentStatus·환불 필드는 절대 건드리지 않는다
+     * (OrderEntity.restore 참조). 상태 판정에 항목 컬렉션이 필요해 O11·O12처럼 조건부 UPDATE 한 문장으로 끝내지
+     * 못하고, O6와 같은 잠금 조회 후 엔티티 메서드 패턴을 쓴다.
      */
     @Transactional
     public DashboardResponse.OrderSummary restore(String authorization, Long orderId) {

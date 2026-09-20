@@ -25,6 +25,6 @@ public record OrderCreateResponse(
     public record OrderItemResponse(Long menuId, String menuName, int unitPrice, int qty, int subtotal) {
     }
 
-    public record PaymentGuide(PaymentMethod method, String bankAccount, String depositorNameRule) {
+    public record PaymentGuide(PaymentMethod method, String bankAccount, String depositorName, String depositorNameRule) {
     }
 }
