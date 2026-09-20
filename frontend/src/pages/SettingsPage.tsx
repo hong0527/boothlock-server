@@ -1,17 +1,26 @@
 import { Link, useNavigate } from 'react-router-dom'
 import chevronRight from '../assets/icons/chevron-right.svg'
 import TopNav from '../components/TopNav'
-import { clearAuth } from '../lib/auth'
+import { clearAuth, getStaff } from '../lib/auth'
 
-const MENU_ITEMS = [
+const BASE_MENU_ITEMS = [
   { label: '테이블 QR 코드 생성', to: '/settings/table-qr' },
   { label: '메뉴 등록 / 편집', to: '/settings/menu' },
   { label: '계좌 등록', to: '/settings/account' },
-  { label: '로그아웃', to: null },
 ]
+
+const LOGOUT_ITEM = { label: '로그아웃', to: null }
 
 export default function SettingsPage() {
   const navigate = useNavigate()
+  // O19 정산 CSV는 ADMIN 전용(백엔드 403) — STAFF에게는 눌러도 안 되는 항목을 아예 안 보여준다.
+  // Figma 디자인은 없는 화면(파일럿 스코프 밖) — SettlementPage.tsx 상단 주석 참고
+  const isAdmin = getStaff()?.role === 'ADMIN'
+  const menuItems = [
+    ...BASE_MENU_ITEMS,
+    ...(isAdmin ? [{ label: '정산 CSV 다운로드', to: '/settings/settlement' }] : []),
+    LOGOUT_ITEM,
+  ]
 
   const handleLogout = () => {
     clearAuth()
@@ -23,7 +32,7 @@ export default function SettingsPage() {
       <TopNav />
 
       <div className="mx-auto mt-10 flex w-full max-w-[600px] flex-col px-6">
-        {MENU_ITEMS.map(({ label, to }) => {
+        {menuItems.map(({ label, to }) => {
           const rowClassName =
             'flex h-[60px] items-center justify-between border-b border-neutral-100 text-left text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900'
           const content = (
