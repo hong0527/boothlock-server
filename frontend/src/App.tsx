@@ -13,6 +13,7 @@ import TableSessionPage from './pages/customer/TableSessionPage'
 import AccountPage from './pages/settings/AccountPage'
 import MenuEditPage from './pages/settings/MenuEditPage'
 import MenuListPage from './pages/settings/MenuListPage'
+import SettlementPage from './pages/settings/SettlementPage'
 import TableQrPage from './pages/settings/TableQrPage'
 import SettingsPage from './pages/SettingsPage'
 import TableHomePage from './pages/TableHomePage'
@@ -44,6 +45,8 @@ function App() {
         <Route path="/settings/menu/:id" element={<MenuEditPage />} />
         <Route path="/settings/account" element={<AccountPage />} />
         <Route path="/settings/table-qr" element={<TableQrPage />} />
+        {/* Figma 디자인 없음 (파일럿 스코프 밖 화면) — O19 ADMIN 전용, 백엔드 403으로도 막힘 */}
+        <Route path="/settings/settlement" element={<SettlementPage />} />
 
         {/* 소비자(손님) 주문 플로우 — API 명세서 C1~C5 */}
         <Route path="/t/:tableToken" element={<TableSessionPage />} />
