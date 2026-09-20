@@ -64,6 +64,14 @@ export default function OrderCard({ order, now, pending, onComplete, onCancel, o
         </div>
       )}
 
+      {order.status === 'DONE' && (
+        <div className="mt-4 flex gap-4">
+          <button type="button" onClick={() => onRestore(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
+            되돌리기
+          </button>
+        </div>
+      )}
+
       {order.status === 'CANCELED' && (
         <div className="mt-4 flex gap-4">
           <button type="button" onClick={() => onRestore(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>

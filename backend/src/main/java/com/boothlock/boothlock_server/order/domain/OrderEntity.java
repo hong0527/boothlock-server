@@ -217,16 +217,16 @@ public class OrderEntity {
     }
 
     /**
-     * 취소복구(명세서 밖) — CANCELED만 RECEIVED로 되돌린다. paymentStatus·환불 관련 필드는 이 결제/환불과 무관한
-     * 주문현황 관리 기능이라 건드리지 않는다(2축 상태, cancelByCustomer와 같은 원칙). 항목이 전부 개별
-     * 취소(O6)돼 실질적으로 빈 주문이면 되살릴 대상이 없으므로 막는다.
+     * 되돌리기(명세서 밖) — CANCELED·DONE을 RECEIVED로 되돌린다(Figma 최종 디자인: 두 탭 모두 "되돌리기" 버튼 하나).
+     * paymentStatus·환불 관련 필드는 이 결제/환불과 무관한 주문현황 관리 기능이라 건드리지 않는다(2축 상태,
+     * cancelByCustomer와 같은 원칙). 항목이 전부 개별 취소(O6)돼 실질적으로 빈 주문이면 되살릴 대상이 없으므로 막는다.
      */
     public void restore() {
         if (hidden) {
             throw new InvalidStateException("삭제된 주문은 복구할 수 없습니다.");
         }
-        if (status != OrderStatus.CANCELED) {
-            throw new InvalidStateException("취소된 주문만 복구할 수 있습니다.");
+        if (status != OrderStatus.CANCELED && status != OrderStatus.DONE) {
+            throw new InvalidStateException("취소되거나 완료된 주문만 되돌릴 수 있습니다.");
         }
         if (!hasRemainingItems()) {
             throw new InvalidStateException("모든 항목이 취소된 주문은 복구할 수 없습니다.");
