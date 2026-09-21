@@ -22,6 +22,12 @@ vi.mock('react', async () => ({
   // 렌더 결과로 잡는 게 아니라서, 여기서는 "현재 상태에 맞는 값이 나오는가"만 본다
   useMemo: (factory: () => unknown) => factory(),
   useCallback: (fn: unknown) => fn,
+  // 폴링 중복 방지 가드(pollGuard)가 쓴다 — 렌더 사이에 값이 유지돼야 해서 상태 칸을 하나 빌린다
+  useRef: (initial: unknown) => {
+    const index = hooks.cursor++
+    if (!(index in hooks.values)) hooks.values[index] = { current: initial }
+    return hooks.values[index]
+  },
 }))
 vi.mock('../lib/apiFetch', () => ({ apiFetch: vi.fn() }))
 vi.mock('../lib/orderActions', () => ({
