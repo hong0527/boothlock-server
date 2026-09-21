@@ -3,6 +3,7 @@ import OrderCard from '../components/OrderCard'
 import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
 import { getAuthToken } from '../lib/auth'
+import { orderedForTab } from '../lib/dashboardOrders'
 import { createPollGuard } from '../lib/pollGuard'
 import {
   ackCall,
@@ -89,7 +90,11 @@ export default function OrderStatusPage() {
     [ordersByStatus],
   )
 
-  const visibleOrders = ordersByStatus[activeStatus]
+  // 탭별 표시 순서 — 진행 탭만 먼저 들어온 주문이 위로 온다. 근거는 orderedForTab 주석 참고
+  const visibleOrders = useMemo(
+    () => orderedForTab(activeStatus, ordersByStatus[activeStatus]),
+    [ordersByStatus, activeStatus],
+  )
 
   // O15 호출 확인 — 성공하면 서버 calls에서 빠진다. 폴링을 기다리지 않고 바로 지운다(멱등이라 중복 눌림도 안전)
   const acknowledgeCall = async (callId: number) => {
@@ -136,8 +141,11 @@ export default function OrderStatusPage() {
   const completeOrder = (orderId: number) =>
     runOrderAction(orderId, () => completeOrderRequest(orderId), '주문을 완료 처리하지 못했어요')
 
-  const cancelOrder = (orderId: number) =>
-    runOrderAction(orderId, () => cancelOrderRequest(orderId), '주문을 취소 처리하지 못했어요')
+  // 취소는 손님에게 바로 영향이 가고 되돌리려면 한 단계를 더 거쳐야 한다 — 한 번 더 묻는다(되돌리기와 같은 방식)
+  const cancelOrder = (orderId: number) => {
+    if (!window.confirm('이 주문을 취소할까요?')) return
+    return runOrderAction(orderId, () => cancelOrderRequest(orderId), '주문을 취소 처리하지 못했어요')
+  }
 
   // 되돌리기 — 완료·취소된 주문을 진행(RECEIVED)으로 되돌린다. 결제/환불 상태는 건드리지 않는다
   const restoreOrder = (orderId: number) => {
