@@ -546,6 +546,8 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 
 **인증 없음.** 부스 + ADMIN 계정을 한 트랜잭션에서 함께 만들고, 성공하면 O1과 같은 형태로 바로 로그인 처리(JWT 발급)한다.
 
+> **기본은 꺼져 있다.** 아래 위험 때문에 `boothlock.signup.enabled`(환경변수 `BOOTLOCK_SIGNUP_ENABLED`, 기본 `false`)로 감쌌다 — 평소에는 이 엔드포인트가 **`403 FORBIDDEN`**("회원가입 기능이 비활성화되어 있습니다.")만 돌려준다. 검증·DB 쓰기보다 먼저 잘리므로 꺼진 동안에는 부스도 계정도 생기지 않는다. 축제 운영 중에는 끈 채로 두고 계정은 시더로 만들며(§5), 시연·심사 때만 켠다. 화면 쪽은 `VITE_SIGNUP_ENABLED`로 따로 가려지지만 그건 노출 제어일 뿐 **실제 차단막은 서버 쪽 플래그다**.
+
 **Request**: `{ "boothName": "...", "loginId": "...", "password": "..." }`
 
 **Response 200**: O1과 동일한 `{ accessToken, expiresIn, staff }` 형태. `staff.role`은 항상 `ADMIN`

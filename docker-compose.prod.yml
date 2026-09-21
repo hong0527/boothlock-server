@@ -50,6 +50,10 @@ services:
       dockerfile: Dockerfile
       # VITE_API_BASE_URL을 안 넘긴다 — 비워두면 프론트가 상대경로(/api/...)로 호출하고, nginx가 같은
       # 오리진에서 받아 api 컨테이너로 중계한다(내부망). 그래서 EC2 주소가 바뀌어도 프론트를 다시 빌드할 필요가 없다
+      args:
+        # Vite는 빌드 시점에 값을 코드에 박아 넣는다 — 바꾸면 반드시 --build 로 다시 빌드해야 반영된다.
+        # .env.prod에 VITE_SIGNUP_ENABLED=true 를 넣고 docker compose up -d --build (백엔드는 BOOTLOCK_SIGNUP_ENABLED로 따로 켠다)
+        VITE_SIGNUP_ENABLED: "${VITE_SIGNUP_ENABLED:-false}"
     image: boothlock-frontend:latest
     container_name: boothlock-frontend
     restart: unless-stopped

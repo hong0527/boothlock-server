@@ -5,6 +5,7 @@ import PrimaryButton from '../components/PrimaryButton'
 import TextField from '../components/TextField'
 import { apiUrl } from '../lib/apiBase'
 import { setAuth } from '../lib/auth'
+import { SIGNUP_ENABLED } from '../lib/featureFlags'
 
 type LoginErrorBody = {
   error: { code: string; message: string; details?: { retryAfterSeconds?: number } }
@@ -83,12 +84,14 @@ export default function LoginPage() {
           </PrimaryButton>
         </form>
 
-        <div className="text-body-2 mt-12 flex items-center gap-3">
-          <span className="text-neutral-400">아직 부스락 회원이 아니신가요?</span>
-          <Link to="/signup" className="text-neutral-900 underline [text-underline-position:from-font] decoration-solid">
-            회원가입
-          </Link>
-        </div>
+        {SIGNUP_ENABLED && (
+          <div className="text-body-2 mt-12 flex items-center gap-3">
+            <span className="text-neutral-400">아직 부스락 회원이 아니신가요?</span>
+            <Link to="/signup" className="text-neutral-900 underline [text-underline-position:from-font] decoration-solid">
+              회원가입
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   )

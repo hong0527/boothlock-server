@@ -7,9 +7,11 @@ import com.boothlock.boothlock_server.booth.dto.LoginDto;
 import com.boothlock.boothlock_server.booth.dto.SignupDto;
 import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.booth.repository.StaffAccountRepository;
+import com.boothlock.boothlock_server.global.error.ForbiddenException;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.InvalidStateException;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -24,7 +26,8 @@ import java.time.ZoneId;
  * 임시 데모 기능 — 원래 API명세서(O1)는 "회원가입 API 없음, 계정은 시더로만 생성"이라고 명시했었다
  * (사업자등록 없는 임시 부스 대상이라 신원 확인 없이 셀프 등록을 열면 남의 점포명을 사칭해 손님 결제를
  * 가로챌 수 있어서였음). 이번엔 그 결정을 뒤집기로 팀이 정했다 — 단, 신원 확인 절차를 새로 만들지는
- * 않았으므로 이 위험은 여전하다는 점을 인지하고 쓸 것 (§ PR 설명 참고).
+ * 않았으므로 이 위험은 여전하다. 그래서 {@code boothlock.signup.enabled}(기본 꺼짐)로 감싸
+ * 축제 운영 중에는 시더 계정만 쓰고, 시연·심사 때만 켠다 (§ PR 설명 참고).
  *
  * <p>부스와 ADMIN 계정을 한 트랜잭션에서 함께 만든다 — 계정 생성만 실패해도(예: loginId 중복) 부스만
  * 남는 고아 행이 생기지 않게. 계좌는 아직 안 받으므로 AccountPage.tsx가 인식하는 미등록 안내값을
@@ -41,17 +44,25 @@ public class BoothSignupService {
     private final BoothRepository boothRepository;
     private final StaffAccountRepository staffAccountRepository;
     private final BoothJwtProvider jwtProvider;
+    private final boolean signupEnabled;
     private final PasswordEncoder passwordEncoder = PasswordEncoderFactories.createDelegatingPasswordEncoder();
 
     public BoothSignupService(BoothRepository boothRepository, StaffAccountRepository staffAccountRepository,
-            BoothJwtProvider jwtProvider) {
+            BoothJwtProvider jwtProvider, @Value("${boothlock.signup.enabled:false}") String signupEnabled) {
         this.boothRepository = boothRepository;
         this.staffAccountRepository = staffAccountRepository;
         this.jwtProvider = jwtProvider;
+        // 문자열로 받아 직접 판정한다 — primitive boolean으로 주입하면 BOOTLOCK_SIGNUP_ENABLED= (빈 값)일 때
+        // 플레이스홀더 기본값(false)이 적용되지 않아 null 주입에 실패하고, 이 빈이 못 떠서 API 컨테이너 전체가 안 뜬다.
+        // EventSeeder의 @ConditionalOnProperty(havingValue="true")와 같은 기준 — 정확히 true(대소문자 무시)만 켜짐.
+        this.signupEnabled = signupEnabled != null && "true".equalsIgnoreCase(signupEnabled.trim());
     }
 
     @Transactional
     public LoginDto.Response signup(SignupDto.Request request) {
+        if (!signupEnabled) {
+            throw new ForbiddenException("회원가입 기능이 비활성화되어 있습니다.");
+        }
         String boothName = validate(request);
 
         BoothEntity booth = boothRepository.save(new BoothEntity(boothName, UNREGISTERED_BANK_ACCOUNT, null));
