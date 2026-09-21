@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { apiFetch } from '../lib/apiFetch'
+import { createPollGuard } from '../lib/pollGuard'
 import { isOrderOfSession } from '../lib/sessionOrders'
 import type { OrderSummary } from '../types/dashboard'
 import type { TableStatusInfo } from '../types/table'
@@ -80,7 +81,12 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
   const [tables, setTables] = useState<TableStatusInfo[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  const refetch = useCallback(async (): Promise<TableStatusInfo[]> => {
+  const pollGuard = useRef(createPollGuard())
+
+  // skipIfBusy는 폴링에서만 켠다 — 공개 refetch는 퇴실 직후 즉시 갱신에 쓰이므로 건너뛰면 안 된다
+  const runRefetch = useCallback(async (skipIfBusy: boolean): Promise<TableStatusInfo[]> => {
+    const runId = pollGuard.current.begin(skipIfBusy)
+    if (runId === null) return []
     try {
       const res = await apiFetch('/api/v1/admin/tables')
       if (!res.ok) throw new Error(`테이블 목록을 불러오지 못했어요 (${res.status})`)
@@ -97,20 +103,28 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
 
       const merged: TableStatusInfo[] = data.tables.map((t) => ({ ...t, ...aggregateTableOrders(t, orders) }))
 
+      // 나중에 시작된 요청이 있으면 화면은 덮지 않는다 — 호출자에게는 방금 읽은 값을 그대로 돌려준다
+      if (!pollGuard.current.isLatest(runId)) return merged
       setTables(merged)
       setError(null)
       return merged
     } catch (err) {
-      setError(err instanceof Error ? err.message : '테이블 목록을 불러오지 못했어요.')
+      if (pollGuard.current.isLatest(runId)) {
+        setError(err instanceof Error ? err.message : '테이블 목록을 불러오지 못했어요.')
+      }
       return []
+    } finally {
+      pollGuard.current.end()
     }
   }, [])
 
+  const refetch = useCallback(() => runRefetch(false), [runRefetch])
+
   useEffect(() => {
-    refetch()
-    const id = setInterval(refetch, POLL_INTERVAL_MS)
+    runRefetch(false)
+    const id = setInterval(() => runRefetch(true), POLL_INTERVAL_MS)
     return () => clearInterval(id)
-  }, [refetch])
+  }, [runRefetch])
 
   const addTable = async () => {
     // 라벨 번호는 프론트가 계산하지 않는다 — 부스별 영구 카운터로 서버가 채번(삭제해도 재사용 안 함)

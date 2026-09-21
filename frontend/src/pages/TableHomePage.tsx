@@ -4,6 +4,7 @@ import PillButton from '../components/PillButton'
 import TableGridCard from '../components/TableGridCard'
 import TopNav from '../components/TopNav'
 import { useTableOrders } from '../context/TableOrderContext'
+import { getAuthToken } from '../lib/auth'
 import { displayTableLabel } from '../lib/tableLabel'
 
 const CARD_WIDTH = 200
@@ -18,6 +19,8 @@ export default function TableHomePage() {
   const [viewportWidth, setViewportWidth] = useState(() => document.documentElement.clientWidth)
   // "테이블 추가" 연타를 막는다 — 안 막으면 같은 클릭이 두 번 나가 테이블이 두 개 생길 수 있다
   const [tableActionBusy, setTableActionBusy] = useState(false)
+  // 망 끊김처럼 context의 error에 안 담기는 실패를 이 화면에서 알린다
+  const [tableError, setTableError] = useState<string | null>(null)
 
   // 운영자 화면은 태블릿 폭 기준 — 회전 등으로 폭이 바뀌어도 드래그 가능 범위를 다시 계산한다
   useEffect(() => {
@@ -45,8 +48,13 @@ export default function TableHomePage() {
   const handleAddTable = async () => {
     if (tableActionBusy) return
     setTableActionBusy(true)
+    setTableError(null)
     try {
       await addTable()
+    } catch {
+      // addTable이 던지는 건 401(apiFetch가 로그인 화면으로 보내는 중)이나 망 끊김이다.
+      // catch가 없으면 예외가 그대로 빠져나가 버튼만 흐려졌다 돌아오고 아무 표시도 안 된다
+      if (getAuthToken()) setTableError('테이블을 추가하지 못했어요. 네트워크 상태를 확인해주세요.')
     } finally {
       setTableActionBusy(false)
     }
@@ -82,7 +90,7 @@ export default function TableHomePage() {
         )}
       </div>
 
-      {error && <p className="px-10 text-sm text-red-600">{error}</p>}
+      {(error || tableError) && <p className="px-10 text-sm text-red-600">{error ?? tableError}</p>}
 
       {editMode && unplacedTables.length > 0 && (
         <div className="border-b border-neutral-200 bg-neutral-100 px-10 py-4">

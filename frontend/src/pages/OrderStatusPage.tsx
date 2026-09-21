@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import OrderCard from '../components/OrderCard'
 import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
+import { getAuthToken } from '../lib/auth'
+import { createPollGuard } from '../lib/pollGuard'
 import {
   ackCall,
   cancelOrder as cancelOrderRequest,
@@ -42,28 +44,39 @@ export default function OrderStatusPage() {
   const [activeStatus, setActiveStatus] = useState<OrderStatus>('RECEIVED')
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
-  // 같은 주문에 대한 액션 버튼 연타로 요청이 중복 전송되는 걸 막는다 (예: 취소복구 더블클릭 → 두 번째 요청이 409)
-  const [pendingOrderId, setPendingOrderId] = useState<number | null>(null)
+  // 진행 중인 액션의 주문들. 상태(렌더용)와 ref(판정용)를 같이 둔다 — 상태만 보면 같은 렌더 사이클 안의
+  // 더블클릭이 옛 값을 읽고 통과한다. 단일 값으로 두면 A가 끝날 때 아직 요청 중인 B의 잠금까지 풀린다
+  const [pendingOrderIds, setPendingOrderIds] = useState<ReadonlySet<number>>(() => new Set())
+  const pendingRef = useRef<Set<number>>(new Set())
+
+  const pollGuard = useRef(createPollGuard())
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(id)
   }, [])
 
-  const refetchAll = useCallback(async () => {
+  /** skipIfBusy는 폴링에서만 켠다 — 액션 직후의 즉시 갱신까지 건너뛰면 화면이 안 바뀐다 (pollGuard 주석 참조) */
+  const refetchAll = useCallback(async ({ skipIfBusy = false }: { skipIfBusy?: boolean } = {}) => {
+    const runId = pollGuard.current.begin(skipIfBusy)
+    if (runId === null) return
     try {
       const [received, done, canceled] = await Promise.all(TABS.map((tab) => fetchDashboard(tab.status)))
+      if (!pollGuard.current.isLatest(runId)) return
       setOrdersByStatus({ RECEIVED: received.orders, DONE: done.orders, CANCELED: canceled.orders })
       setCalls(received.calls ?? [])
       setError(null)
     } catch (err) {
+      if (!pollGuard.current.isLatest(runId)) return
       setError(err instanceof Error ? err.message : '주문 목록을 불러오지 못했어요.')
+    } finally {
+      pollGuard.current.end()
     }
   }, [])
 
   useEffect(() => {
     refetchAll()
-    const id = setInterval(refetchAll, POLL_INTERVAL_MS)
+    const id = setInterval(() => refetchAll({ skipIfBusy: true }), POLL_INTERVAL_MS)
     return () => clearInterval(id)
   }, [refetchAll])
 
@@ -80,19 +93,30 @@ export default function OrderStatusPage() {
 
   // O15 호출 확인 — 성공하면 서버 calls에서 빠진다. 폴링을 기다리지 않고 바로 지운다(멱등이라 중복 눌림도 안전)
   const acknowledgeCall = async (callId: number) => {
-    const res = await ackCall(callId)
-    if (!res.ok && res.status !== 404) {
-      setError(`호출을 확인 처리하지 못했어요 (${res.status})`)
-      return
+    try {
+      const res = await ackCall(callId)
+      if (!res.ok && res.status !== 404) {
+        setError(`호출을 확인 처리하지 못했어요 (${res.status})`)
+        return
+      }
+      setCalls((prev) => prev.filter((c) => c.callId !== callId))
+      setError(null)
+    } catch {
+      // 401이면 apiFetch가 이미 로그인 화면으로 보내는 중 — 그때는 문구를 덧그리지 않는다
+      if (getAuthToken()) setError('호출을 확인 처리하지 못했어요. 네트워크 상태를 확인해주세요.')
     }
-    setCalls((prev) => prev.filter((c) => c.callId !== callId))
-    setError(null)
   }
 
-  // 같은 주문에 대한 중복 요청을 막고 완료 후 pending을 해제한다
+  /**
+   * 같은 주문에 대한 중복 요청을 막고 끝나면 해제한다.
+   * 판정을 ref로 하는 이유 — 상태만 보면 리렌더 전에 들어온 두 번째 클릭이 옛 값(없음)을 읽고 통과한다.
+   * catch가 있어야 하는 이유 — 없으면 망이 끊겼을 때 예외가 그대로 빠져나가 운영자에게 아무 표시도 안 된다.
+   * 버튼만 잠깐 흐려졌다 돌아와서 "왜 안 눌리지" 하며 계속 누르게 된다(축제장 와이파이에서 자주 나올 상황).
+   */
   const runOrderAction = async (orderId: number, action: () => Promise<Response>, failMessage: string) => {
-    if (pendingOrderId === orderId) return
-    setPendingOrderId(orderId)
+    if (pendingRef.current.has(orderId)) return
+    pendingRef.current.add(orderId)
+    setPendingOrderIds(new Set(pendingRef.current))
     try {
       const res = await action()
       if (!res.ok) {
@@ -100,9 +124,12 @@ export default function OrderStatusPage() {
         return
       }
       setError(null)
-      refetchAll()
+      await refetchAll()
+    } catch {
+      if (getAuthToken()) setError(`${failMessage} — 서버에 연결할 수 없어요. 네트워크 상태를 확인해주세요.`)
     } finally {
-      setPendingOrderId(null)
+      pendingRef.current.delete(orderId)
+      setPendingOrderIds(new Set(pendingRef.current))
     }
   }
 
@@ -174,7 +201,7 @@ export default function OrderStatusPage() {
             key={order.orderId}
             order={order}
             now={now}
-            pending={pendingOrderId === order.orderId}
+            pending={pendingOrderIds.has(order.orderId)}
             onComplete={completeOrder}
             onCancel={cancelOrder}
             onRestore={restoreOrder}
