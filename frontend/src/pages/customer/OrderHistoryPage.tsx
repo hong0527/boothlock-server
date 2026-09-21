@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
 import { customerApiFetch } from '../../lib/customerApiFetch'
+import { createPollGuard } from '../../lib/pollGuard'
 import { getSessionInfo } from '../../lib/customerSession'
 import { displayTableLabel } from '../../lib/tableLabel'
 import { formatClockTime } from '../../lib/time'
@@ -15,21 +16,29 @@ export default function OrderHistoryPage() {
   const [orders, setOrders] = useState<OrderSummary[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  const fetchOrders = useCallback(async () => {
+  const pollGuard = useRef(createPollGuard())
+
+  const fetchOrders = useCallback(async (skipIfBusy = false) => {
+    const runId = pollGuard.current.begin(skipIfBusy)
+    if (runId === null) return
     try {
       const res = await customerApiFetch('/api/v1/orders')
       if (!res.ok) throw new Error(`주문내역을 불러오지 못했어요 (${res.status})`)
       const data: { orders: OrderSummary[] } = await res.json()
+      if (!pollGuard.current.isLatest(runId)) return
       setOrders(data.orders)
       setError(null)
     } catch (err) {
+      if (!pollGuard.current.isLatest(runId)) return
       setError(err instanceof Error ? err.message : '주문내역을 불러오지 못했어요.')
+    } finally {
+      pollGuard.current.end()
     }
   }, [])
 
   useEffect(() => {
     fetchOrders()
-    const id = setInterval(fetchOrders, POLL_INTERVAL_MS)
+    const id = setInterval(() => fetchOrders(true), POLL_INTERVAL_MS)
     return () => clearInterval(id)
   }, [fetchOrders])
 
