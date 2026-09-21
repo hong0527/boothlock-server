@@ -1,7 +1,7 @@
 import { Children, isValidElement, type ReactNode } from 'react'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFetch } from '../lib/apiFetch'
-import { cancelOrder, completeOrder, restoreOrder } from '../lib/orderActions'
+import { cancelOrder, completeOrder, refundDone, restoreOrder } from '../lib/orderActions'
 import OrderStatusPage from './OrderStatusPage'
 import type { OrderStatus, OrderSummary } from '../types/dashboard'
 
@@ -34,6 +34,7 @@ vi.mock('../lib/orderActions', () => ({
   ackCall: vi.fn(),
   cancelOrder: vi.fn(),
   completeOrder: vi.fn(),
+  refundDone: vi.fn(),
   restoreOrder: vi.fn(),
 }))
 
@@ -43,6 +44,7 @@ type Props = {
   onCancel?: (orderId: number) => void
   onComplete?: (orderId: number) => void
   onRestore?: (orderId: number) => void
+  onRefundDone?: (orderId: number) => void
   order?: OrderSummary
 }
 
@@ -95,7 +97,10 @@ const DONE = [
   order('D-2', '2026-09-21T17:20:00', 'DONE'),
   order('D-1', '2026-09-21T17:10:00', 'DONE'),
 ]
-const CANCELED = [order('C-1', '2026-09-21T16:00:00', 'CANCELED')]
+const CANCELED = [
+  order('C-1', '2026-09-21T16:00:00', 'CANCELED'),
+  { ...order('C-2', '2026-09-21T15:00:00', 'CANCELED'), paymentStatus: 'REFUND_NEEDED' as const },
+]
 
 let confirmAnswer = true
 let confirmMessages: string[]
@@ -111,9 +116,19 @@ async function load() {
   await vi.waitFor(() => expect(cards().length).toBeGreaterThan(0))
 }
 
-// 페이지는 window.confirm을 쓴다 — node 환경에는 window가 없어 필요한 것만 세운다
+// node 환경에는 window도 localStorage도 없다 — 페이지가 실제로 쓰는 것만 세운다.
+// localStorage는 getStaff()가 safeStorage를 거쳐 읽으므로 필요하다.
+const store = new Map<string, string>()
+const storage = {
+  getItem: (k: string) => store.get(k) ?? null,
+  setItem: (k: string, v: string) => { store.set(k, v) },
+  removeItem: (k: string) => { store.delete(k) },
+  clear: () => { store.clear() },
+}
+vi.stubGlobal('localStorage', storage)
 vi.stubGlobal('window', {
   confirm: (message: string) => { confirmMessages.push(message); return confirmAnswer },
+  localStorage: storage,
 })
 afterAll(() => { vi.unstubAllGlobals() })
 
@@ -124,9 +139,10 @@ beforeEach(() => {
   hooks.effects = []
   confirmAnswer = true
   confirmMessages = []
+  store.clear()
   vi.clearAllMocks()
   // 액션 목은 기본으로 성공을 돌려준다 — 안 주면 runOrderAction이 undefined.ok를 읽고 터진다
-  for (const action of [cancelOrder, completeOrder, restoreOrder]) {
+  for (const action of [cancelOrder, completeOrder, refundDone, restoreOrder]) {
     vi.mocked(action).mockResolvedValue(new Response(null, { status: 200 }))
   }
 })
@@ -146,7 +162,7 @@ describe('주문현황 탭 정렬', () => {
   it('취소 탭도 서버 순서 그대로다', async () => {
     await load()
     clickTab('취소')
-    expect(renderedOrderNos()).toEqual(['C-1'])
+    expect(renderedOrderNos()).toEqual(['C-1', 'C-2'])
   })
 
   it('완료 탭에 갔다가 진행 탭으로 돌아와도 진행 탭 정렬이 유지된다', async () => {
@@ -203,5 +219,34 @@ describe('주문 취소 확인 단계', () => {
     await cards()[0].onRestore!(2)
     expect(confirmMessages).toEqual(['이 주문을 진행 상태로 복구할까요?'])
     expect(vi.mocked(restoreOrder)).toHaveBeenCalledWith(2)
+  })
+})
+
+describe('환불 완료', () => {
+  // 버튼을 실제로 그릴지는 카드가 결제 상태를 보고 정한다 (OrderCard.test.tsx)
+  it('ADMIN이면 카드에 환불 처리 수단을 넘긴다', async () => {
+    localStorage.setItem('boothlock_staff', JSON.stringify({ role: 'ADMIN', boothId: 1, boothName: '테스트' }))
+    await load()
+    clickTab('취소')
+    expect(cards()[1].onRefundDone).toBeTypeOf('function')
+  })
+
+  it('STAFF에게는 붙지 않는다 — 눌러도 백엔드가 403이다', async () => {
+    localStorage.setItem('boothlock_staff', JSON.stringify({ role: 'STAFF', boothId: 1, boothName: '테스트' }))
+    await load()
+    clickTab('취소')
+    expect(cards()[1].onRefundDone).toBeUndefined()
+  })
+
+  it('확인을 거쳐야 요청이 나간다', async () => {
+    localStorage.setItem('boothlock_staff', JSON.stringify({ role: 'ADMIN', boothId: 1, boothName: '테스트' }))
+    await load()
+    clickTab('취소')
+    confirmAnswer = false
+    await cards()[1].onRefundDone!(2)
+    expect(vi.mocked(refundDone)).not.toHaveBeenCalled()
+    confirmAnswer = true
+    await cards()[1].onRefundDone!(2)
+    expect(vi.mocked(refundDone)).toHaveBeenCalledWith(2)
   })
 })

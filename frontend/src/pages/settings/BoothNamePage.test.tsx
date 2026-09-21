@@ -1,6 +1,7 @@
 import { Children, isValidElement, type ReactNode } from 'react'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFetch } from '../../lib/apiFetch'
+import { clearAuth } from '../../lib/auth'
 import BoothNamePage from './BoothNamePage'
 
 // DOM 의존성 추가 없이 페이지의 초기화·입력·submit을 실행하는 최소 hook harness (AccountPage.test.tsx와 같은 방식).
@@ -87,7 +88,10 @@ beforeEach(() => {
   hooks.mounted = false
   hooks.effects = []
   payloads = []
-  localStorage.clear()
+  // safeStorage는 저장이 막힌 브라우저에 대비해 메모리 사본도 들고 있다 —
+  // localStorage만 비우면 그 사본이 남아 다음 테스트로 새어 나간다. clearAuth가 둘 다 지운다.
+  store.clear()
+  clearAuth()
   vi.clearAllMocks()
 })
 

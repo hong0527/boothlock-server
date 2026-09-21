@@ -5,10 +5,20 @@ import TextField from '../../components/TextField'
 import TopNav from '../../components/TopNav'
 import { apiFetch } from '../../lib/apiFetch'
 
-/** 오늘(브라우저 로컬 날짜)을 input[type=date] 형식(yyyy-MM-dd)으로 — O19 기본값(현재 영업일)과 정확히 맞을 필요는 없고 사용자가 직접 바꿀 수 있음 */
-function todayInputValue() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+/**
+ * 현재 **영업일**을 input[type=date] 형식(yyyy-MM-dd)으로.
+ *
+ * 달력 날짜를 그대로 쓰면 안 된다. 영업일은 06:00에 바뀌므로(서버 OrderNumberingService와 같은 규칙),
+ * 자정 넘어 정산을 받으면 아직 시작도 안 한 다음 영업일을 조회해 **빈 CSV**를 받는다.
+ * 축제가 밤늦게 끝나는 것을 생각하면 그 시간대가 곧 실제 사용 시간대다.
+ *
+ * 브라우저 시계가 KST가 아닐 수 있으므로 KST로 맞춘 뒤 6시간을 뺀다.
+ */
+export function businessDateInputValue(at: Date = new Date()) {
+  const KST_OFFSET_MS = 9 * 60 * 60 * 1000
+  const BUSINESS_DAY_START_HOURS = 6
+  const kst = new Date(at.getTime() + KST_OFFSET_MS - BUSINESS_DAY_START_HOURS * 60 * 60 * 1000)
+  return kst.toISOString().slice(0, 10)
 }
 
 /** Content-Disposition의 filename="..." 값을 뽑는다 — 못 찾으면 날짜로 대체 파일명 구성 */
@@ -18,7 +28,7 @@ function extractFilename(header: string | null, fallbackDate: string) {
 }
 
 export default function SettlementPage() {
-  const [date, setDate] = useState(todayInputValue)
+  const [date, setDate] = useState(businessDateInputValue)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

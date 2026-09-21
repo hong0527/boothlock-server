@@ -62,7 +62,7 @@ export default function MenuEditPage() {
         // null(미분류)을 'MAIN'으로 덮어쓰면 저장 시 그대로 굳어버려서, 값 그대로 옮긴다
         setCategory(menu.category ?? null)
         setSoldOut(menu.soldOut)
-        setImageUrl(menu.imageUrl)
+        setImageUrl(menu.imageUrl ?? undefined)   // 서버는 사진이 없으면 null을 준다
       })
       .catch((err) => setError(err.message))
   }, [editingId])

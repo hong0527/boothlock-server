@@ -82,6 +82,18 @@ export function ackCall(callId: number) {
 }
 
 /**
+ * O21 환불 완료 (ADMIN 전용) — REFUND_NEEDED를 REFUNDED로 넘긴다.
+ *
+ * 입금이 확인된 주문을 취소하면 결제 축이 REFUND_NEEDED로 바뀐다(주문 축과 따로 움직인다).
+ * 실제로 계좌이체로 돈을 돌려준 뒤 이걸 눌러야 정산에서 미해소 환불이 빠진다.
+ * 되돌리기는 결제 축을 건드리지 않으므로 이 버튼 없이는 REFUND_NEEDED가 영영 남는다.
+ * REFUND_NEEDED가 아니면 409.
+ */
+export function refundDone(orderId: number) {
+  return apiFetch(`/api/v1/admin/orders/${orderId}/refund-done`, { method: 'POST' })
+}
+
+/**
  * O6 퇴실·초기화 — 세션 종료(손님 토큰 즉시 410)+테이블 비움. 주문 데이터는 그대로.
  * 테이블 갈래 개정 후에는 활성 세션이 없어도 200(멱등)이고, 미결제가 있으면 응답에 warning이 실린다.
  * 개정 전 구현은 세션이 없으면 410을 내므로 호출부는 410도 "이미 비어 있음"으로 처리한다

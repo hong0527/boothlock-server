@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import closeIcon from '../assets/icons/x.svg'
 import PrimaryButton from './PrimaryButton'
 import { readApiError } from '../lib/apiError'
 import { apiFetch } from '../lib/apiFetch'
+import { createPollGuard } from '../lib/pollGuard'
 import {
   cancelItem,
   cancelOrder,
@@ -108,25 +109,37 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
 
   // 반환값은 결제 확인(handleConfirmPayment)이 방금 갱신된 목록으로 미결제 합계를 다시 계산할 때 쓴다 —
   // setOrders 직후에도 이 함수를 부른 클로저의 orders/unpaidAmount는 그 렌더의 스냅샷이라 안 바뀐다
-  const refetch = async (): Promise<OrderSummary[]> => {
+  // 폴링 응답 역전 방지 — 축제장 회선에서 먼저 보낸 요청이 늦게 도착하면 화면이 옛 목록으로 되돌아간다.
+  // 다른 폴링 화면(주문현황·손님 주문내역·테이블 홈)과 같은 방식이다.
+  const pollGuard = useRef(createPollGuard())
+
+  /** skipIfBusy는 인터벌 폴링에서만 켠다 — 액션 직후의 즉시 갱신까지 건너뛰면 화면이 안 바뀐다 */
+  const refetch = async ({ skipIfBusy = false }: { skipIfBusy?: boolean } = {}): Promise<OrderSummary[]> => {
+    const runId = pollGuard.current.begin(skipIfBusy)
+    if (runId === null) return orders
     try {
       // businessDate 생략 = 현재 영업일. activeSessionOnly=true — 그 테이블의 종료 안 된 세션(지금 앉은 손님) 주문만 서버가 골라 준다.
       // 세션이 없는 테이블은 빈 목록. 이전 손님의 PAID·DONE이 결제 대상·전체 취소 대상에 섞이지 않는다 (audit2 ②-2·②-3)
       const res = await apiFetch(`/api/v1/admin/orders?tableId=${table.id}&activeSessionOnly=true`)
       if (!res.ok) throw new Error(`주문 내역을 불러오지 못했어요 (${res.status})`)
       const data: { orders: OrderSummary[] } = await res.json()
+      if (!pollGuard.current.isLatest(runId)) return orders
       setOrders(data.orders)
       setLoadError(null)
       return data.orders
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : '주문 내역을 불러오지 못했어요.')
+      if (pollGuard.current.isLatest(runId)) {
+        setLoadError(err instanceof Error ? err.message : '주문 내역을 불러오지 못했어요.')
+      }
       return orders
+    } finally {
+      pollGuard.current.end()
     }
   }
 
   useEffect(() => {
     refetch()
-    const id = setInterval(refetch, POLL_INTERVAL_MS)
+    const id = setInterval(() => refetch({ skipIfBusy: true }), POLL_INTERVAL_MS)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table.id])

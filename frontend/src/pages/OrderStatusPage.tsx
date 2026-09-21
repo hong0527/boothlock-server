@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import OrderCard from '../components/OrderCard'
 import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
-import { getAuthToken } from '../lib/auth'
+import { getAuthToken, getStaff } from '../lib/auth'
 import { orderedForTab } from '../lib/dashboardOrders'
 import { createPollGuard } from '../lib/pollGuard'
 import {
   ackCall,
   cancelOrder as cancelOrderRequest,
   completeOrder as completeOrderRequest,
+  refundDone as refundDoneRequest,
   restoreOrder as restoreOrderRequest,
 } from '../lib/orderActions'
 import { displayTableLabel } from '../lib/tableLabel'
@@ -40,6 +41,8 @@ async function fetchDashboard(status: OrderStatus): Promise<DashboardResponse> {
 }
 
 export default function OrderStatusPage() {
+  // 환불 완료는 ADMIN 전용(백엔드 403) — STAFF에게는 눌러도 안 되는 버튼을 보여주지 않는다
+  const isAdmin = getStaff()?.role === 'ADMIN'
   const [ordersByStatus, setOrdersByStatus] = useState<OrdersByStatus>({ RECEIVED: [], DONE: [], CANCELED: [] })
   const [calls, setCalls] = useState<CallSummary[]>([])
   const [activeStatus, setActiveStatus] = useState<OrderStatus>('RECEIVED')
@@ -153,6 +156,12 @@ export default function OrderStatusPage() {
     return runOrderAction(orderId, () => restoreOrderRequest(orderId), '주문을 복구하지 못했어요')
   }
 
+  // 환불 완료 — 실제로 돈을 돌려준 뒤 누르는 버튼이라 한 번 더 묻는다. 되돌릴 수 없다.
+  const refundDone = (orderId: number) => {
+    if (!window.confirm('환불을 완료 처리할까요? 되돌릴 수 없어요.')) return
+    return runOrderAction(orderId, () => refundDoneRequest(orderId), '환불 완료 처리를 하지 못했어요')
+  }
+
   return (
     <div className="min-h-screen w-full bg-[#f4f5f7]">
       <TopNav />
@@ -213,6 +222,7 @@ export default function OrderStatusPage() {
             onComplete={completeOrder}
             onCancel={cancelOrder}
             onRestore={restoreOrder}
+            onRefundDone={isAdmin ? refundDone : undefined}
           />
         ))}
         {visibleOrders.length === 0 && !error && (

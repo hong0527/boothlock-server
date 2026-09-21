@@ -36,7 +36,9 @@ export function setAuth(token: string, staff: StaffInfo) {
 export function updateStoredBoothName(boothName: string) {
   const staff = getStaff()
   if (!staff) return
-  localStorage.setItem(STAFF_KEY, JSON.stringify({ ...staff, boothName }))
+  // 반드시 safeStorage를 거친다 — 저장을 조용히 무시하는 브라우저에서는 getStaff가
+  // 메모리 대체본을 읽으므로, localStorage에 직접 쓰면 읽는 쪽과 영원히 어긋난다.
+  writeStored(STAFF_KEY, JSON.stringify({ ...staff, boothName }))
 }
 
 export function clearAuth() {
