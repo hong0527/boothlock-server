@@ -47,11 +47,12 @@ export default function BoothNamePage() {
     setSaved(false)
 
     const trimmed = name.trim()
-    // 서버도 공백만·50자 초과를 400으로 막지만, 손님에게 그대로 보이는 상호라 여기서 먼저 걸러 안내한다
+    // 서버도 공백만을 400으로 막지만, 손님에게 그대로 보이는 상호라 여기서 먼저 걸러 안내한다
     if (!trimmed) {
       setError('점포명을 입력해주세요.')
       return
     }
+    // 입력란의 maxLength가 먼저 막으므로 평소에는 여기까지 오지 않는다 — 안전망으로 둔다
     if (trimmed.length > MAX_LENGTH) {
       setError(`점포명은 ${MAX_LENGTH}자까지 입력할 수 있어요.`)
       return
@@ -71,8 +72,13 @@ export default function BoothNamePage() {
         throw new Error(body?.error?.message ?? `저장에 실패했어요 (${res.status})`)
       }
       setName(trimmed)
-      // 로그인 때 받은 부스명이 localStorage에 굳어 있다 — 재로그인 없이도 맞게 유지한다
-      updateStoredBoothName(trimmed)
+      // 저장된 부스명도 함께 갱신한다. 실패해도 저장 자체는 이미 끝났으므로 조용히 넘긴다 —
+      // 여기서 예외가 새면 서버는 바뀌었는데 화면에는 "저장에 실패했어요"가 뜬다.
+      try {
+        updateStoredBoothName(trimmed)
+      } catch {
+        // localStorage를 못 읽는 상황(손상된 값·차단된 저장소)이어도 저장 결과는 그대로다
+      }
       setSaved(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : '저장에 실패했어요.')
@@ -95,6 +101,7 @@ export default function BoothNamePage() {
           onChange={(e) => {
             setName(e.target.value)
             setSaved(false)
+            setError(null)   // 조회 실패 안내가 타이핑 중에도 남아 있지 않게 한다
           }}
           disabled={loading}
         />

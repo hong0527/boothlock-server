@@ -1,5 +1,5 @@
 import { Children, isValidElement, type ReactNode } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFetch } from '../../lib/apiFetch'
 import BoothNamePage from './BoothNamePage'
 
@@ -77,6 +77,9 @@ async function load(name: string) {
   render()
   await vi.waitFor(() => expect(field().disabled).toBe(false))
 }
+
+// 파일별로 환경이 분리되지만(vitest 기본 isolate), 나중에 그 설정이 바뀌어도 새지 않게 되돌린다
+afterAll(() => { vi.unstubAllGlobals() })
 
 beforeEach(() => {
   hooks.values = []
