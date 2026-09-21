@@ -24,6 +24,21 @@ export function setAuth(token: string, staff: StaffInfo) {
   writeStored(STAFF_KEY, JSON.stringify(staff))
 }
 
+/**
+ * 저장된 부스명만 갱신한다 — 토큰은 건드리지 않는다.
+ *
+ * 지금 이 값을 화면에 그리는 운영자 화면은 없다(손님 화면이 보는 부스명은 별도 경로다).
+ * 그래도 갱신하는 이유는, 로그인 때 받은 값이 그대로 굳어 있어서 표시처가 생기는 순간
+ * 옛 이름이 드러나기 때문이다. 어긋난 값을 남겨두지 않는다.
+ *
+ * 로그인하지 않은 상태면 아무것도 하지 않는다.
+ */
+export function updateStoredBoothName(boothName: string) {
+  const staff = getStaff()
+  if (!staff) return
+  localStorage.setItem(STAFF_KEY, JSON.stringify({ ...staff, boothName }))
+}
+
 export function clearAuth() {
   removeStored(TOKEN_KEY)
   removeStored(STAFF_KEY)

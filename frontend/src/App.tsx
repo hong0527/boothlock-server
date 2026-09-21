@@ -13,6 +13,7 @@ import MenuOrderPage from './pages/customer/MenuOrderPage'
 import SessionExpiredPage from './pages/customer/SessionExpiredPage'
 import TableSessionPage from './pages/customer/TableSessionPage'
 import AccountPage from './pages/settings/AccountPage'
+import BoothNamePage from './pages/settings/BoothNamePage'
 import MenuEditPage from './pages/settings/MenuEditPage'
 import MenuListPage from './pages/settings/MenuListPage'
 import SettlementPage from './pages/settings/SettlementPage'
@@ -50,6 +51,7 @@ function App() {
         <Route path="/settings/menu/new" element={<MenuEditPage />} />
         <Route path="/settings/menu/:id" element={<MenuEditPage />} />
         <Route path="/settings/account" element={<AccountPage />} />
+        <Route path="/settings/booth" element={<BoothNamePage />} />
         <Route path="/settings/table-qr" element={<TableQrPage />} />
         {/* Figma 디자인 없음 (파일럿 스코프 밖 화면) — O19 ADMIN 전용, 백엔드 403으로도 막힘 */}
         <Route path="/settings/settlement" element={<SettlementPage />} />

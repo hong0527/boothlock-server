@@ -4,6 +4,7 @@ import TopNav from '../components/TopNav'
 import { clearAuth, getStaff } from '../lib/auth'
 
 const BASE_MENU_ITEMS = [
+  { label: '점포명 변경', to: '/settings/booth' },
   { label: '테이블 QR 코드 생성', to: '/settings/table-qr' },
   { label: '메뉴 등록 / 편집', to: '/settings/menu' },
   { label: '계좌 등록', to: '/settings/account' },
