@@ -2,8 +2,14 @@ import { PAYMENT_STATUS_LABEL, type OrderSummary } from '../types/dashboard'
 import { displayTableLabel } from '../lib/tableLabel'
 import { formatClockTime, formatElapsed } from '../lib/time'
 
-const ACTION_BUTTON_CLASS =
-  'h-[54px] flex-1 rounded-xl bg-neutral-600 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50 disabled:opacity-40'
+const ACTION_BUTTON_BASE =
+  'h-[54px] flex-1 rounded-xl text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50 disabled:opacity-40'
+
+/** 완료·되돌리기 등 카드의 주 동작 (Figma 240:404 / 274:874) */
+const ACTION_BUTTON_CLASS = `${ACTION_BUTTON_BASE} bg-primary-300`
+
+/** 취소만 회색으로 남는다 — Figma 240:404에서 완료(초록) 옆에 눌리지 말아야 할 쪽으로 구분해 둔 색 */
+const CANCEL_BUTTON_CLASS = `${ACTION_BUTTON_BASE} bg-neutral-300`
 
 type OrderCardProps = {
   order: OrderSummary
@@ -54,7 +60,7 @@ export default function OrderCard({ order, now, pending, onComplete, onCancel, o
 
       {order.status === 'RECEIVED' && (
         <div className="mt-4 flex gap-4">
-          <button type="button" onClick={() => onCancel(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
+          <button type="button" onClick={() => onCancel(order.orderId)} disabled={pending} className={CANCEL_BUTTON_CLASS}>
             취소
           </button>
           <button type="button" onClick={() => onComplete(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>

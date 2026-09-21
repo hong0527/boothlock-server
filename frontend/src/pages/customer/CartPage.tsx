@@ -76,7 +76,7 @@ export default function CartPage() {
           type="button"
           disabled={items.length === 0}
           onClick={() => navigate('/order-confirm')}
-          className={`${CUSTOMER_BUTTON_BASE} bg-black text-heading-3 text-white disabled:opacity-40`}
+          className={`${CUSTOMER_BUTTON_BASE} bg-primary-300 text-heading-3 text-white disabled:opacity-40`}
         >
           주문하기
         </button>

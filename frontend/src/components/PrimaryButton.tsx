@@ -5,7 +5,7 @@ export default function PrimaryButton({ className, children, ...rest }: ButtonHT
   return (
     <button
       {...rest}
-      className={`${CONTROL_BASE} bg-neutral-600 text-lg leading-[1.2] font-semibold text-neutral-50 ${className ?? ''}`}
+      className={`${CONTROL_BASE} bg-primary-300 text-lg leading-[1.2] font-semibold text-neutral-50 ${className ?? ''}`}
     >
       {children}
     </button>

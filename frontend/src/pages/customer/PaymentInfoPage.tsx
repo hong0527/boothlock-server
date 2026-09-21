@@ -126,14 +126,14 @@ export default function PaymentInfoPage() {
         <button
           type="button"
           onClick={() => navigate('/order-history', { replace: true })}
-          className={`${CUSTOMER_BUTTON_BASE} bg-black text-heading-3 text-white`}
+          className={`${CUSTOMER_BUTTON_BASE} bg-primary-300 text-heading-3 text-white`}
         >
           주문내역 확인
         </button>
         <button
           type="button"
           onClick={() => navigate('/order', { replace: true })}
-          className={`${CUSTOMER_BUTTON_BASE} bg-black text-heading-3 text-white`}
+          className={`${CUSTOMER_BUTTON_BASE} bg-primary-300 text-heading-3 text-white`}
         >
           완료
         </button>

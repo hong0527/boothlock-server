@@ -79,7 +79,7 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
           />
           {error && <p className="text-sm text-red-600">{error}</p>}
-          <PrimaryButton type="submit" disabled={loading} className="mt-12 bg-primary-300! disabled:opacity-40">
+          <PrimaryButton type="submit" disabled={loading} className="mt-12 disabled:opacity-40">
             {loading ? '로그인 중...' : '로그인'}
           </PrimaryButton>
         </form>

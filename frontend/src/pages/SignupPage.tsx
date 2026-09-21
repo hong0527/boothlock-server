@@ -128,7 +128,7 @@ export default function SignupPage() {
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
-        <PrimaryButton type="submit" disabled={loading} className="mt-2 bg-primary-300! disabled:opacity-40">
+        <PrimaryButton type="submit" disabled={loading} className="mt-2 disabled:opacity-40">
           {loading ? '가입 중...' : '가입하기'}
         </PrimaryButton>
       </form>
