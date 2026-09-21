@@ -1,6 +1,6 @@
-# 로컬 확인용: MySQL 8.0 컨테이너 + API 서버(prod 프로필) — RDS 없이 운영 설정을 그대로 돌려 본다.
-#   ※ 이 파일은 작성만 됐고 실행 검증은 되지 않았다(작성 시점에 도커 데몬이 꺼져 있었음). 대신 같은 스키마·설정을
-#      로컬 mysqld 8.4.0(포트 3399)에서 검증했다 — backend/docs/배포_운영절차.md §0 참조.
+# 로컬 확인용: MySQL 8.0 컨테이너 + API 서버(prod,rds 프로필) — RDS 없이 운영 설정을 그대로 돌려 본다.
+#   RDS를 만들기 전에 이걸로 먼저 확인한다. 인스턴스를 만들고 나서 "스키마가 안 맞아 validate 실패"를
+#   발견하면 콘솔 왕복이 길어진다.
 #   기동:  docker compose -f docker-compose.local-mysql.yml up --build
 #   접속:  API http://localhost:8080 , MySQL localhost:3307 (boothlock / boothlock-local)
 #   스키마: mysql 컨테이너가 처음 뜰 때 backend/docs/schema-mysql8.sql 을 자동 적용한다 (docker-entrypoint-initdb.d)
@@ -39,7 +39,9 @@ services:
       mysql:
         condition: service_healthy
     environment:
-      SPRING_PROFILES_ACTIVE: prod
+      # prod 하나만 주면 안 뜬다 — prod 프로필이 org.h2.Driver를 명시하는데 URL은 MySQL이라
+      # 드라이버와 URL이 어긋난다. rds 오버레이가 드라이버·ddl-auto·격리수준을 덮어써야 한다.
+      SPRING_PROFILES_ACTIVE: prod,rds
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/boothlock?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&connectionCollation=utf8mb4_0900_ai_ci
       SPRING_DATASOURCE_USERNAME: boothlock
       SPRING_DATASOURCE_PASSWORD: boothlock-local
