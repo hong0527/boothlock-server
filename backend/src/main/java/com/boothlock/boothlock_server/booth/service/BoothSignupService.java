@@ -48,11 +48,14 @@ public class BoothSignupService {
     private final PasswordEncoder passwordEncoder = PasswordEncoderFactories.createDelegatingPasswordEncoder();
 
     public BoothSignupService(BoothRepository boothRepository, StaffAccountRepository staffAccountRepository,
-            BoothJwtProvider jwtProvider, @Value("${boothlock.signup.enabled:false}") boolean signupEnabled) {
+            BoothJwtProvider jwtProvider, @Value("${boothlock.signup.enabled:false}") String signupEnabled) {
         this.boothRepository = boothRepository;
         this.staffAccountRepository = staffAccountRepository;
         this.jwtProvider = jwtProvider;
-        this.signupEnabled = signupEnabled;
+        // 문자열로 받아 직접 판정한다 — primitive boolean으로 주입하면 BOOTLOCK_SIGNUP_ENABLED= (빈 값)일 때
+        // 플레이스홀더 기본값(false)이 적용되지 않아 null 주입에 실패하고, 이 빈이 못 떠서 API 컨테이너 전체가 안 뜬다.
+        // EventSeeder의 @ConditionalOnProperty(havingValue="true")와 같은 기준 — 정확히 true(대소문자 무시)만 켜짐.
+        this.signupEnabled = signupEnabled != null && "true".equalsIgnoreCase(signupEnabled.trim());
     }
 
     @Transactional

@@ -13,8 +13,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * {@code boothlock.signup.enabled=false}(기본값)일 때의 동작 — test/resources/application.properties가
- * 켠 상태를 가정하는 BoothSignupApiTests와 별도로, 여기서만 꺼서 기본 동작을 확인한다.
+ * {@code boothlock.signup.enabled=false}(기본값 = 운영 기본값)일 때의 동작 — 기능을 켜고 도는
+ * BoothSignupApiTests와 짝을 이룬다.
  */
 @SpringBootTest(properties = "boothlock.signup.enabled=false")
 @AutoConfigureMockMvc

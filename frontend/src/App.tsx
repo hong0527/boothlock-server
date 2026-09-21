@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { CartProvider } from './context/CartContext'
 import { TableOrderProvider } from './context/TableOrderContext'
 import { SIGNUP_ENABLED } from './lib/featureFlags'
@@ -28,8 +28,10 @@ function App() {
     <CartProvider>
       <Routes>
         <Route path="/" element={<LoginPage />} />
-        {/* 임시 데모 (Figma 237:344) — 기본 꺼짐, VITE_SIGNUP_ENABLED=true일 때만 노출. SignupPage.tsx 상단 주석 참고 */}
-        {SIGNUP_ENABLED && <Route path="/signup" element={<SignupPage />} />}
+        {/* 임시 데모 (Figma 237:344) — 기본 꺼짐, VITE_SIGNUP_ENABLED=true일 때만 노출. SignupPage.tsx 상단 주석 참고.
+            꺼진 동안에도 라우트 자체는 남긴다 — 라우트를 빼면 Routes에 path="*" 폴백이 없어서 공유·북마크된
+            /signup 이 에러도 이동도 없는 백지로 뜬다(nginx가 아무 경로나 index.html을 준다). */}
+        <Route path="/signup" element={SIGNUP_ENABLED ? <SignupPage /> : <Navigate to="/" replace />} />
         <Route path="/orders" element={<OrderStatusPage />} />
 
         {/* 방문자 홈 — Figma 92:2 / 95:368 / 212:704 */}

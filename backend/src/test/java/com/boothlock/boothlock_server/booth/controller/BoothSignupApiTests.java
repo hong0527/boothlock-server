@@ -25,8 +25,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** 임시 데모 회원가입 (명세서 밖 — BoothSignupService 상단 주석 참고) */
-@SpringBootTest
+/**
+ * 임시 데모 회원가입 (명세서 밖 — BoothSignupService 상단 주석 참고).
+ * 기능이 켜진 상태를 가정하므로 여기서만 켠다 — 전역(test/resources/application.properties)에서 켜면
+ * 모든 테스트가 운영 기본값(꺼짐)과 다른 설정으로 돌게 된다. 꺼진 상태는 BoothSignupDisabledApiTests가 본다.
+ */
+@SpringBootTest(properties = "boothlock.signup.enabled=true")
 @AutoConfigureMockMvc
 class BoothSignupApiTests {
 
