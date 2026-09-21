@@ -186,7 +186,7 @@ export default function PartySizePage() {
           setSessionPartySize(partySize)
           navigate('/order', { replace: true })
         }}
-        className="text-body-1 absolute inset-x-[18px] bottom-9 h-[50px] rounded-xl bg-black text-white"
+        className="text-body-1 absolute inset-x-[18px] bottom-9 h-[50px] rounded-xl bg-primary-300 text-white"
       >
         주문 시작하기
       </button>

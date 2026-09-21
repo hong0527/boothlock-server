@@ -87,7 +87,7 @@ export default function OrderHistoryPage() {
         <button
           type="button"
           onClick={() => navigate('/order')}
-          className="h-[50px] w-full rounded-[12px] bg-black text-body-1 text-white"
+          className="h-[50px] w-full rounded-[12px] bg-primary-300 text-body-1 text-white"
         >
           확인
         </button>

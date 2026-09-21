@@ -159,7 +159,7 @@ export default function OrderStatusPage() {
               <button
                 type="button"
                 onClick={() => acknowledgeCall(call.callId)}
-                className="rounded-xl bg-neutral-600 px-4 py-2 text-base leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
+                className="rounded-xl bg-primary-300 px-4 py-2 text-base leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50"
               >
                 확인
               </button>
