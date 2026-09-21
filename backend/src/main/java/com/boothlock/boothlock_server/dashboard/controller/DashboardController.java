@@ -119,7 +119,19 @@ public class DashboardController {
         return orderActionService.cancelByStaff(authorization, orderId, request.reason());
     }
 
-    /** O14 수기 주문 (Should) — 검증은 소비자 주문(C3)과 동일, isManual 표시, 미지정 시 M-{통산} */
+    /**
+     * O14 수기 주문 (Should) — 검증은 소비자 주문(C3)과 동일, isManual 표시, 미지정 시 M-{통산}
+     *
+     * <p><b>응답 형태가 이 컨트롤러의 다른 액션과 다르다.</b> 나머지는 전부
+     * {@code DashboardResponse.OrderSummary}를 주는데 여기만 {@code OrderCreateResponse}(손님 주문 C3 형태)다.
+     * 그쪽에는 {@code manual}·{@code tableLabel}·{@code items[].itemId}가 없고 대신
+     * {@code payment.method}·{@code items[].subtotal}이 있다.
+     *
+     * <p>지금은 프론트가 이 응답 본문을 버리고 목록을 다시 읽어서 문제가 없다. 하지만 "응답으로 바로
+     * 보드를 갱신하자"는 최적화를 넣으면 수기 주문 카드에서 수기 배지와 테이블 라벨이 사라지고,
+     * 결제 모달의 항목 +/-·개별 취소가 {@code itemId} 없이 엉뚱한 항목을 가리킨다.
+     * 그렇게 바꿀 거면 응답 타입을 먼저 OrderSummary로 맞춰야 한다.
+     */
     @Operation(summary = "O14 수기 주문", description = "tableId를 지정하면 그 테이블 세션에 귀속시킨다(없으면 자동 생성). "
             + "생략하면 테이블 미지정 주문(M-통산번호)으로 만든다. 검증은 소비자 주문(C3)과 동일하며, "
             + "품절·마감·잘못된 요청이면 세션을 만들지 않는다. tableId는 JWT 부스 소속이어야 한다(아니면 404).")

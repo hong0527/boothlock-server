@@ -18,9 +18,11 @@ type OrderCardProps = {
   onComplete: (orderId: number) => void
   onCancel: (orderId: number) => void
   onRestore: (orderId: number) => void
+  /** ADMIN이 아니면 넘기지 않는다 — 환불 완료는 ADMIN 전용(백엔드 403) */
+  onRefundDone?: (orderId: number) => void
 }
 
-export default function OrderCard({ order, now, pending, onComplete, onCancel, onRestore }: OrderCardProps) {
+export default function OrderCard({ order, now, pending, onComplete, onCancel, onRestore, onRefundDone }: OrderCardProps) {
   return (
     <div className="flex min-h-[321px] w-full flex-col rounded-xl border border-neutral-200 bg-neutral-50 p-4">
       <div className="flex items-start justify-between">
@@ -74,6 +76,18 @@ export default function OrderCard({ order, now, pending, onComplete, onCancel, o
           <button type="button" onClick={() => onRestore(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
             되돌리기
           </button>
+          {/* 입금된 주문을 취소하면 '환불필요'로 남는다. 돈을 돌려준 뒤 이걸 눌러야 정산에서 빠진다.
+              ADMIN에게만 보인다 — STAFF가 누르면 백엔드가 403을 준다. */}
+          {order.paymentStatus === 'REFUND_NEEDED' && onRefundDone && (
+            <button
+              type="button"
+              onClick={() => onRefundDone(order.orderId)}
+              disabled={pending}
+              className={CANCEL_BUTTON_CLASS}
+            >
+              환불 완료
+            </button>
+          )}
         </div>
       )}
 

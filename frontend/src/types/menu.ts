@@ -3,7 +3,7 @@ export type MenuItem = {
   name: string
   price: number
   soldOut: boolean
-  imageUrl?: string
+  imageUrl?: string | null
   visible: boolean
-  category?: 'MAIN' | 'SIDE' | 'DRINK'
+  category?: 'MAIN' | 'SIDE' | 'DRINK' | null
 }
