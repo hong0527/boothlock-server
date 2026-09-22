@@ -70,7 +70,10 @@ export default function TableQrPage() {
     const a = document.createElement('a')
     a.href = url
     a.download = `${table.label}-qr.png`
+    // DOM에 붙였다 떼기 — 문서에 없는 앵커의 클릭은 일부 브라우저/자동화 환경에서 다운로드로 안 이어질 수 있다(SettlementPage에서 실측)
+    document.body.appendChild(a)
     a.click()
+    document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }
 
