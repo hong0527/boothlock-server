@@ -36,4 +36,6 @@ export type TableStatusInfo = {
   /** O3 응답엔 없음 — 프론트가 O10 대시보드 주문을 테이블별로 묶어서 계산해 붙인 값(테이블-홈 카드 표시용) */
   orderItems: TableOrderItemSummary[]
   orderTotal: number
+  /** 지금 앉은 손님의 첫 주문 시각(취소 제외) — 테이블-홈 카드 시간 표시용. 주문이 없으면 null. orderItems와 같이 프론트가 계산 */
+  firstOrderAt: string | null
 }

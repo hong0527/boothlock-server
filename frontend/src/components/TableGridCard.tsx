@@ -91,9 +91,10 @@ export default function TableGridCard({
           <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
             {displayTableLabel(table.label)}
           </span>
-          {table.session && (
+          {/* QR을 처음 찍은 시각(session.startedAt)이 아니라 지금 손님의 첫 주문 시각 — 주문 전에는 표시하지 않는다 */}
+          {table.firstOrderAt && (
             <span className="text-sm leading-[1.5] tracking-[-0.04em] text-neutral-900">
-              {formatClockTime(table.session.startedAt)}
+              {formatClockTime(table.firstOrderAt)}
             </span>
           )}
         </div>

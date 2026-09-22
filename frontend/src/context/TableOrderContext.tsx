@@ -54,7 +54,7 @@ const findFreeGridPosition = (placed: { x: number; y: number }[]) => {
   return gridPosition(index, columns)
 }
 
-type TableOrderAggregate = Pick<TableStatusInfo, 'orderItems' | 'orderTotal'>
+type TableOrderAggregate = Pick<TableStatusInfo, 'orderItems' | 'orderTotal' | 'firstOrderAt'>
 
 // 테이블-홈(Figma)은 카드에 항목별 수량·합계를 보여준다 — O3엔 없는 값이라 O10 주문 목록을 테이블별로 묶어서 계산한다.
 // O10은 그 영업일의 모든 세션 주문을 주므로 지금 앉은 손님 것만 센다 — 주문의 sessionId와 O3 session.id(세션 PK)를 맞춘다.
@@ -66,15 +66,17 @@ const aggregateTableOrders = (
 ): TableOrderAggregate => {
   const items = new Map<string, number>()
   let total = 0
+  let firstOrderAt: string | null = null
   for (const order of orders) {
     if (order.status === 'CANCELED') continue
     if (!isOrderOfSession(order, table.session)) continue
     total += order.totalAmount
+    if (firstOrderAt === null || Date.parse(order.createdAt) < Date.parse(firstOrderAt)) firstOrderAt = order.createdAt
     for (const item of order.items) {
       items.set(item.menuName, (items.get(item.menuName) ?? 0) + item.qty)
     }
   }
-  return { orderItems: Array.from(items, ([menuName, qty]) => ({ menuName, qty })), orderTotal: total }
+  return { orderItems: Array.from(items, ([menuName, qty]) => ({ menuName, qty })), orderTotal: total, firstOrderAt }
 }
 
 export function TableOrderProvider({ children }: { children: ReactNode }) {
@@ -90,7 +92,7 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
     try {
       const res = await apiFetch('/api/v1/admin/tables')
       if (!res.ok) throw new Error(`테이블 목록을 불러오지 못했어요 (${res.status})`)
-      const data: { tables: Omit<TableStatusInfo, 'orderItems' | 'orderTotal'>[] } = await res.json()
+      const data: { tables: Omit<TableStatusInfo, keyof TableOrderAggregate>[] } = await res.json()
 
       // 주문 집계는 실패해도 테이블 목록 자체는 보여준다 — 카드에 항목만 비게 나올 뿐
       let orders: OrderSummary[] = []
@@ -178,8 +180,8 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
       setError(`테이블 위치를 저장하지 못했어요 (${res.status})`)
       return
     }
-    // O22 응답엔 orderItems/orderTotal이 없다(O3 확장 필드) — 기존 값을 덮어쓰지 않게 얹어준다
-    const updated: Omit<TableStatusInfo, 'orderItems' | 'orderTotal'> = await res.json()
+    // O22 응답엔 orderItems/orderTotal/firstOrderAt이 없다(프론트 계산 필드) — 기존 값을 덮어쓰지 않게 얹어준다
+    const updated: Omit<TableStatusInfo, keyof TableOrderAggregate> = await res.json()
     setTables((prev) => prev.map((t) => (t.id === tableId ? { ...t, ...updated } : t)))
   }
 
