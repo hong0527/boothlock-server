@@ -5,7 +5,7 @@ import TableGridCard from '../components/TableGridCard'
 import TopNav from '../components/TopNav'
 import { useTableOrders } from '../context/TableOrderContext'
 import { getAuthToken } from '../lib/auth'
-import { displayTableLabel } from '../lib/tableLabel'
+import { compareTableLabels, displayTableLabel } from '../lib/tableLabel'
 
 const CARD_WIDTH = 200
 const CARD_HEIGHT = 240
@@ -13,11 +13,13 @@ const HANDLE_SPACE = 40
 const CANVAS_SIDE_PADDING = 40 // 캔버스 컨테이너의 px-10(좌우 각 40px)
 
 export default function TableHomePage() {
-  const { tables, error, refetch, addTable, moveTable, commitTablePosition, placeUnplacedTable } = useTableOrders()
+  const { tables, error, refetch, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable } =
+    useTableOrders()
   const [editMode, setEditMode] = useState(false)
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
   const [viewportWidth, setViewportWidth] = useState(() => document.documentElement.clientWidth)
-  // "테이블 추가" 연타를 막는다 — 안 막으면 같은 클릭이 두 번 나가 테이블이 두 개 생길 수 있다
+  // 추가·삭제 중 연타를 막는다 — 안 막으면 "테이블 추가"는 테이블이 두 개 생기고, "테이블 삭제"는 같은 테이블에
+  // DELETE가 두 번 나가 하나는 204, 하나는 404가 뜬다(실제 재현됨)
   const [tableActionBusy, setTableActionBusy] = useState(false)
   // 망 끊김처럼 context의 error에 안 담기는 실패를 이 화면에서 알린다
   const [tableError, setTableError] = useState<string | null>(null)
@@ -60,6 +62,24 @@ export default function TableHomePage() {
     }
   }
 
+  // 개별 카드마다 삭제 버튼을 두지 않고, 항상 라벨이 가장 큰(마지막) 테이블만 지운다
+  // (서버도 마지막 테이블만 삭제를 허용 — 그 외엔 409, 사용 중이면 마찬가지로 409)
+  const handleDeleteLastTable = async () => {
+    if (tables.length === 0 || tableActionBusy) return
+    const lastTable = tables.reduce((max, t) => (compareTableLabels(t.label, max.label) > 0 ? t : max))
+    if (!window.confirm(`${displayTableLabel(lastTable.label)}을(를) 삭제할까요?`)) return
+    setTableActionBusy(true)
+    setTableError(null)
+    try {
+      await deleteTable(lastTable.id)
+    } catch {
+      // handleAddTable과 같은 이유 — 401 이동 중이거나 망 끊김
+      if (getAuthToken()) setTableError('테이블을 삭제하지 못했어요. 네트워크 상태를 확인해주세요.')
+    } finally {
+      setTableActionBusy(false)
+    }
+  }
+
   return (
     <div className="min-h-screen w-full bg-[#f4f5f7]">
       <TopNav />
@@ -69,6 +89,9 @@ export default function TableHomePage() {
           <>
             <PillButton type="button" onClick={handleAddTable} disabled={tableActionBusy}>
               테이블 추가
+            </PillButton>
+            <PillButton type="button" onClick={handleDeleteLastTable} disabled={tables.length === 0 || tableActionBusy}>
+              테이블 삭제
             </PillButton>
             <PillButton type="button" onClick={() => setEditMode(false)}>
               저장하기
