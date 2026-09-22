@@ -18,10 +18,12 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * [담당: 백지연] 정산·통계·피드백 — API 명세서 O18·O19·O20
- * 핵심 규칙: 매출은 PAID 기준, date=영업일(06:00~익일05:59), CSV는 행=주문항목·BOM·수식주입 방지.
+ * 핵심 규칙: O18 매출은 PAID 기준·영업일(06:00~익일05:59). O19 CSV는 PAID 확정 매출만,
+ * 입금 확인 시각(approvedAt, KST) 구간 기준(v0.6.5) — 행=주문항목·BOM·수식주입 방지.
  */
 @Tag(name = "정산·통계·피드백", description = "운영자 정산·통계·피드백 (명세서 O18·O19·O20, 담당: 백지연)")
 @RestController
@@ -49,14 +51,17 @@ public class SettleController {
         return salesStatsService.getSales(authorization, date);
     }
 
-    /** O19 정산 CSV (Should) — 전체 원장(승인·취소·환불 이력 컬럼), UTF-8 BOM. O18과 같은 ADMIN 전용 */
-    @Operation(summary = "O19 정산 CSV 다운로드", description = "영업일 기준 전체 주문 항목 원장을 CSV로 내려받는다.")
+    /** O19 정산 CSV (Should) — 시작~마감(KST) 구간에 입금 확인된 PAID 매출만, UTF-8 BOM. O18과 같은 ADMIN 전용 */
+    @Operation(summary = "O19 정산 CSV 다운로드",
+            description = "시작~마감 일시(KST) 구간에 입금 확인(approvedAt)된 PAID 주문 항목을 CSV로 내려받는다.")
     @GetMapping("/admin/reports/settlement.csv")
     public ResponseEntity<byte[]> downloadSettlement(
             @RequestHeader("Authorization") String authorization,
-            @RequestParam(required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        SettlementCsvService.Result result = settlementCsvService.generate(authorization, date);
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startAt,
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endAt) {
+        SettlementCsvService.Result result = settlementCsvService.generate(authorization, startAt, endAt);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + result.filename() + "\"")

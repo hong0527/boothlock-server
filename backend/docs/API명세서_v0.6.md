@@ -25,6 +25,7 @@
 | v0.6.4 | 2026-09-22 | O6 퇴실이 종료한 세션의 남은 접수(RECEIVED) 주문을 완료(DONE)로 넘긴다 — "결제 완료"·"테이블 비우기" 공통. 응답에 `completedOrderCount` 추가 |
 | **v0.6.3** | **2026-09-20** | **팀 결정으로 "회원가입 API 없음"을 철회 — O0 신설.** `POST /api/v1/admin/auth/signup`이 부스+ADMIN 계정을 함께 만들고 O1과 같은 형태로 즉시 로그인 처리한다. **알려진 위험(§O0 경고 참고): 신원 확인 없이 임의의 boothName으로 계정 생성 가능** — 운영 배포 전 재검토 필요. Figma node `237:344`(회원가입 화면) 프론트 구현 포함 |
 | v0.6.4 | 2026-09-20 | **O19 정산 CSV 구현 완료 — 마지막 501 스텁 해소.** O18과 같은 ADMIN 전용으로 확정. 행은 취소되지 않은 OrderItem 1건, 수식 주입 방지 적용. §7 부록·확정 필요 표·501 에러 설명에서 O19 관련 문구 정리 |
+| v0.6.5 | 2026-09-22 | **팀 결정으로 O19 정산 CSV 조회 기준 변경 — "영업일 전체 원장"에서 "지정 구간의 PAID 확정 매출"로.** `date`(영업일 단일 조회) 파라미터를 제거하고 `startAt`·`endAt`(둘 다 필수, KST) 구간으로 교체. 행 대상도 `paymentStatus = PAID`만으로 좁힘(기존은 취소 안 된 항목 전체, UNPAID 포함). 구간 판정은 주문 생성 시각(createdAt)이 아니라 입금 확인 시각(approvedAt) 기준, `start <= approvedAt < end` — 자정을 넘는 구간도 그대로 처리됨. O18(매출 집계)과 달리 영업일(06:00 경계) 개념을 쓰지 않으므로 두 리포트의 합계가 항상 일치하지는 않음(§O19 참고) |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -533,7 +534,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | O16 | GET | `/api/v1/admin/booth` | 8.3 부스 정보 조회 | Must |
 | O17 | PATCH | `/api/v1/admin/booth` | 8.3 부스 정보 수정·접수 스위치 | Must |
 | O18 | GET | `/api/v1/admin/stats/sales` | 7.1 실시간 매출 집계 (**ADMIN 전용**) | Should |
-| O19 | GET | `/api/v1/admin/reports/settlement.csv` | 7.3 정산 CSV (**ADMIN 전용, v0.6.4 구현**) | Should |
+| O19 | GET | `/api/v1/admin/reports/settlement.csv` | 7.3 정산 CSV (**ADMIN 전용, v0.6.5 — startAt·endAt 구간, PAID 기준**) | Should |
 | O20 | POST | `/api/v1/admin/feedback` | 7.4 운영자 피드백 제출 | Should |
 | O21 | POST | `/api/v1/admin/orders/{orderId}/refund-done` | 5.5 환불 송금 완료 처리 (**ADMIN 전용**) | Should |
 | O22 | PATCH | `/api/v1/admin/tables/{tableId}/position` | 4.6 테이블 배치 좌표 저장 | Should |
@@ -870,17 +871,23 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 - 집계 기준 `paymentStatus = PAID`. REFUND_NEEDED/REFUNDED는 별도. `date` 영업일 기준, 생략 시 현재 영업일. 형식 오류 `400`
 - **STAFF는 `403`** (코드가 ADMIN만 허용 — v0.5 "STAFF 이상"과 다름)
 
-## O19. GET /api/v1/admin/reports/settlement.csv?date= — 정산 CSV (기능 7.3, **ADMIN 전용**)
+## O19. GET /api/v1/admin/reports/settlement.csv?startAt=&endAt= — 정산 CSV (기능 7.3, **ADMIN 전용**, v0.6.5)
 
-**Response 200**: `text/csv; charset=UTF-8` BOM 포함, `Content-Disposition: attachment; filename="settlement_{boothId}_{영업일}.csv"`. 행 = 취소되지 않은 OrderItem 1건. 컬럼 `주문번호, 테이블, 주문시각, 메뉴명, 수량, 단가, 금액, 주문상태, 결제상태, 결제수단, 승인자, 승인시각, 취소자, 취소시각, 취소사유, 환불처리자, 환불처리시각`. `= + - @`로 시작하는 셀 값은 앞에 `'`를 붙여 수식 주입을 막는다(엑셀에서 셀 내용이 수식으로 실행되는 것 방지)
+**Request**: `startAt`·`endAt` 둘 다 필수, ISO 8601 datetime(KST, 예 `2026-09-30T22:00:00`). 조회 구간은 `startAt <= approvedAt < endAt`(입금 확인 시각 기준, 아래 참고).
 
-**규칙 (v0.6.4 구현 — 명세가 "구현 시 결정"으로 남겨둔 것들)**
-- **취소 항목 제외**: 개별 취소(O23b)된 항목은 행에서 뺀다 — C4·대시보드 응답의 "취소 항목 제외" 관례와 통일, 합계가 다른 화면과 어긋나지 않게
+**Response 200**: `text/csv; charset=UTF-8` BOM 포함, `Content-Disposition: attachment; filename="settlement_{boothId}_{startAt}_{endAt}.csv"`(콜론은 파일명에 못 쓰므로 `yyyyMMdd'T'HHmmss` 형식). 행 = `paymentStatus = PAID`인 주문의 취소되지 않은 OrderItem 1건. 컬럼 `주문번호, 테이블, 주문시각, 메뉴명, 수량, 단가, 금액, 주문상태, 결제상태, 결제수단, 승인자, 승인시각, 취소자, 취소시각, 취소사유, 환불처리자, 환불처리시각`(주문시각 컬럼은 createdAt — 조회 범위 기준이 아니라 표시용). `= + - @`로 시작하는 셀 값은 앞에 `'`를 붙여 수식 주입을 막는다(엑셀에서 셀 내용이 수식으로 실행되는 것 방지)
+
+**규칙**
+- **대상 = PAID만**: UNPAID·REFUND_NEEDED·REFUNDED·CANCELED 주문은 행에 나오지 않는다
+- **구간 기준 = approvedAt(입금 확인 시각)**: 주문 생성 시각(createdAt)이 아니다 — O11(개별 입금 확인)·O24(테이블 일괄 입금 확인)가 `paymentStatus=PAID` 전환과 같은 UPDATE 문으로 원자적으로 기록하는 값. 예: `2026-09-30 21:50` 생성 → `2026-10-01 02:10` 결제 확인이면 `2026-09-30 22:00 ~ 2026-10-01 03:00` 조회에 포함됨
+- **경계**: `startAt <= approvedAt < endAt` — start는 포함, end는 제외
+- **자정 교차**: 별도 처리 없이 approvedAt 비교만으로 그대로 지원(영업일 06:00 경계 개념과 무관한 별도 구간)
+- **개별 취소 항목 제외**: 개별 취소(O23b)된 항목은 행에서 뺀다 — C4·대시보드 응답의 "취소 항목 제외" 관례와 통일
 - **권한 = O18과 동일(ADMIN 전용)**: 명세 O19 자체엔 role 제한이 명시돼 있지 않았으나, 같은 "7 정산" 범주인 O18(매출 집계)이 ADMIN 전용이라 통일했다
-- `date` 생략 시 O18과 동일하게 현재 영업일(KST 06:00 경계) 사용
 - 삭제(hidden=true) 처리된 취소 주문도 원장에는 포함(O18과 같은 이유 — 정산은 숨김 여부와 무관하게 전부 봐야 함)
+- **O18과의 관계**: O18은 영업일(생성 시각 기준, 06:00 경계)로 대상을 추린 뒤 PAID를 합산하고, O19는 approvedAt 구간으로 직접 PAID만 조회한다 — 조회 축이 달라 같은 날짜를 겨냥해도 두 수치가 항상 일치하지는 않는다(경계 부근 주문이 서로 다른 쪽에 잡힐 수 있음)
 
-**Errors**: `400`(잘못된 date) / `401` / `403`(STAFF)
+**Errors**: `400`(`startAt`·`endAt` 누락, `startAt >= endAt`, 형식 오류) / `401` / `403`(STAFF)
 
 ## O20. POST /api/v1/admin/feedback — 운영자 피드백 (기능 7.4)
 
@@ -1092,7 +1099,7 @@ TableSession 1─N Call
 | 11 | 테이블 QR = 그 테이블의 공용 접근권(의도된 설계). 유휴 세션은 재스캔 시 새 발급되어 앞 손님 주문이 새 손님에게 넘어가지 않는다 | C1 |
 | 12 | 업로드: 매직바이트·SVG 거부·재인코딩·랜덤 파일명·nosniff. 약도 서빙은 확장자 화이트리스트 + CSP | O9·E2 |
 | 13 | 개인정보: 서버는 소비자 개인정보 미저장. 입금자명 실명은 운영자 계좌 거래내역에 남음 — 행사 후 폐기 안내 | 운영 |
-| 14 | 정산 CSV 수식 주입 방지 | O19 (v0.6.4 구현 완료) |
+| 14 | 정산 CSV 수식 주입 방지 | O19 (v0.6.5 — PAID+approvedAt 구간 기준) |
 | 15 | 목표 동시 접속 수치·부하 테스트 — 미실시(운영 미결) | 비기능 |
 | 16 | 백업: RDS 자동 백업. 오프라인 모드 기각 | 운영 |
 | 17 | HSTS·HTTPS 리다이렉트는 프록시/로드밸런서 | 배포 문서 |

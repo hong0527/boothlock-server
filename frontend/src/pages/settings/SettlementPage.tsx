@@ -5,46 +5,41 @@ import TextField from '../../components/TextField'
 import TopNav from '../../components/TopNav'
 import { apiFetch } from '../../lib/apiFetch'
 
-/**
- * 현재 **영업일**을 input[type=date] 형식(yyyy-MM-dd)으로.
- *
- * 달력 날짜를 그대로 쓰면 안 된다. 영업일은 06:00에 바뀌므로(서버 OrderNumberingService와 같은 규칙),
- * 자정 넘어 정산을 받으면 아직 시작도 안 한 다음 영업일을 조회해 **빈 CSV**를 받는다.
- * 축제가 밤늦게 끝나는 것을 생각하면 그 시간대가 곧 실제 사용 시간대다.
- *
- * 브라우저 시계가 KST가 아닐 수 있으므로 KST로 맞춘 뒤 6시간을 뺀다.
- */
-export function businessDateInputValue(at: Date = new Date()) {
-  const KST_OFFSET_MS = 9 * 60 * 60 * 1000
-  const BUSINESS_DAY_START_HOURS = 6
-  const kst = new Date(at.getTime() + KST_OFFSET_MS - BUSINESS_DAY_START_HOURS * 60 * 60 * 1000)
-  return kst.toISOString().slice(0, 10)
-}
-
-/** Content-Disposition의 filename="..." 값을 뽑는다 — 못 찾으면 날짜로 대체 파일명 구성 */
-function extractFilename(header: string | null, fallbackDate: string) {
+/** Content-Disposition의 filename="..." 값을 뽑는다 — 못 찾으면 대체 파일명 사용 */
+function extractFilename(header: string | null) {
   const match = header?.match(/filename="([^"]+)"/)
-  return match?.[1] ?? `settlement_${fallbackDate}.csv`
+  return match?.[1] ?? 'settlement.csv'
 }
 
 export default function SettlementPage() {
-  const [date, setDate] = useState(businessDateInputValue)
+  const [startAt, setStartAt] = useState('')
+  const [endAt, setEndAt] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleDownload = async () => {
     if (loading) return
+    if (!startAt || !endAt) {
+      setError('시작 일시와 마감 일시를 모두 입력해주세요.')
+      return
+    }
+    if (startAt >= endAt) {
+      setError('시작 일시는 마감 일시보다 이전이어야 해요.')
+      return
+    }
     setLoading(true)
     setError(null)
 
     try {
-      const res = await apiFetch(`/api/v1/admin/reports/settlement.csv?date=${date}`)
+      const params = new URLSearchParams({ startAt, endAt })
+      const res = await apiFetch(`/api/v1/admin/reports/settlement.csv?${params.toString()}`)
       if (!res.ok) {
         if (res.status === 403) throw new Error('정산 CSV는 ADMIN 계정만 다운로드할 수 있어요.')
+        if (res.status === 400) throw new Error('시작/마감 일시를 확인해주세요.')
         throw new Error(`다운로드에 실패했어요 (${res.status})`)
       }
       const blob = await res.blob()
-      const filename = extractFilename(res.headers.get('Content-Disposition'), date)
+      const filename = extractFilename(res.headers.get('Content-Disposition'))
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -68,13 +63,20 @@ export default function SettlementPage() {
 
       <div className="mx-auto flex w-full max-w-[600px] flex-col gap-6 px-6 py-10">
         <TextField
-          label="영업일"
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
+          label="시작 일시"
+          type="datetime-local"
+          value={startAt}
+          onChange={(e) => setStartAt(e.target.value)}
+        />
+        <TextField
+          label="마감 일시"
+          type="datetime-local"
+          value={endAt}
+          onChange={(e) => setEndAt(e.target.value)}
         />
         <p className="text-sm text-neutral-400">
-          영업일은 06:00부터 다음날 05:59까지예요. 선택한 날짜의 전체 주문 항목을 CSV로 받아요.
+          입금 확인(결제 완료) 시각이 시작~마감 사이인 주문만 CSV에 포함돼요. 자정을 넘는 구간도 그대로
+          입력하면 돼요 (예: 시작 9/30 22:00, 마감 10/1 03:00).
         </p>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
