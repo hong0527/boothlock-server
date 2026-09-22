@@ -21,6 +21,8 @@ export type TableCheckoutResult = {
   id?: number
   label?: string
   status?: 'EMPTY' | 'OCCUPIED'
+  /** 이 퇴실로 완료(DONE) 처리된 남은 접수 주문 수 */
+  completedOrderCount?: number
   warning?: string
 }
 

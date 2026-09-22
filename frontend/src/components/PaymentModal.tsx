@@ -405,8 +405,10 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     }
   }
 
-  // O6 퇴실 — 성공하면 모달을 닫는다. 응답의 warning(미결제 남음)은 닫기 전에 한 번 보여준다
-  const checkout = async (): Promise<boolean> => {
+  // O6 퇴실 — 성공하면 모달을 닫는다. 응답의 warning(미결제 남음)은 닫기 전에 한 번 보여준다.
+  // announcedReceived = 확인창에서 "완료 처리됩니다"라고 알린 건수. 확인창 목록은 현재 영업일 주문만이라(O10 기본 조회),
+  // 영업일을 넘긴 세션의 어제 접수 주문까지 서버가 완료했으면 그 차이를 함께 알린다
+  const checkout = async (announcedReceived = 0): Promise<boolean> => {
     const res = await checkoutTable(table.id)
     if (res.status === 410) {
       // 개정 전 백엔드: 이미 퇴실 처리된 테이블 — 할 일이 없으니 닫는다 (개정 후에는 멱등 200)
@@ -418,11 +420,24 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       return false
     }
     const result: TableCheckoutResult | null = await res.json().catch(() => null)
+    const notices: string[] = []
     if (result?.warning || result?.unpaidWarning) {
-      window.alert(result.warning ?? '미결제 주문이 남아 있어요. 주문 현황에서 개별 입금확인이 필요해요.')
+      notices.push(result.warning ?? '미결제 주문이 남아 있어요. 주문 현황에서 개별 입금확인이 필요해요.')
     }
+    const extraCompleted = (result?.completedOrderCount ?? 0) - announcedReceived
+    if (extraCompleted > 0) {
+      notices.push(`목록에 없던 다른 영업일 미완료 주문 ${extraCompleted}건도 완료 처리됐어요.`)
+    }
+    if (notices.length > 0) window.alert(notices.join('\n'))
     onCheckedOut()
     return true
+  }
+
+  // 퇴실(O6)하면 서버가 남은 접수 주문을 완료로 넘긴다 — 두 버튼의 확인창에 그 사실을 한 줄로 알린다
+  const receivedCount = (list: OrderSummary[]) => list.filter((o) => o.status === 'RECEIVED').length
+  const receivedNote = (list: OrderSummary[]) => {
+    const count = receivedCount(list)
+    return count > 0 ? `\n미완료 주문 ${count}건도 완료 처리됩니다.` : ''
   }
 
   // "결제 완료" = 미결제 합계를 확인받고 O24 일괄 입금확인 → 성공하면 O6 퇴실. 미결제 0건이면 O24 없이 바로 퇴실
@@ -442,15 +457,15 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
         table.unpaidOrderCount > 0
           ? `\n서버 기준 미결제 ${table.unpaidOrderCount}건이 있지만 현재 목록에 없어요(다른 영업일 주문 등). 퇴실해도 그대로 남습니다.`
           : ''
-      if (!window.confirm(`입금 확인할 미결제 주문이 없어요. 퇴실 처리할까요?${serverNote}`)) return
+      if (!window.confirm(`입금 확인할 미결제 주문이 없어요.${receivedNote(freshOrders)}\n퇴실 처리할까요?${serverNote}`)) return
       setCheckingOut(true)
-      await checkout()
+      await checkout(receivedCount(freshOrders))
       setCheckingOut(false)
       return
     }
 
     const ok = window.confirm(
-      `미결제 ${freshUnpaid.length}건 · 합계 ${freshUnpaidAmount.toLocaleString()}원\n계좌이체 입금을 확인하고 퇴실 처리할까요?`,
+      `미결제 ${freshUnpaid.length}건 · 합계 ${freshUnpaidAmount.toLocaleString()}원${receivedNote(freshOrders)}\n계좌이체 입금을 확인하고 퇴실 처리할까요?`,
     )
     if (!ok) return
 
@@ -468,11 +483,11 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       refetch()
       return
     }
-    await checkout()
+    await checkout(receivedCount(freshOrders))
     setCheckingOut(false)
   }
 
-  // "테이블 비우기" = 입금확인 없이 O6만. 미결제가 남는다는 것을 확인받는다
+  // "테이블 비우기" = 입금확인 없이 O6만(남은 접수 주문 완료는 O6가 함께 한다). 미결제가 남는다는 것을 확인받는다
   const handleVacate = async () => {
     if (checkingOut || busy) return
     if (!(await commitPending())) return
@@ -481,11 +496,11 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     const unpaidCount = Math.max(freshUnpaidCount, table.unpaidOrderCount)
     const message =
       unpaidCount > 0
-        ? `미결제 ${unpaidCount}건이 그대로 남습니다. 입금 확인 없이 테이블을 비울까요?`
-        : '테이블을 비울까요? 손님 화면은 바로 접속이 끊어져요.'
+        ? `미결제 ${unpaidCount}건이 그대로 남습니다.${receivedNote(freshOrders)}\n입금 확인 없이 테이블을 비울까요?`
+        : `테이블을 비울까요? 손님 화면은 바로 접속이 끊어져요.${receivedNote(freshOrders)}`
     if (!window.confirm(message)) return
     setCheckingOut(true)
-    await checkout()
+    await checkout(receivedCount(freshOrders))
     setCheckingOut(false)
   }
 

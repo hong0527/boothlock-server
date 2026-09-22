@@ -20,6 +20,7 @@ import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusListResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusResponse;
+import com.boothlock.boothlock_server.tableqr.repository.TableCheckoutOrderRepository;
 import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
 import com.boothlock.boothlock_server.tableqr.repository.TableSequenceRepository;
 import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
@@ -77,6 +78,7 @@ public class TableAdminService {
     private final SeatIdlePolicy seatIdlePolicy;
     private final BoothRepository boothRepository;
     private final TableSequenceRepository tableSequenceRepository;
+    private final TableCheckoutOrderRepository tableCheckoutOrderRepository;
     private final EntityManager entityManager;
 
     public TableAdminService(BoothJwtProvider jwtProvider,
@@ -87,6 +89,7 @@ public class TableAdminService {
                               SeatIdlePolicy seatIdlePolicy,
                               BoothRepository boothRepository,
                               TableSequenceRepository tableSequenceRepository,
+                              TableCheckoutOrderRepository tableCheckoutOrderRepository,
                               EntityManager entityManager) {
         this.jwtProvider = jwtProvider;
         this.boothInfoService = boothInfoService;
@@ -96,6 +99,7 @@ public class TableAdminService {
         this.seatIdlePolicy = seatIdlePolicy;
         this.boothRepository = boothRepository;
         this.tableSequenceRepository = tableSequenceRepository;
+        this.tableCheckoutOrderRepository = tableCheckoutOrderRepository;
         this.entityManager = entityManager;
     }
 
@@ -375,8 +379,13 @@ public class TableAdminService {
     }
 
     /**
-     * O6 퇴실·초기화("결제 완료" 버튼) — 열린 세션 종료(해당 sessionToken 즉시 410) + status EMPTY. 주문은 건드리지 않는다.
+     * O6 퇴실·초기화("결제 완료"·"테이블 비우기" 버튼) — 열린 세션 종료(해당 sessionToken 즉시 410) + status EMPTY.
      * 미결제 주문이 있어도 막지 않고 warning으로만 알려준다(명세서 O6 "Should").
+     *
+     * <p>종료한 세션에 남은 접수(RECEIVED) 주문은 완료(DONE)로 넘긴다 — 후결제 부스에서 손님이 나간다는 건 음식이 이미 나갔다는 뜻이라,
+     * 남은 접수 주문은 대개 "완료"를 깜빡한 것이다. 그대로 두면 주문현황 접수 탭(주방 대기열)에 떠난 손님 주문이 쌓인다.
+     * 주문은 지우지 않고(정산 보존) 입금 상태도 건드리지 않는다. 잘못 넘어갔으면 주문현황 "되돌리기"로 되살린다.
+     * 퇴실과 같은 트랜잭션이라 "퇴실은 됐는데 일부 주문만 완료"로 남지 않는다. 세션을 먼저 종료하므로 그 뒤 새 주문(C3)은 410이다.
      *
      * <p>멱등: 열린 세션이 없어도 200이다. 두 번째 호출은 조건부 UPDATE가 0건으로 끝나고 status는 이미 EMPTY다.
      * 유휴 만료로 세션이 정리된 "정리 필요"(OCCUPIED+session 없음) 테이블도 이 경로로 비운다 — 410이면 영영 비울 수 없다.
@@ -406,9 +415,12 @@ public class TableAdminService {
         long unpaidOrderCount = endingSessionIds.isEmpty() ? 0
                 : tableUnpaidOrderRepository.findUnpaidOrdersOfSessionsForUpdate(endingSessionIds, staffBooth.getId()).size();
         table.vacate();
+        int completedOrderCount = endingSessionIds.isEmpty() ? 0
+                : tableCheckoutOrderRepository.completeReceivedOrdersOfSessions(endingSessionIds, staffBooth.getId());
 
         String warning = unpaidOrderCount > 0 ? "미결제 주문 " + unpaidOrderCount + "건 있음" : null;
-        return new TableCheckoutResponse(unpaidOrderCount > 0, table.getId(), table.getLabel(), table.getStatus(), warning);
+        return new TableCheckoutResponse(unpaidOrderCount > 0, table.getId(), table.getLabel(), table.getStatus(),
+                completedOrderCount, warning);
     }
 
     /**
