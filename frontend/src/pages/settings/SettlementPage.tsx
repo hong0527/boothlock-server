@@ -75,8 +75,8 @@ export default function SettlementPage() {
           onChange={(e) => setEndAt(e.target.value)}
         />
         <p className="text-sm text-neutral-400">
-          입금 확인(결제 완료) 시각이 시작~마감 사이인 주문만 CSV에 포함돼요. 자정을 넘는 구간도 그대로
-          입력하면 돼요 (예: 시작 9/30 22:00, 마감 10/1 03:00).
+          선택한 시간에 결제 완료된 주문만 CSV에 포함돼요. 
+          자정을 넘는 구간도 그대로 입력하면 돼요(예: 시작 9/30 22:00, 마감 10/1 03:00).
         </p>
 
         {error && <p className="text-sm text-red-600">{error}</p>}

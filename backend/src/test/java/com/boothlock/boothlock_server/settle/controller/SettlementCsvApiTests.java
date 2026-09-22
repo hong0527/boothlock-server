@@ -123,6 +123,26 @@ class SettlementCsvApiTests {
     }
 
     @Test
+    void excludesRefundNeededAndRefundedOrdersEvenWithinApprovedRange() throws Exception {
+        LocalDateTime start = LocalDateTime.of(2026, 9, 30, 22, 0, 0);
+        LocalDateTime end = LocalDateTime.of(2026, 10, 1, 3, 0, 0);
+        // O13 운영자 취소(OrderRepository.cancelByStaff)는 PAID였던 주문을 REFUND_NEEDED로 바꿀 뿐
+        // approvedAt은 건드리지 않는다 — 즉 이 두 상태도 approvedAt은 구간 안에 그대로 남아있을 수 있다.
+        // paymentStatus=PAID 등식만으로 걸러지는지가 이 테스트의 핵심.
+        newOrder(boothId, "T-1", LocalDateTime.of(2026, 9, 30, 22, 30), PaymentStatus.PAID, OrderStatus.DONE,
+                LocalDateTime.of(2026, 9, 30, 22, 40), new OrderItemEntity(1L, "정상매출포함", 1_000, 1));
+        newOrder(boothId, "T-1", LocalDateTime.of(2026, 9, 30, 23, 0), PaymentStatus.REFUND_NEEDED, OrderStatus.CANCELED,
+                LocalDateTime.of(2026, 9, 30, 23, 10), new OrderItemEntity(2L, "환불필요제외", 1_000, 1));
+        newOrder(boothId, "T-1", LocalDateTime.of(2026, 10, 1, 0, 0), PaymentStatus.REFUNDED, OrderStatus.CANCELED,
+                LocalDateTime.of(2026, 10, 1, 0, 10), new OrderItemEntity(3L, "환불완료제외", 1_000, 1));
+
+        String csv = fetchCsv(adminToken, start, end);
+        assertTrue(csv.contains("정상매출포함"));
+        assertFalse(csv.contains("환불필요제외"));
+        assertFalse(csv.contains("환불완료제외"));
+    }
+
+    @Test
     void excludesOrdersApprovedOutsideRange() throws Exception {
         LocalDateTime start = LocalDateTime.of(2026, 9, 1, 6, 0, 0);
         LocalDateTime end = LocalDateTime.of(2026, 9, 1, 12, 0, 0);
