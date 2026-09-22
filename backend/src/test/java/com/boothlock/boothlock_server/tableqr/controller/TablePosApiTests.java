@@ -7,6 +7,8 @@ import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.booth.repository.StaffAccountRepository;
 import com.boothlock.boothlock_server.menu.domain.MenuEntity;
 import com.boothlock.boothlock_server.menu.repository.MenuRepository;
+import com.boothlock.boothlock_server.global.domain.OrderStatus;
+import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.order.repository.DailyCounterRepository;
@@ -413,7 +415,7 @@ class TablePosApiTests {
                 .andExpect(jsonPath("$.warning").doesNotExist())
                 .andReturn().getResponse().getContentAsString();
         // 프론트가 이미 받는 unpaidWarning은 유지하고 명세 O6의 id·label·status를 더한다. warning은 미결제 없으면 필드째 없다
-        assertEquals(Set.of("unpaidWarning", "id", "label", "status"), fieldNames(objectMapper.readTree(body)));
+        assertEquals(Set.of("unpaidWarning", "id", "label", "status", "completedOrderCount"), fieldNames(objectMapper.readTree(body)));
 
         TableSessionEntity ended = reloadSession(session.getId());
         assertNotNull(ended.getEndedAt());
@@ -443,6 +445,61 @@ class TablePosApiTests {
                 .andExpect(jsonPath("$.warning").value("미결제 주문 4건 있음"));
 
         assertNotNull(reloadSession(session.getId()).getEndedAt());   // 경고만 하고 차단하지 않는다
+    }
+
+    /**
+     * 퇴실하면 그 손님(종료한 세션)의 남은 접수 주문은 완료로 넘어간다 — 후결제에서 나간 손님 주문이 주문현황 접수 탭에 남지 않게.
+     * 입금 상태는 그대로, 취소·완료 주문과 앞 손님·다른 부스 주문은 건드리지 않는다
+     */
+    @Test
+    void o6CompletesRemainingReceivedOrdersOfTheEndingSessionOnly() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity past = endedSession(table, "sess-past");
+        OrderEntity pastReceived = unpaidOrder(booth, past.getId());   // 앞 손님 접수 주문 — 이번 퇴실과 무관
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity receivedUnpaid = unpaidOrder(booth, session.getId());
+        OrderEntity receivedPaid = unpaidOrder(booth, session.getId());
+        assertEquals(1, orderRepository.markPaid(receivedPaid.getId(), booth.getId(), PaymentMethod.CASH, "admin", now()));
+        canceledUnpaidOrder(booth, session.getId());
+        doneUnpaidOrder(booth, session.getId());
+        TableEntity foreign = table(otherBooth, "B-1", true);
+        TableSessionEntity foreignSession = openSession(foreign, "sess-b1", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity foreignReceived = unpaidOrder(otherBooth, foreignSession.getId());
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.completedOrderCount").value(2))
+                .andExpect(jsonPath("$.warning").value("미결제 주문 2건 있음"));   // 완료로 넘겨도 미입금은 미수금 그대로
+
+        OrderEntity reloadedUnpaid = orderRepository.findById(receivedUnpaid.getId()).orElseThrow();
+        assertEquals(OrderStatus.DONE, reloadedUnpaid.getStatus());
+        assertEquals(PaymentStatus.UNPAID, reloadedUnpaid.getPaymentStatus());
+        OrderEntity reloadedPaid = orderRepository.findById(receivedPaid.getId()).orElseThrow();
+        assertEquals(OrderStatus.DONE, reloadedPaid.getStatus());
+        assertEquals(PaymentStatus.PAID, reloadedPaid.getPaymentStatus());
+        assertEquals(OrderStatus.RECEIVED, orderRepository.findById(pastReceived.getId()).orElseThrow().getStatus());
+        assertEquals(OrderStatus.RECEIVED, orderRepository.findById(foreignReceived.getId()).orElseThrow().getStatus());
+        assertEquals(1, orderRepository.findAll().stream().filter(o -> o.getStatus() == OrderStatus.CANCELED).count());
+        assertEquals(TableStatus.EMPTY, reloadTable(table.getId()).getStatus());
+    }
+
+    /** 유휴로 만료된("정리 필요") 세션도 퇴실이 종료하므로 그 접수 주문도 완료로 넘어간다. 멱등 재호출은 0건 */
+    @Test
+    void o6CompletesReceivedOrdersOfIdleSessionAndSecondCallCompletesNothing() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity idle = openSession(table, "sess-idle", now().minusHours(6), now().minusHours(5));
+        OrderEntity order = unpaidOrder(booth, idle.getId());
+        String token = login("admin");
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId()).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.completedOrderCount").value(1));
+        assertEquals(OrderStatus.DONE, orderRepository.findById(order.getId()).orElseThrow().getStatus());
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId()).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.completedOrderCount").value(0));
     }
 
     @Test
