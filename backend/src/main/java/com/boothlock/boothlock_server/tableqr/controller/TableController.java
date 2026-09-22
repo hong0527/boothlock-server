@@ -108,9 +108,11 @@ public class TableController {
 
     /**
      * 테이블 1개 자동 채번 등록 (명세서 밖, 프론트 "테이블 추가" 버튼 전용) — O2와 달리 라벨을 클라이언트가
-     * 정하지 않고 부스별 영구 카운터로 서버가 채번한다("T-1", "T-2"...). 삭제해도 번호가 재사용되지 않는다.
+     * 정하지 않고 서버가 활성 테이블의 마지막 번호 다음으로 채번한다("T-1", "T-2"...). 삭제한 번호는 다시 쓰인다 —
+     * 이용 이력이 있어 soft delete된 같은 번호 행이 있으면 그 행(같은 QR)을 되살린다.
      */
-    @Operation(summary = "테이블 1개 자동 추가", description = "부스별 영구 카운터로 다음 번호(T-N)를 채번해 테이블 1개를 등록한다.")
+    @Operation(summary = "테이블 1개 자동 추가", description = "활성 테이블의 마지막 번호 다음(T-N)으로 채번해 테이블 1개를 등록한다. "
+            + "같은 번호의 삭제된 테이블이 남아 있으면 그 테이블을 같은 QR로 되살린다.")
     @PostMapping("/admin/tables")
     @ResponseStatus(HttpStatus.CREATED)
     public TableAdminResponse addSingleTable(@RequestHeader("Authorization") String authorization) {
@@ -119,11 +121,11 @@ public class TableController {
 
     /**
      * 테이블 삭제 (명세서 밖) — 마지막 번호의 테이블만 삭제 가능(그 외 409). 사용 중(활성 세션 있음)이면 409.
-     * 이용 이력이 없으면 완전 삭제(QR 포함)하고 번호를 반납해 다음 추가 때 되살아나며, 이력이 있으면
-     * 기존처럼 soft delete만 하고 번호는 반납하지 않는다.
+     * 이용 이력이 없으면 완전 삭제(QR 포함)하고, 이력이 있으면 soft delete만 한다. 어느 쪽이든 번호는 반납돼
+     * 다음 추가 때 같은 번호가 다시 나온다.
      */
-    @Operation(summary = "테이블 삭제", description = "마지막 번호의 테이블만 삭제할 수 있다. 이용 이력이 없으면 완전 삭제(QR 폐기)+번호 반납, "
-            + "이력이 있으면 soft delete만 한다. 사용 중인 테이블은 409로 거부한다.")
+    @Operation(summary = "테이블 삭제", description = "마지막 번호의 테이블만 삭제할 수 있다. 이용 이력이 없으면 완전 삭제(QR 폐기), "
+            + "이력이 있으면 soft delete만 한다. 어느 쪽이든 번호는 반납된다. 사용 중인 테이블은 409로 거부한다.")
     @DeleteMapping("/admin/tables/{tableId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteTable(@RequestHeader("Authorization") String authorization, @PathVariable Long tableId) {

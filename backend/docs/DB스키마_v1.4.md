@@ -53,7 +53,7 @@ erDiagram
 | category | VARCHAR(20) | NULL | 홈 화면 부스 분류 `FOOD` / `CAFE` / `GOODS` / `ETC`. **대문자 정확 일치 저장**(O17·시더가 검증). E1 필터는 대소문자 무시. NULL이면 미분류 |
 | map_x | INT | NULL | 약도 위 핀 가로 위치, **0~10000 상대 좌표**. 엔티티 `Integer`(기존 행 NULL 대비) |
 | map_y | INT | NULL | 세로 위치. **엔티티 `updateMapPosition`이 반쪽 좌표를 거부**한다(둘 다 null 또는 둘 다 값). E1은 한쪽만 있으면 둘 다 null로 내려준다 |
-| **next_table_seq** | INT | NOT NULL DEFAULT 1 | **v1.4 편입** — O25 "테이블 추가" 자동 채번(`T-N`) 카운터. 부스 행 `FOR UPDATE` + `refresh` 아래에서 읽고, **컬럼 단독 UPDATE**(`TableSequenceRepository.setNextTableSeq`)로 올린다. 삭제해도 줄지 않는다(이력 없는 마지막 테이블 완전 삭제 시 1 반납 예외). 엔티티는 `columnDefinition = "integer default 1"` — 컬럼이 생기기 전 행·raw INSERT도 1로 채워지게 |
+| **next_table_seq** | INT | NOT NULL DEFAULT 1 | **v1.4 편입** — O25 "테이블 추가" 자동 채번(`T-N`) 카운터. 부스 행 `FOR UPDATE` + `refresh` 아래에서 읽고, **컬럼 단독 UPDATE**(`TableSequenceRepository.setNextTableSeq`)로 올린다. **v0.6.3부터 채번 판정에 쓰지 않는 기록용**(마지막으로 낸 번호+1) — 채번은 활성 테이블의 `T-N` 최댓값+1이다(API 명세 O25). 엔티티는 `columnDefinition = "integer default 1"` — 컬럼이 생기기 전 행·raw INSERT도 1로 채워지게 |
 
 - 엔티티 `@DynamicUpdate` — O17 저장(전체 컬럼 UPDATE였다면)이 동시에 채번된 `next_table_seq`를 옛 값으로 되돌려 이후 테이블 추가가 라벨 중복으로 영구 실패하던 결함(audit2 H3)의 수정
 ### staff_account — 운영자 계정 (부스 파트)
@@ -81,7 +81,7 @@ erDiagram
 | status | **VARCHAR(20)** | NOT NULL DEFAULT 'EMPTY' | EMPTY / OCCUPIED. **v1.4: 엔티티에 `@JdbcTypeCode(SqlTypes.VARCHAR)` 추가** — 없으면 Hibernate가 MySQL에 네이티브 `enum('EMPTY','OCCUPIED')`를 만든다(실측). C1 새 세션 시 OCCUPIED, **O6 퇴실 시 EMPTY**(v1.3의 "되돌리는 코드가 없다"는 해소). 그래도 **좌석 집계의 근거로 쓰지 않는다**(원칙 14) |
 | pos_x | INT | NULL | 운영자 배치도 가로 px(캔버스 좌상단 원점), **0~10000**(O22가 반올림·범위 검증). NULL = 미배치 |
 | pos_y | INT | NULL | 세로 px. 엔티티 `Integer` |
-| **active** | BOOLEAN | NOT NULL DEFAULT TRUE | **v1.4 편입** — soft delete. O26이 **이용 이력(세션)이 있는 마지막 테이블**을 삭제할 때 FALSE로 둔다(과거 주문·세션 FK 보존). 이력 없는 테이블은 행을 지운다. FALSE인 테이블은 C1·O4·O5·O6·O22·O10·O14·O24에서 404, O3·E1·O4b·O16 tableCount에서 제외. 라벨 UNIQUE는 active와 무관하게 걸리므로 삭제된 라벨은 재사용 불가. 엔티티 `columnDefinition = "boolean default true"` |
+| **active** | BOOLEAN | NOT NULL DEFAULT TRUE | **v1.4 편입** — soft delete. O26이 **이용 이력(세션)이 있는 마지막 테이블**을 삭제할 때 FALSE로 둔다(과거 주문·세션 FK 보존). 이력 없는 테이블은 행을 지운다. FALSE인 테이블은 C1·O4·O5·O6·O22·O10·O14·O24에서 404, O3·E1·O4b·O16 tableCount에서 제외. 라벨 UNIQUE는 active와 무관하게 걸리므로, O25가 같은 번호를 다시 낼 때는 새 행을 넣지 않고 이 행을 TRUE로 되살린다(토큰 유지). 엔티티 `columnDefinition = "boolean default true"` |
 | _UNIQUE_ | | **uq_booth_label (booth_id, label)** | |
 
 - 엔티티 `@DynamicUpdate` — C1의 OCCUPIED 전환이 동시에 저장된 O5 새 토큰·O22 좌표·삭제(active=false)를 덮지 않게

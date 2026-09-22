@@ -479,7 +479,7 @@ class TableAdminApiTests {
     }
 
     @Test
-    void deletingLastTableWithHistoryOnlySoftDeletesAndKeepsNumberRetired() throws Exception {
+    void deletingLastTableWithHistoryOnlySoftDeletesAndRevivesSameRowOnReAdd() throws Exception {
         String token = login("admin");
         String body = mockMvc.perform(post("/api/v1/admin/tables").header("Authorization", "Bearer " + token))
                 .andReturn().getResponse().getContentAsString();
@@ -498,10 +498,12 @@ class TableAdminApiTests {
         TableEntity reloaded = tableRepository.findById(newTableId).orElseThrow();
         assertTrue(!reloaded.isActive());
 
-        // 번호는 반납되지 않는다 — 다음 추가는 T-2
+        // 번호는 반납된다 — 다음 추가는 같은 T-1이고, 새 행이 아니라 지웠던 행(같은 QR)이 되살아난다
         mockMvc.perform(post("/api/v1/admin/tables").header("Authorization", "Bearer " + token))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.label").value("T-2"));
+                .andExpect(jsonPath("$.label").value("T-1"))
+                .andExpect(jsonPath("$.id").value(newTableId));
+        assertTrue(tableRepository.findById(newTableId).orElseThrow().isActive());
     }
 
     @Test
