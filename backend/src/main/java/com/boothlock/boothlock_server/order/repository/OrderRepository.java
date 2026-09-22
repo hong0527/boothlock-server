@@ -131,6 +131,26 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     Optional<OrderEntity> findByIdAndBoothId(Long id, Long boothId);
 
     /**
+     * O19 정산 CSV 전용 — 주문 생성 시각(createdAt) 구간으로 조회한다. start &lt;= createdAt &lt; end.
+     * {@code searchForDashboard}는 businessDate(영업일 정확히 일치)와 8개 선택 조건을 조합하는 범용 조회라
+     * "createdAt 임의 범위"라는 이번 조건을 억지로 끼워 넣으면 그 메서드의 다른 호출자(O10·O18)까지 흔들린다 —
+     * 별도 메서드로 분리한다. paymentStatus·hidden 여부는 걸지 않는다 — 정산 원장은 결제 상태·숨김 처리와
+     * 무관하게 그 시간대에 생성된 주문을 전부 보여줘야 한다(O19 서비스 상단 주석 참고).
+     */
+    @EntityGraph(attributePaths = "items")
+    @Query("""
+            select o from OrderEntity o
+            where o.boothId = :boothId
+              and o.createdAt >= :startAt
+              and o.createdAt < :endAt
+            order by o.createdAt asc, o.id asc
+            """)
+    List<OrderEntity> searchForSettlementRange(
+            @Param("boothId") Long boothId,
+            @Param("startAt") LocalDateTime startAt,
+            @Param("endAt") LocalDateTime endAt);
+
+    /**
      * O11 입금 확인 — 조건부 UPDATE(WHERE payment_status='UNPAID')로 상태 전이.
      * 조회 후 갱신으로 나누면 동시 클릭 시 두 요청 모두 조건을 통과해 승인 기록이 서로를 덮는다 (DB스키마 §3-9)
      */

@@ -18,10 +18,12 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * [담당: 백지연] 정산·통계·피드백 — API 명세서 O18·O19·O20
- * 핵심 규칙: 매출은 PAID 기준, date=영업일(06:00~익일05:59), CSV는 행=주문항목·BOM·수식주입 방지.
+ * 핵심 규칙: O18 매출은 PAID 기준·영업일(06:00~익일05:59). O19 CSV는 사용자가 지정한 [startAt, endAt) 구간의
+ * 전체 주문 원장(결제 상태 무관) + "총 결제완료 매출액" 요약 — 행=주문항목·BOM·수식주입 방지.
  */
 @Tag(name = "정산·통계·피드백", description = "운영자 정산·통계·피드백 (명세서 O18·O19·O20, 담당: 백지연)")
 @RestController
@@ -49,14 +51,18 @@ public class SettleController {
         return salesStatsService.getSales(authorization, date);
     }
 
-    /** O19 정산 CSV (Should) — 전체 원장(승인·취소·환불 이력 컬럼), UTF-8 BOM. O18과 같은 ADMIN 전용 */
-    @Operation(summary = "O19 정산 CSV 다운로드", description = "영업일 기준 전체 주문 항목 원장을 CSV로 내려받는다.")
+    /** O19 정산 CSV (Should) — 시작~마감(KST) 구간의 전체 원장(승인·취소·환불 이력 컬럼) + 결제완료 매출 요약, UTF-8 BOM. O18과 같은 ADMIN 전용 */
+    @Operation(summary = "O19 정산 CSV 다운로드",
+            description = "시작~마감 일시(KST) 구간에 생성(createdAt)된 주문 항목 전체를 CSV로 내려받는다. "
+                    + "결제 상태와 무관하게 원장을 보여주고, 마지막에 PAID·미취소 항목만 합산한 총 결제완료 매출액을 덧붙인다.")
     @GetMapping("/admin/reports/settlement.csv")
     public ResponseEntity<byte[]> downloadSettlement(
             @RequestHeader("Authorization") String authorization,
-            @RequestParam(required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        SettlementCsvService.Result result = settlementCsvService.generate(authorization, date);
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startAt,
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endAt) {
+        SettlementCsvService.Result result = settlementCsvService.generate(authorization, startAt, endAt);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + result.filename() + "\"")
