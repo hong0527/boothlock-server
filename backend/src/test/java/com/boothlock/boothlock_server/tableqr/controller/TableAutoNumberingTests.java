@@ -7,7 +7,9 @@ import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.booth.repository.StaffAccountRepository;
 import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
+import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
 import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
 import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
 import com.boothlock.boothlock_server.tableqr.service.TableAdminService;
@@ -34,6 +36,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -172,6 +175,92 @@ class TableAutoNumberingTests {
 
         assertEquals(2, nextTableSeq());
         assertEquals("T-2", addTable());
+    }
+
+    // ── 전부 지우고 다시 추가하면 T-1부터 ──────────────
+
+    private long addTableId() throws Exception {
+        String body = mockMvc.perform(post("/api/v1/admin/tables").header("Authorization", authorization))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body).get("id").asLong();
+    }
+
+    /** 손님이 한 번 앉았다 간 테이블로 만든다 — 삭제가 soft delete 경로를 타게 하는 이용 이력 */
+    private void giveHistory(long tableId) {
+        TableEntity table = tableRepository.findById(tableId).orElseThrow();
+        TableSessionEntity session = tableSessionRepository.save(
+                new TableSessionEntity(table, "history-" + tableId, LocalDateTime.now()));
+        session.end(LocalDateTime.now());
+        tableSessionRepository.save(session);
+    }
+
+    private void deleteTable(long tableId) throws Exception {
+        mockMvc.perform(delete("/api/v1/admin/tables/{tableId}", tableId).header("Authorization", authorization))
+                .andExpect(status().isNoContent());
+    }
+
+    /**
+     * 운영 재현(2026-09-22 EC2 로그) — 손님이 쓴 테이블을 전부 지우고 다시 추가하면 soft delete된 번호가 영구 소진돼
+     * 예전 최댓값 다음(T-8)부터 나왔다. 이제는 T-1부터 다시 나오고, 이력 있던 번호는 같은 행(같은 QR)이 되살아난다
+     */
+    @Test
+    void addingAfterDeletingEveryTableStartsAgainFromOne() throws Exception {
+        long t1 = addTableId();
+        long t2 = addTableId();
+        long t3 = addTableId();
+        giveHistory(t1);
+        giveHistory(t3);   // T-2만 이력 없음 — 완전 삭제 경로
+        String t1Token = tableRepository.findById(t1).orElseThrow().getTableToken();
+        tableAdminService.updatePosition(authorization, t1,
+                new TablePositionRequest(120, 80));
+
+        deleteTable(t3);
+        deleteTable(t2);
+        deleteTable(t1);
+        assertTrue(tableRepository.findByBoothIdAndActiveTrue(booth.getId()).isEmpty());
+
+        assertEquals("T-1", addTable());
+        assertEquals("T-2", addTable());
+        assertEquals("T-3", addTable());
+        assertEquals("T-4", addTable());
+
+        // T-1·T-3은 새 행이 아니라 지웠던 행이 되살아난 것 — 과거 세션이 그대로 붙어 있고 인쇄한 QR 토큰도 같다
+        TableEntity revived = tableRepository.findById(t1).orElseThrow();
+        assertTrue(revived.isActive());
+        assertEquals(t1Token, revived.getTableToken());
+        assertNull(revived.getPosX());   // 배치는 새 테이블처럼 비운다 — 프론트가 빈 자리에 놓는다
+        assertTrue(tableRepository.findById(t3).orElseThrow().isActive());
+        assertTrue(tableRepository.findById(t2).isEmpty());   // 완전 삭제된 T-2는 새 행으로 다시 만들어졌다
+        assertEquals(4, tableRepository.findByBoothId(booth.getId()).size());
+        assertEquals(5, nextTableSeq());
+    }
+
+    /** 카운터가 예전 값으로 높게 남아 있어도(수정 전 데이터) 활성 테이블 기준으로 채번한다 */
+    @Test
+    void ignoresStaleHighCounterWhenNoActiveTablesRemain() throws Exception {
+        long t1 = addTableId();
+        giveHistory(t1);
+        deleteTable(t1);
+        jdbcTemplate.update("update booth set next_table_seq = 8 where id = ?", booth.getId());
+
+        assertEquals("T-1", addTable());
+        assertEquals(t1, tableRepository.findByBoothIdAndActiveTrue(booth.getId()).getFirst().getId());
+    }
+
+    /**
+     * 되살릴 행이 있어도 활성 라벨과 정규화가 겹치면(활성 "T1" 옆의 삭제된 "T-1") 되살리지 않고 건너뛴다.
+     * O2는 삭제된 라벨까지 보고 "T1"을 거부하므로 API로는 못 만드는 상태다 — 기존 데이터를 가정해 직접 넣는다
+     */
+    @Test
+    void doesNotReviveDeletedLabelThatCollidesWithActiveNormalizedLabel() throws Exception {
+        long t1 = addTableId();
+        giveHistory(t1);
+        deleteTable(t1);
+        tableRepository.save(new TableEntity(booth, "T1", "token-legacy-t1"));
+
+        assertEquals("T-2", addTable());
+        assertTrue(!tableRepository.findById(t1).orElseThrow().isActive());
     }
 
     // ── 동시 추가 ───────────────────────────────────────

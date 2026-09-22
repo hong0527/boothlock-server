@@ -129,18 +129,16 @@ public class TableAdminService {
     }
 
     /**
-     * 테이블 1개 자동 채번 등록 — 운영자 화면 "테이블 추가" 버튼 전용. 클라이언트가 번호를 정하지 않고
-     * 부스별 영구 카운터(booth.next_table_seq)로 서버가 채번한다. 삭제해도 이 카운터는 줄지 않아
-     * 번호가 재사용되지 않는다(이미 인쇄된 QR·과거 주문 기록과의 혼동 방지).
+     * 테이블 1개 자동 채번 등록 — 운영자 화면 "테이블 추가" 버튼 전용. 클라이언트가 번호를 정하지 않고 서버가 채번한다.
+     * 번호는 <b>활성 테이블</b>의 자동 라벨 "T-N" 최댓값+1이다 — 테이블을 전부 지우고 다시 만들면 T-1부터 다시 시작한다.
+     * 이용 이력이 있어 soft delete된 "T-N" 행이 남아 있으면 새 행을 넣지 않고 그 행을 되살린다(라벨 UNIQUE는 active와 무관하게
+     * 걸리고, 과거 세션·주문은 그 행을 가리킨 채 남는다). 되살린 테이블은 토큰을 그대로 쓰므로 예전에 인쇄한 같은 번호 QR이 다시 동작한다.
      *
-     * <p>카운터를 그대로 믿지 않고 기존 라벨과 맞춘다(audit2 H3·H4).
-     * <ul>
-     *   <li>이미 있는 자동 라벨 "T-N"의 최댓값+1보다 작으면 그만큼 끌어올린다 — O17 부스 설정 저장이 전체 컬럼 UPDATE로
-     *       카운터를 옛 값으로 되돌려도(H3) 다음 추가가 유니크 위반 500으로 영영 굳지 않고 스스로 회복한다</li>
-     *   <li>정규화 라벨이 겹치는 번호는 건너뛴다 — O2로 "T1"이나 "T-1"을 만든 부스에서 "T-1"을 또 만들면 DB 유니크·정규화 규칙(§1)에 걸린다(H4)</li>
-     * </ul>
+     * <p>booth.next_table_seq 카운터는 판정에 쓰지 않는다 — soft delete된 번호까지 영구 소진으로 세면 전부 지운 뒤에도
+     * 예전 최댓값 다음 번호부터 나온다. 기록만 "마지막으로 낸 번호+1"로 맞춰 둔다.
+     * 정규화 라벨이 겹치는 번호는 건너뛴다 — O2로 "T1"이나 "T-1"을 만든 부스에서 "T-1"을 또 만들면 DB 유니크·정규화 규칙(§1)에 걸린다(audit2 H4).
      * 카운터 갱신은 이 컬럼만 UPDATE한다(TableSequenceRepository) — 엔티티 더티 체킹은 전체 컬럼을 써서 동시 O17 변경을 덮는다.
-     * 판정 재료(카운터·기존 라벨)는 전부 부스 행을 잠근 뒤 잠금 읽기로 얻는다 — {@link #lockBooth} 참조.
+     * 판정 재료(기존 라벨)는 전부 부스 행을 잠근 뒤 잠금 읽기로 얻는다 — {@link #lockBooth} 참조.
      */
     @Transactional
     public TableAdminResponse addSingleTable(String authorization) {
@@ -149,13 +147,29 @@ public class TableAdminService {
         BoothEntity locked = lockBooth(staffBooth.getId());
 
         List<TableEntity> existing = tableRepository.findByBoothIdForUpdate(locked.getId());   // 삭제(soft delete)된 라벨도 포함 — 유니크 제약이 그렇다
+        List<TableEntity> activeTables = existing.stream().filter(TableEntity::isActive).toList();
+        Map<String, TableEntity> deletedByLabel = existing.stream()
+                .filter(t -> !t.isActive())
+                .collect(Collectors.toMap(TableEntity::getLabel, Function.identity()));
         Set<String> normalizedLabels = existing.stream().map(t -> normalize(t.getLabel())).collect(Collectors.toSet());
-        int seq = Math.max(locked.getNextTableSeq(), maxAutoSeq(existing) + 1);
-        while (normalizedLabels.contains("T" + seq)) {
+        Set<String> normalizedActiveLabels = activeTables.stream().map(t -> normalize(t.getLabel())).collect(Collectors.toSet());
+
+        int seq = maxAutoSeq(activeTables) + 1;
+        // 되살릴 수 있는 삭제 행("T-N" 그대로)은 건너뛰지 않는다 — 건너뛰면 지운 번호가 다시 안 나온다.
+        // 단 활성 라벨과 정규화가 겹치면(O2로 만든 "T3" 옆에 삭제된 "T-3") 되살려도 규칙 위반이라 건너뛴다
+        while (normalizedActiveLabels.contains("T" + seq)
+                || (!deletedByLabel.containsKey("T-" + seq) && normalizedLabels.contains("T" + seq))) {
             seq++;
         }
 
-        TableEntity table = tableRepository.save(new TableEntity(locked, "T-" + seq, SecureTokenGenerator.generate()));
+        TableEntity deleted = deletedByLabel.get("T-" + seq);
+        TableEntity table;
+        if (deleted != null) {
+            deleted.reactivate();
+            table = deleted;
+        } else {
+            table = tableRepository.save(new TableEntity(locked, "T-" + seq, SecureTokenGenerator.generate()));
+        }
         tableSequenceRepository.setNextTableSeq(locked.getId(), seq + 1);
         return toResponse(table);
     }
@@ -202,12 +216,11 @@ public class TableAdminService {
             throw new InvalidStateException("마지막 번호의 테이블만 삭제할 수 있습니다.");
         }
 
-        if (!history.isEmpty()) {
-            table.deactivate();
-            return;
+        if (history.isEmpty()) {
+            tableRepository.delete(table);
+        } else {
+            table.deactivate();   // 과거 세션·주문의 외래키 보호 — 같은 번호를 다시 추가하면 이 행이 되살아난다(addSingleTable)
         }
-
-        tableRepository.delete(table);
         if (matchesNextSeq(locked, table.getLabel())) {
             // 번호 반납 — 이 컬럼만 UPDATE (addSingleTable과 같은 이유로 엔티티 더티 체킹을 쓰지 않는다)
             tableSequenceRepository.setNextTableSeq(locked.getId(), locked.getNextTableSeq() - 1);

@@ -56,8 +56,8 @@ public class TableEntity {
     private Integer posY;
 
     // 테이블 삭제 — 이용 이력이 있으면 soft delete만 한다(진짜로 지우면 과거 주문·세션 기록의 외래키가
-    // 깨진다). 이력이 없는 마지막 번호 테이블은 TableAdminService가 행 자체를 지우고 번호를 반납한다
-    // (BoothEntity.releaseLastTableSeq) — 이 필드는 그 이력 보호 케이스에서만 쓰인다.
+    // 깨진다). 이력이 없는 마지막 번호 테이블은 TableAdminService가 행 자체를 지운다. 어느 쪽이든 번호는 반납되고,
+    // 같은 번호를 다시 추가하면 soft delete된 행이 되살아난다(TableAdminService.addSingleTable).
     // columnDefinition으로 DB 기본값을 둔다 — 이 컬럼이 생기기 전 행이나 raw SQL insert(테스트 등)도 active=true로 채워지게
     @Column(nullable = false, columnDefinition = "boolean default true")
     private boolean active = true;
@@ -109,9 +109,20 @@ public class TableEntity {
         return active;
     }
 
-    /** 테이블 삭제 — 이용 이력이 있는 테이블만 이 soft delete 경로를 탄다(번호는 재사용하지 않는다) */
+    /** 테이블 삭제 — 이용 이력이 있는 테이블만 이 soft delete 경로를 탄다 */
     public void deactivate() {
         this.active = false;
+    }
+
+    /**
+     * 삭제했던 번호를 다시 추가 — 토큰은 그대로 둔다(예전에 인쇄한 같은 번호 QR이 다시 동작한다).
+     * 배치 좌표는 비워서 "테이블 추가"가 새 테이블처럼 빈 자리에 놓게 한다. 삭제는 열린 세션이 없을 때만 되므로 status는 EMPTY로 되돌린다
+     */
+    public void reactivate() {
+        this.active = true;
+        this.status = TableStatus.EMPTY;
+        this.posX = null;
+        this.posY = null;
     }
 
     /** C1 세션 발급 — 활성 세션이 없어 새로 만들 때 테이블을 사용중으로 전환한다 */
