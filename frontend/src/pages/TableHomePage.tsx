@@ -24,6 +24,13 @@ export default function TableHomePage() {
   const [tableActionBusy, setTableActionBusy] = useState(false)
   // 망 끊김처럼 context의 error에 안 담기는 실패를 이 화면에서 알린다
   const [tableError, setTableError] = useState<string | null>(null)
+  // 경과시간 색상 판정 기준 시각 — 2시간 임계값 판정이라 촘촘한 갱신은 필요 없다
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30000)
+    return () => clearInterval(id)
+  }, [])
 
   // 운영자 화면은 태블릿 폭 기준 — 회전 등으로 폭이 바뀌어도 드래그 가능 범위를 다시 계산한다
   useEffect(() => {
@@ -163,6 +170,7 @@ export default function TableHomePage() {
             onMove={moveTable}
             onDragEnd={commitTablePosition}
             maxX={maxX}
+            now={now}
           />
         ))}
       </div>

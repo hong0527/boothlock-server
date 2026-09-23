@@ -4,6 +4,13 @@ import { formatClockTime } from '../lib/time'
 import { displayTableLabel } from '../lib/tableLabel'
 import type { TableStatusInfo } from '../types/table'
 
+/** 첫 주문 후 이 시간(분)이 지나면 카드 시간 텍스트가 빨강으로 바뀐다 — 표시 전용, 자동 조치 없음, 고객 비노출(스태프 화면 전용) */
+const LONG_WAIT_MINUTES = 120
+
+export function isLongWait(firstOrderAt: string | null, now: number): boolean {
+  return firstOrderAt != null && (now - new Date(firstOrderAt).getTime()) / 60000 > LONG_WAIT_MINUTES
+}
+
 type TableGridCardProps = {
   table: TableStatusInfo
   editMode: boolean
@@ -12,6 +19,8 @@ type TableGridCardProps = {
   onDragEnd?: (tableId: number, x: number, y: number) => void
   /** 운영자 화면은 태블릿 폭 기준 — 이 값을 넘겨 드래그가 현재 화면 폭 밖으로 나가지 않게 막는다 */
   maxX?: number
+  /** 경과시간 색상 판정 기준 시각(ms) */
+  now: number
 }
 
 export default function TableGridCard({
@@ -21,7 +30,9 @@ export default function TableGridCard({
   onMove,
   onDragEnd,
   maxX,
+  now,
 }: TableGridCardProps) {
+  const longWait = isLongWait(table.firstOrderAt, now)
   const [isDragging, setIsDragging] = useState(false)
   const stopDragRef = useRef<(() => void) | null>(null)
 
@@ -91,9 +102,12 @@ export default function TableGridCard({
           <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
             {displayTableLabel(table.label)}
           </span>
-          {/* QR을 처음 찍은 시각(session.startedAt)이 아니라 지금 손님의 첫 주문 시각 — 주문 전에는 표시하지 않는다 */}
+          {/* QR을 처음 찍은 시각(session.startedAt)이 아니라 지금 손님의 첫 주문 시각 — 주문 전에는 표시하지 않는다.
+              2시간을 넘기면 색만 빨강으로 바꾼다 — 칸 배경은 그대로, 고객 비노출, 자동 조치 없음 */}
           {table.firstOrderAt && (
-            <span className="text-sm leading-[1.5] tracking-[-0.04em] text-neutral-900">
+            <span
+              className={`text-sm leading-[1.5] tracking-[-0.04em] ${longWait ? 'text-red-600' : 'text-neutral-900'}`}
+            >
               {formatClockTime(table.firstOrderAt)}
             </span>
           )}
