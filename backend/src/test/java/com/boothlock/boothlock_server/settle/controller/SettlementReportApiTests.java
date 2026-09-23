@@ -407,7 +407,9 @@ class SettlementReportApiTests {
             assertEquals(8_000L, summaryValue(workbook, "총 결제완료 매출액"));
             assertEquals(3_000L, summaryValue(workbook, "환불대기 금액"));
             assertEquals(11_000L, summaryValue(workbook, "계좌 입금 합계"));
-            assertEquals(0L, summaryValue(workbook, "현금 보유 합계"));
+            // 현금이 한 건도 없으면 수단별 분리는 0짜리 줄만 늘린다 — 아예 안 그린다
+            assertFalse(hasSummaryRow(workbook, "현금 보유 합계"));
+            assertFalse(hasSummaryRow(workbook, "  현금"));
         }
     }
 
@@ -619,6 +621,23 @@ class SettlementReportApiTests {
             text.append(String.join(",", row(sheet, r))).append('\n');
         }
         return text.toString();
+    }
+
+    /** 요약 시트에 그 라벨의 행이 있는지 */
+    private static boolean hasSummaryRow(Workbook workbook, String label) {
+        Sheet sheet = workbook.getSheet(SUMMARY_SHEET);
+        for (int r = 0; r <= sheet.getLastRowNum(); r++) {
+            Row row = sheet.getRow(r);
+            if (row == null) {
+                continue;
+            }
+            Cell first = row.getCell(0);
+            if (first != null && first.getCellType() == CellType.STRING
+                    && label.equals(first.getStringCellValue())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 요약 시트에서 라벨(0열)로 금액(1열)을 찾는다 */

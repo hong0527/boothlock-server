@@ -65,7 +65,9 @@ import java.util.Map;
  *   <li><b>결제수단 분리</b> — 대사 기준이 수단마다 다르다. 계좌이체분은 은행 거래내역과, 현금분은 실제
  *       현금통과 맞춰야 한다. 둘을 합친 숫자 하나만 주면 현금을 받은 부스에서는 그 값이 계좌 입금액과
  *       영영 맞지 않는다(O18 {@code SalesStatsService}가 수단별로 나누는 이유와 같다). 그래서 매출·환불대기
- *       모두 수단별로 쪼개고, 대사용 합계도 {@code 계좌 입금 합계}·{@code 현금 보유 합계}로 따로 낸다.</li>
+ *       모두 수단별로 쪼개고, 대사용 합계도 {@code 계좌 입금 합계}·{@code 현금 보유 합계}로 따로 낸다.
+ *       현금이 한 건도 없으면(현재 프론트는 [입금확인]을 항상 BANK_TRANSFER로 보낸다) 0짜리 줄만 늘어나므로
+ *       분리 줄을 그리지 않는다 — 그때 {@code 계좌 입금 합계}가 곧 전체 보유액이다.</li>
  * </ul>
  */
 @Service
@@ -233,21 +235,29 @@ public class SettlementReportService {
         text(period, 1, formatTime(startAt) + " ~ " + formatTime(endAt), styles.plain);
         r++; // 빈 줄
 
-        r = money(sheet, r, "총 결제완료 매출액", totals.totalPaid(), styles.label, styles.totalMoney);
-        r = money(sheet, r, "  계좌이체", totals.bankPaid, styles.plain, styles.money);
-        r = money(sheet, r, "  현금", totals.cashPaid, styles.plain, styles.money);
-        r++; // 빈 줄
+        // 현금을 한 건도 안 받았으면 수단별 분리는 0짜리 줄만 늘린다 — 그때는 합계만 낸다.
+        // 현재 프론트는 [입금확인]을 항상 BANK_TRANSFER로 보내므로 보통 이쪽으로 떨어진다.
+        boolean hasCash = totals.cashPaid + totals.cashRefundPending > 0;
 
+        r = money(sheet, r, "총 결제완료 매출액", totals.totalPaid(), styles.label, styles.totalMoney);
+        if (hasCash) {
+            r = money(sheet, r, "  계좌이체", totals.bankPaid, styles.plain, styles.money);
+            r = money(sheet, r, "  현금", totals.cashPaid, styles.plain, styles.money);
+        }
         r = money(sheet, r, "환불대기 금액", totals.refundPending(), styles.label, styles.money);
-        r = money(sheet, r, "  계좌이체", totals.bankRefundPending, styles.plain, styles.money);
-        r = money(sheet, r, "  현금", totals.cashRefundPending, styles.plain, styles.money);
+        if (hasCash) {
+            r = money(sheet, r, "  계좌이체", totals.bankRefundPending, styles.plain, styles.money);
+            r = money(sheet, r, "  현금", totals.cashRefundPending, styles.plain, styles.money);
+        }
         r++; // 빈 줄
 
         // 대사용 — 계좌이체분은 은행 거래내역과, 현금분은 현금통과 맞춘다. 둘을 합치면 어느 쪽과도 안 맞는다.
         r = money(sheet, r, "계좌 입금 합계", totals.bankPaid + totals.bankRefundPending,
                 styles.label, styles.money);
-        r = money(sheet, r, "현금 보유 합계", totals.cashPaid + totals.cashRefundPending,
-                styles.label, styles.money);
+        if (hasCash) {
+            r = money(sheet, r, "현금 보유 합계", totals.cashPaid + totals.cashRefundPending,
+                    styles.label, styles.money);
+        }
         r++; // 빈 줄
 
         Row menuHeader = sheet.createRow(r++);
