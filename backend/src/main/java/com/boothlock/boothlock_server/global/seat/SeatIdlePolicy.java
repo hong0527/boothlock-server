@@ -26,10 +26,11 @@ import java.util.Objects;
  *       §7-9 "미결제 주문 보유 세션은 영업일 종료로만 만료". 영업일(06:00 KST 경계)이 바뀌면 전날 미결제는 더 이상 세션을 붙잡지 않는다</li>
  * </ol>
  *
- * <p>이 정의를 쓰는 곳은 세 군데이고 셋이 반드시 같아야 한다 — C1 세션 복원(TableSessionService),
- * O3 session·needsCleanup(TableAdminService), E1 좌석 집계(BoothSeatRepository의 JPQL).
- * 앞의 둘은 {@link Criteria#isActive}를, E1은 같은 {@link Criteria} 값으로 같은 조건을 쿼리에 옮겨 쓴다.
- * 조건을 바꾸면 세 곳을 함께 바꾸고 SeatIdleConsistencyTests(교차 확인)를 돌려라.
+ * <p>이 정의를 쓰는 곳은 네 군데이고 넷이 반드시 같아야 한다 — C1 세션 복원(TableSessionService),
+ * O3 session·needsCleanup(TableAdminService), E1 좌석 집계(BoothSeatRepository의 JPQL),
+ * 손님 토큰 인증(TableSessionAuthService — 유휴 세션은 410, v0.6.8).
+ * E1 말고는 {@link Criteria#isActive}를, E1은 같은 {@link Criteria} 값으로 같은 조건을 쿼리에 옮겨 쓴다.
+ * 조건을 바꾸면 네 곳을 함께 바꾸고 SeatIdleConsistencyTests(교차 확인)·TableSessionAuthServiceTests를 돌려라.
  *
  * <p>영업일 계산은 주문 채번의 {@link OrderNumberingService#businessDateOf}를 그대로 쓴다 —
  * 주문의 business_date와 같은 식이어야 "현재 영업일의 미결제"가 어긋나지 않는다.

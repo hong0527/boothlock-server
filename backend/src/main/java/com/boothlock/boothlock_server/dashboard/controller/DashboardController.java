@@ -224,7 +224,7 @@ public class DashboardController {
 
     /** C6 직원 호출 (Should) — reason: HELP|WATER|ETC, 같은 세션 30초 재호출 제한(429) */
     @Operation(summary = "C6 직원 호출", description = "테이블에서 직원을 호출한다. 세션은 X-Session-Token 헤더로 식별한다"
-            + "(누락 401, 미존재·종료 토큰 410). 같은 세션 30초 내 재호출은 429.")
+            + "(누락 401, 미존재·종료·유휴 토큰 410). 같은 세션 30초 내 재호출은 429.")
     @PostMapping("/calls")
     @ResponseStatus(HttpStatus.CREATED)
     public CallResponse call(
@@ -234,7 +234,7 @@ public class DashboardController {
             @RequestParam(name = "sessionId", required = false) String legacySessionId,
             @Valid @RequestBody CallRequest request) {
         rejectLegacyParam("sessionId", legacySessionId, "세션은 X-Session-Token 헤더로 식별합니다.");
-        // C3·C4·C5와 같은 인증 계층 — 헤더 누락 401, 미존재·종료 토큰 410, 호출도 세션 활동으로 기록된다
+        // C3·C4·C5와 같은 인증 계층 — 헤더 누락 401, 미존재·종료·유휴 토큰 410, 호출도 세션 활동으로 기록된다
         return callService.create(sessionAuthService.authenticate(sessionToken).sessionId(), request);
     }
 
