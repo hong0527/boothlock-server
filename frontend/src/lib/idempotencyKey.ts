@@ -19,13 +19,26 @@ function generateRandomId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-export function createIdempotencyKeyStore(generate: () => string = generateRandomId): IdempotencyKeyStore {
-  let current: { key: string; fingerprint: string } | null = null
+/**
+ * 재시도로 볼 수 있는 간격 — 마지막으로 키를 쓴 뒤 이보다 오래 지나면 새 주문으로 보고 새 키를 낸다.
+ * 서버는 같은 키를 기한 없이 기존 주문으로 돌려준다. 그래서 "응답 유실 → 재시도 안 하고 주문내역 확인 →
+ * 20분 뒤 같은 메뉴를 또 주문"하면 옛 키가 나가 서버가 첫 주문을 돌려주고, 두 번째 주문은 아무도 모르게 사라졌다.
+ * 응답을 못 받은 뒤 다시 누르는 건 대개 수십 초 안이다(요청 제한시간 15초).
+ */
+export const RETRY_WINDOW_MS = 3 * 60_000
+
+export function createIdempotencyKeyStore(
+  generate: () => string = generateRandomId,
+  now: () => number = Date.now,
+): IdempotencyKeyStore {
+  let current: { key: string; fingerprint: string; lastUsedAt: number } | null = null
   return {
     keyFor(fingerprint) {
-      if (!current || current.fingerprint !== fingerprint) {
-        current = { key: generate(), fingerprint }
+      const t = now()
+      if (!current || current.fingerprint !== fingerprint || t - current.lastUsedAt > RETRY_WINDOW_MS) {
+        current = { key: generate(), fingerprint, lastUsedAt: t }
       }
+      current.lastUsedAt = t
       return current.key
     },
     clear() {

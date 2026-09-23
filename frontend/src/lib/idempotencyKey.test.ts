@@ -74,3 +74,19 @@ describe('customerOrderKeys (손님 주문 키 — 화면이 다시 떠도 유�
     expect(customerOrderKeys.keyFor(fp)).not.toBe(k1)
   })
 })
+
+describe('재시도 간격(RETRY_WINDOW_MS) — 옛 키로 새 주문이 사라지지 않게', () => {
+  it('마지막 사용 뒤 3분 안이면 같은 키(재시도), 넘으면 새 키(새 주문)', async () => {
+    const { RETRY_WINDOW_MS } = await import('./idempotencyKey')
+    let t = 0
+    const store = createIdempotencyKeyStore(counterGenerator(), () => t)
+    expect(store.keyFor('1x1')).toBe('key-1')
+    t += RETRY_WINDOW_MS
+    expect(store.keyFor('1x1')).toBe('key-1')
+    // 재시도할 때마다 창이 연장된다 — 연타 중에 키가 바뀌면 안 된다
+    t += RETRY_WINDOW_MS
+    expect(store.keyFor('1x1')).toBe('key-1')
+    t += RETRY_WINDOW_MS + 1
+    expect(store.keyFor('1x1')).toBe('key-2')
+  })
+})

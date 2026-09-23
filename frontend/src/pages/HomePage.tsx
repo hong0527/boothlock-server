@@ -109,8 +109,9 @@ export default function HomePage() {
   // E1 부스 목록·좌석 — 카테고리 필터는 서버 파라미터(대소문자 무시, 모르는 값이면 빈 배열)
   // 겹침·응답 역전 가드 — 카테고리를 빠르게 바꾸면 늦게 온 이전 카테고리 응답이 새 목록을 덮는다(pollGuard 참조)
   const boothPollGuard = useRef(createPollGuard())
-  const fetchBooths = useCallback(async () => {
-    const runId = boothPollGuard.current.begin()
+  // 주기 폴링·화면 복귀는 skipIfBusy — 앞 요청이 돌면 건너뛴다. 카테고리 변경은 새로 던져 옛 응답을 버리게 한다
+  const fetchBooths = useCallback(async (skipIfBusy = false) => {
+    const runId = boothPollGuard.current.begin(skipIfBusy)
     if (runId === null) return
     try {
       const query = category ? `?category=${encodeURIComponent(category)}` : ''
@@ -130,8 +131,8 @@ export default function HomePage() {
 
   useEffect(() => {
     fetchBooths()
-    const id = setInterval(fetchBooths, BOOTH_POLL_INTERVAL_MS)
-    const offResume = onResume(fetchBooths)
+    const id = setInterval(() => fetchBooths(true), BOOTH_POLL_INTERVAL_MS)
+    const offResume = onResume(() => fetchBooths(true))
     return () => {
       clearInterval(id)
       offResume()

@@ -465,8 +465,20 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   }
 
   // "결제 완료" = 미결제 합계를 확인받고 O24 일괄 입금확인 → 성공하면 O6 퇴실. 미결제 0건이면 O24 없이 바로 퇴실
+  // 결제 완료·비우기 재진입 가드 — checkingOut은 확인창 뒤에야 켜져서, 그 전 refetch(최대 10초) 사이 연타하면 흐름이 둘 겹친다
+  const checkoutFlowRef = useRef(false)
+
   const handleConfirmPayment = async () => {
-    if (checkingOut || busy) return
+    if (checkingOut || busy || checkoutFlowRef.current) return
+    checkoutFlowRef.current = true
+    try {
+      await confirmPaymentFlow()
+    } finally {
+      checkoutFlowRef.current = false
+    }
+  }
+
+  const confirmPaymentFlow = async () => {
     if (!(await commitPending())) return
     // commitPending이 이미 refetch를 기다렸어도, 그 안에서 만들어진 orders 클로저는 이 함수의 것과 다르다 —
     // 방금 등록·수정한 내역까지 포함한 최신 목록으로 직접 다시 계산해야 미결제 합계가 안 어긋난다
@@ -542,7 +554,16 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
 
   // "테이블 비우기" = 입금확인 없이 O6만(남은 접수 주문 완료는 O6가 함께 한다). 미결제가 남는다는 것을 확인받는다
   const handleVacate = async () => {
-    if (checkingOut || busy) return
+    if (checkingOut || busy || checkoutFlowRef.current) return
+    checkoutFlowRef.current = true
+    try {
+      await vacateFlow()
+    } finally {
+      checkoutFlowRef.current = false
+    }
+  }
+
+  const vacateFlow = async () => {
     if (!(await commitPending())) return
     const freshOrders = await refetch()
     const freshUnpaidCount = freshOrders.filter((o) => o.status !== 'CANCELED').filter(isUnpaid).length

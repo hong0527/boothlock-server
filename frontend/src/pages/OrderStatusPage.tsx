@@ -48,6 +48,9 @@ export default function OrderStatusPage() {
   const [calls, setCalls] = useState<CallSummary[]>([])
   const [activeStatus, setActiveStatus] = useState<OrderStatus>('RECEIVED')
   const [error, setError] = useState<string | null>(null)
+  // 버튼 작업(완료·취소·복구·호출확인) 오류는 따로 둔다 — error는 폴링이 성공할 때마다 지워서, 한데 두면
+  // "이미 다른 상태로 바뀌었어요" 같은 안내가 5초 안에 사라져 바쁜 운영자가 못 본다. 다음 작업이 성공하면 지운다
+  const [actionError, setActionError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
   // 진행 중인 액션의 주문들. 상태(렌더용)와 ref(판정용)를 같이 둔다 — 상태만 보면 같은 렌더 사이클 안의
   // 더블클릭이 옛 값을 읽고 통과한다. 단일 값으로 두면 A가 끝날 때 아직 요청 중인 B의 잠금까지 풀린다
@@ -109,14 +112,14 @@ export default function OrderStatusPage() {
     try {
       const res = await ackCall(callId)
       if (!res.ok && res.status !== 404) {
-        setError(`호출을 확인 처리하지 못했어요 (${res.status})`)
+        setActionError(`호출을 확인 처리하지 못했어요 (${res.status})`)
         return
       }
       setCalls((prev) => prev.filter((c) => c.callId !== callId))
-      setError(null)
+      setActionError(null)
     } catch {
       // 401이면 apiFetch가 이미 로그인 화면으로 보내는 중 — 그때는 문구를 덧그리지 않는다
-      if (getAuthToken()) setError('호출을 확인 처리하지 못했어요. 네트워크 상태를 확인해주세요.')
+      if (getAuthToken()) setActionError('호출을 확인 처리하지 못했어요. 네트워크 상태를 확인해주세요.')
     }
   }
 
@@ -136,22 +139,22 @@ export default function OrderStatusPage() {
         // 409 = 다른 기기(같은 부스 운영자)가 먼저 바꿨거나, 응답을 못 받은 앞선 요청이 이미 처리된 경우다.
         // 숫자만 보여주면 운영자가 다시 누르며 헤맨다 — 최신 목록을 불러와 실제 상태를 보여준다
         if (res.status === 409) {
-          // 문구는 재조회 뒤에 건다 — 재조회가 성공하면 오류 문구를 지우기 때문
+          // 재조회로 실제 상태를 먼저 맞춘 뒤 알린다
           await refetchAll()
-          setError(`${failMessage} — 이미 다른 상태로 바뀌었어요. 최신 목록을 불러왔어요.`)
+          setActionError(`${failMessage} — 이미 다른 상태로 바뀌었어요. 최신 목록을 불러왔어요.`)
           return
         }
         const body: { error?: { message?: string } } | null = await res.json().catch(() => null)
-        setError(`${failMessage} (${body?.error?.message ?? res.status})`)
+        setActionError(`${failMessage} (${body?.error?.message ?? res.status})`)
         return
       }
-      setError(null)
+      setActionError(null)
       await refetchAll()
     } catch {
       if (!getAuthToken()) return
       // 요청은 서버에 닿았는데 응답만 잃었을 수 있다 — 화면을 실제 상태로 맞춘 뒤 알린다(재조회도 실패하면 끊김 배너가 뜬다)
       await refetchAll()
-      setError(`${failMessage} — 응답을 받지 못했어요. 처리됐을 수 있으니 목록을 확인해 주세요.`)
+      setActionError(`${failMessage} — 응답을 받지 못했어요. 처리됐을 수 있으니 목록을 확인해 주세요.`)
     } finally {
       pendingRef.current.delete(orderId)
       setPendingOrderIds(new Set(pendingRef.current))
@@ -200,6 +203,14 @@ export default function OrderStatusPage() {
         ))}
       </div>
 
+      {actionError && (
+        <p className="flex items-center gap-3 px-10 pt-4 text-sm text-red-600">
+          {actionError}
+          <button type="button" className="underline" onClick={() => setActionError(null)}>
+            닫기
+          </button>
+        </p>
+      )}
       {error && <p className="px-10 pt-4 text-sm text-red-600">{error}</p>}
 
       {/* 미확인 직원 호출(O10 calls) — 주문 카드와 같은 카드 톤으로 한 줄씩, '확인'을 누르면 O15 */}

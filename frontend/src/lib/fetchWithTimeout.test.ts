@@ -52,10 +52,37 @@ describe('fetchWithTimeout — 현장 인터넷이 약할 때', () => {
     expect((err as Error).name).toBe('AbortError')
   })
 
-  it('기본 제한 시간: 조회 10초, 변경 15초, 사진 업로드 60초', () => {
+  it('기본 제한 시간: 조회 10초, 변경 15초, 사진 업로드 120초', () => {
     expect(defaultTimeoutMs({})).toBe(10_000)
     expect(defaultTimeoutMs({ method: 'post' })).toBe(15_000)
     expect(defaultTimeoutMs({ method: 'PATCH' })).toBe(15_000)
-    expect(defaultTimeoutMs({ method: 'POST', body: new FormData() })).toBe(60_000)
+    expect(defaultTimeoutMs({ method: 'POST', body: new FormData() })).toBe(120_000)
+  })
+})
+
+describe('fetchWithTimeout — 본문이 멈출 때', () => {
+  it('헤더는 왔는데 본문이 안 오면 제한 시간에 TimeoutError(폴링이 res.json()에서 굳지 않게)', async () => {
+    const stalled = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode('{"a"')) } })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(stalled, { status: 200 })))
+    const caught = fetchWithTimeout('/api/v1/admin/orders').catch((e) => e)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(await caught).toBeInstanceOf(TimeoutError)
+  })
+
+  it('본문을 다 받은 응답은 그대로 읽힌다(상태·헤더 보존)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"ok":1}', { status: 409, headers: { 'X-T': 'v' } })))
+    const res = await fetchWithTimeout('/x')
+    expect(res.status).toBe(409)
+    expect(res.headers.get('X-T')).toBe('v')
+    expect(await res.json()).toEqual({ ok: 1 })
+  })
+
+  it('204는 본문 없이 그대로', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
+    expect((await fetchWithTimeout('/x', { method: 'DELETE' })).status).toBe(204)
+  })
+
+  it('업로드(FormData)는 120초', () => {
+    expect(defaultTimeoutMs({ method: 'POST', body: new FormData() })).toBe(120_000)
   })
 })
