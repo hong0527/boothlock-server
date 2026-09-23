@@ -4,6 +4,7 @@ import PillButton from '../components/PillButton'
 import TableGridCard from '../components/TableGridCard'
 import TopNav from '../components/TopNav'
 import { useTableOrders } from '../context/TableOrderContext'
+import { shouldShowTableEmptyState } from '../lib/tableEmptyState'
 import { getAuthToken } from '../lib/auth'
 import { compareTableLabels, displayTableLabel } from '../lib/tableLabel'
 
@@ -13,7 +14,7 @@ const HANDLE_SPACE = 40
 const CANVAS_SIDE_PADDING = 40 // 캔버스 컨테이너의 px-10(좌우 각 40px)
 
 export default function TableHomePage() {
-  const { tables, error, refetch, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable } =
+  const { tables, error, loaded, refetch, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable } =
     useTableOrders()
   const [editMode, setEditMode] = useState(false)
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
@@ -130,6 +131,22 @@ export default function TableHomePage() {
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* 배치된 테이블이 하나도 없을 때(신규 가입 직후 등)의 빈 화면 — "테이블 편집"을 눌러야 "테이블
+          추가"가 나타나는 걸 모르면 화면이 완전히 비어 보여서 막막하다. 편집모드 진입 버튼 자체는 이미
+          위에 있으니 여기서는 안내 문구 + 같은 동작의 버튼 하나만 더해 바로 다음 행동을 알려준다. */}
+      {shouldShowTableEmptyState({ editMode, loaded, error, placedCount: placedTables.length }) && (
+        <div className="flex flex-col items-center gap-4 px-10 py-24 text-center">
+          <p className="text-lg text-neutral-400">
+            {unplacedTables.length > 0
+              ? '배치되지 않은 테이블이 있어요. 테이블 편집에서 배치도에 놓아주세요.'
+              : '아직 등록된 테이블이 없어요. 테이블 편집에서 테이블을 추가해보세요.'}
+          </p>
+          <PillButton type="button" onClick={() => setEditMode(true)}>
+            테이블 편집
+          </PillButton>
         </div>
       )}
 
