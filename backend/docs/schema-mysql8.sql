@@ -56,6 +56,8 @@ CREATE TABLE booth_table (
   status      VARCHAR(20) NOT NULL DEFAULT 'EMPTY',
   pos_x       INT         NULL,
   pos_y       INT         NULL,
+  grid_row    INT         NULL,                            -- O22b 파일럿 그리드 행(1~50). 미배치면 NULL
+  grid_col    INT         NULL,                            -- O22b 파일럿 그리드 열(1~50). 칸 중복은 서비스가 부스 잠금으로 막는다
   active      BOOLEAN     NOT NULL DEFAULT TRUE,           -- soft delete (엔티티 columnDefinition "boolean default true", 문서 v1.3 미기재)
   PRIMARY KEY (id),
   UNIQUE KEY uq_booth_label (booth_id, label),

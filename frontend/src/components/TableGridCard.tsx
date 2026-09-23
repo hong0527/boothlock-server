@@ -1,95 +1,54 @@
-import { useEffect, useRef, useState } from 'react'
-import moreHorizontal from '../assets/icons/more-horizontal.svg'
 import { formatClockTime, isLongWait } from '../lib/time'
 import { displayTableLabel } from '../lib/tableLabel'
 import type { TableStatusInfo } from '../types/table'
+
+type GridDraft = { row: string; col: string }
 
 type TableGridCardProps = {
   table: TableStatusInfo
   editMode: boolean
   onClick: () => void
-  onMove?: (tableId: number, x: number, y: number) => void
-  onDragEnd?: (tableId: number, x: number, y: number) => void
-  /** 운영자 화면은 태블릿 폭 기준 — 이 값을 넘겨 드래그가 현재 화면 폭 밖으로 나가지 않게 막는다 */
-  maxX?: number
-  /** 경과시간 색상 판정 기준 시각(ms) */
+  /** 편집 모드에서 행/열 입력값(문자열, 미확정) — 편집 모드가 아니면 불필요 */
+  gridDraft?: GridDraft
+  onGridDraftChange?: (draft: GridDraft) => void
+  /** 경과시간 색상 판정 기준 시각(ms) — 첫 주문 후 2시간을 넘기면 시각 텍스트가 빨강(#105) */
   now: number
 }
 
-export default function TableGridCard({
-  table,
-  editMode,
-  onClick,
-  onMove,
-  onDragEnd,
-  maxX,
-  now,
-}: TableGridCardProps) {
+export default function TableGridCard({ table, editMode, onClick, gridDraft, onGridDraftChange, now }: TableGridCardProps) {
   const longWait = isLongWait(table.firstOrderAt, now)
-  const [isDragging, setIsDragging] = useState(false)
-  const stopDragRef = useRef<(() => void) | null>(null)
-
-  // 언마운트(예: 드래그 중 다른 페이지로 이동) 시 window 리스너가 영원히 안 남게 정리
-  useEffect(() => {
-    return () => stopDragRef.current?.()
-  }, [])
-
-  // 자유 배치 드래그 — Pointer Events로 직접 구현 (네이티브 HTML5 draggable은 터치에서 동작 안 함)
-  const handlePointerDown = (e: React.PointerEvent) => {
-    const startPointerX = e.clientX
-    const startPointerY = e.clientY
-    const startX = table.posX ?? 0
-    const startY = table.posY ?? 0
-    setIsDragging(true)
-    let lastX = startX
-    let lastY = startY
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      const dx = moveEvent.clientX - startPointerX
-      const dy = moveEvent.clientY - startPointerY
-      lastX = Math.max(0, Math.min(maxX ?? Infinity, startX + dx))
-      lastY = Math.max(0, startY + dy)
-      onMove?.(table.id, lastX, lastY)
-    }
-
-    // 터치에서는 스크롤/시스템 제스처가 끼어들면 pointerup 대신 pointercancel이 온다 — 둘 다 정리해야 함
-    const stopDrag = () => {
-      setIsDragging(false)
-      window.removeEventListener('pointermove', handlePointerMove)
-      window.removeEventListener('pointerup', stopDrag)
-      window.removeEventListener('pointercancel', stopDrag)
-      stopDragRef.current = null
-      onDragEnd?.(table.id, lastX, lastY)
-    }
-
-    window.addEventListener('pointermove', handlePointerMove)
-    window.addEventListener('pointerup', stopDrag)
-    window.addEventListener('pointercancel', stopDrag)
-    stopDragRef.current = stopDrag
-  }
-
   return (
-    // 카드 자체 위치는 항상 (table.posX, table.posY) 고정 — 핸들은 카드 바깥 위쪽에 절대위치로 얹는다
-    <div
-      className={`absolute w-[200px] ${isDragging ? 'z-10' : 'z-0'}`}
-      style={{ left: table.posX ?? 0, top: table.posY ?? 0 }}
-    >
-      {editMode && (
-        <button
-          type="button"
-          onPointerDown={handlePointerDown}
-          aria-label="테이블 위치 옮기기"
-          className="absolute -top-8 left-1/2 -translate-x-1/2 cursor-grab touch-none active:cursor-grabbing"
-        >
-          <img src={moreHorizontal} alt="" draggable={false} className="h-6 w-6" />
-        </button>
+    <div className="w-[200px]">
+      {editMode && onGridDraftChange && (
+        <div className="mb-2 flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            max={50}
+            placeholder="행"
+            aria-label={`${displayTableLabel(table.label)} 행 번호`}
+            value={gridDraft?.row ?? ''}
+            onChange={(e) => onGridDraftChange({ row: e.target.value, col: gridDraft?.col ?? '' })}
+            className="w-16 rounded-lg border border-neutral-300 px-2 py-1 text-center text-sm"
+          />
+          <span className="text-neutral-400">행</span>
+          <input
+            type="number"
+            min={1}
+            max={50}
+            placeholder="열"
+            aria-label={`${displayTableLabel(table.label)} 열 번호`}
+            value={gridDraft?.col ?? ''}
+            onChange={(e) => onGridDraftChange({ row: gridDraft?.row ?? '', col: e.target.value })}
+            className="w-16 rounded-lg border border-neutral-300 px-2 py-1 text-center text-sm"
+          />
+          <span className="text-neutral-400">열</span>
+        </div>
       )}
       <button
         type="button"
         onClick={onClick}
-        className={`flex min-h-[240px] w-[200px] flex-col rounded-xl border bg-neutral-50 p-4 text-left ${
-          isDragging ? 'border-neutral-600 shadow-lg' : 'border-neutral-200'
-        }`}
+        className="flex min-h-[240px] w-[200px] flex-col rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-left"
       >
         <div className="flex items-start justify-between">
           <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">

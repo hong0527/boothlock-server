@@ -17,6 +17,17 @@ public interface TableRepository extends JpaRepository<TableEntity, Long> {
     boolean existsByBoothIdAndLabel(Long boothId, String label);
 
     /**
+     * O22b 그리드 좌표 중복 배치 방지 — 같은 부스의 다른 활성 테이블이 이미 같은 (row, col)을 쓰는지.
+     * 잠금 읽기라 격리수준과 무관하게 최신 커밋을 본다. 호출 전에 부스 행을 잠가 같은 부스의 좌표 저장을 줄 세운다
+     * (TableAdminService.updateGridPosition). 잠금 없는 exists였을 때 두 운영자가 같은 칸에 동시에 놓으면 둘 다 통과했다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from TableEntity t where t.booth.id = :boothId and t.active = true"
+            + " and t.gridRow = :row and t.gridCol = :col and t.id <> :id")
+    List<TableEntity> findGridConflictsForUpdate(@Param("boothId") Long boothId, @Param("row") Integer row,
+                                                 @Param("col") Integer col, @Param("id") Long id);
+
+    /**
      * O2 일괄 등록 — 정규화 라벨의 부스 내 중복 판정에 기존 라벨 전체가 필요하다 (DB스키마 §1 booth_table 주석).
      * soft delete된 라벨도 포함해서 스캔한다 — DB unique 제약이 active 여부와 무관하게 걸려있어, 삭제된 라벨도 재사용하면 충돌한다.
      */

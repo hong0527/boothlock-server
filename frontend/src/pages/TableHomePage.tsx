@@ -1,26 +1,32 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import PaymentModal from '../components/PaymentModal'
 import PillButton from '../components/PillButton'
 import TableGridCard from '../components/TableGridCard'
 import TopNav from '../components/TopNav'
 import { useTableOrders } from '../context/TableOrderContext'
+import { planGridSave } from '../lib/gridSavePlan'
 import { useNow } from '../lib/useNow'
 import { shouldShowTableEmptyState } from '../lib/tableEmptyState'
 import { getAuthToken } from '../lib/auth'
 import { compareTableLabels, displayTableLabel } from '../lib/tableLabel'
 
-const CARD_WIDTH = 200
-const CARD_HEIGHT = 240
-const HANDLE_SPACE = 40
-const CANVAS_SIDE_PADDING = 40 // 캔버스 컨테이너의 px-10(좌우 각 40px)
+const MIN_GRID_INDEX = 1
+const MAX_GRID_INDEX = 50
+/** 실제 쓴 열 수만큼만 그린다 — 8로 두면 너비가 최소 1848px라 태블릿(1180~1366px)에서 항상 가로 스크롤이 생긴다 */
+const MIN_COLUMNS = 1
+
+type GridDraft = { row: string; col: string }
 
 export default function TableHomePage() {
-  const { tables, error, loaded, refetch, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable } =
-    useTableOrders()
+  const { tables, error, loaded, refetch, addTable, commitGridPosition, deleteTable } = useTableOrders()
   const [editMode, setEditMode] = useState(false)
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
-  const [viewportWidth, setViewportWidth] = useState(() => document.documentElement.clientWidth)
-  // 추가·삭제 중 연타를 막는다 — 안 막으면 "테이블 추가"는 테이블이 두 개 생기고, "테이블 삭제"는 같은 테이블에
+  // 편집 모드 중 아직 저장하지 않은 행/열 입력값 — "저장하기"를 눌러야 서버에 반영된다
+  const [gridEdits, setGridEdits] = useState<Record<number, GridDraft>>({})
+  // 미배치 트레이 — 어떤 테이블에 행/열 입력창을 열어뒀는지
+  const [placingId, setPlacingId] = useState<number | null>(null)
+  const [placingDraft, setPlacingDraft] = useState<GridDraft>({ row: '', col: '' })
+  // 추가·삭제·배치 중 연타를 막는다 — 안 막으면 "테이블 추가"는 테이블이 두 개 생기고, "테이블 삭제"는 같은 테이블에
   // DELETE가 두 번 나가 하나는 204, 하나는 404가 뜬다(실제 재현됨)
   const [tableActionBusy, setTableActionBusy] = useState(false)
   // 망 끊김처럼 context의 error에 안 담기는 실패를 이 화면에서 알린다
@@ -28,28 +34,10 @@ export default function TableHomePage() {
   // 경과시간 색상 판정 기준 시각 — 2시간 임계값 판정이라 촘촘한 갱신은 필요 없다(최대 30초 늦게 빨강)
   const now = useNow(30_000)
 
-  // 운영자 화면은 태블릿 폭 기준 — 회전 등으로 폭이 바뀌어도 드래그 가능 범위를 다시 계산한다
-  useEffect(() => {
-    const onResize = () => setViewportWidth(document.documentElement.clientWidth)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-
-  // 테이블이 화면 폭 밖으로 드래그되지 않게 막는 상한 — 이 값을 넘기면 캔버스가 화면보다 넓어져 가로 스크롤이 생긴다
-  const maxX = Math.max(0, viewportWidth - CANVAS_SIDE_PADDING * 2 - CARD_WIDTH)
-
-  const unplacedTables = tables.filter((t) => t.posX == null || t.posY == null)
+  const unplacedTables = tables.filter((t) => t.gridRow == null || t.gridCol == null)
+  const placedTables = tables.filter((t) => t.gridRow != null && t.gridCol != null)
   const selectedTable = tables.find((t) => t.id === selectedTableId) ?? null
-
-  // 화면 폭이 좁아졌거나(태블릿 회전 등) 예전에 더 넓은 화면에서 저장된 위치라도, 항상 현재 화면 안에 들어오게
-  // 렌더링 시점에 다시 clamp한다 — 그래야 drag로 직접 옮기지 않아도 다시 열었을 때 가로 스크롤이 안 생긴다.
-  const placedTables = tables
-    .filter((t) => t.posX != null && t.posY != null)
-    .map((t) => ({ ...t, posX: Math.min(t.posX!, maxX) }))
-
-  // 드래그로 오른쪽/아래로 멀리 옮겨도 카드가 잘리지 않게 캔버스 크기를 내용에 맞춰 키운다
-  const canvasHeight = Math.max(0, ...placedTables.map((t) => t.posY ?? 0)) + CARD_HEIGHT + HANDLE_SPACE + 40
-  const canvasWidth = Math.max(0, ...placedTables.map((t) => t.posX ?? 0)) + CARD_WIDTH + 80
+  const columns = Math.max(MIN_COLUMNS, ...placedTables.map((t) => t.gridCol ?? 0))
 
   const handleAddTable = async () => {
     if (tableActionBusy) return
@@ -84,6 +72,93 @@ export default function TableHomePage() {
     }
   }
 
+  const parseGridDraft = (label: string, draft: GridDraft): { row: number | null; col: number | null } | null => {
+    const row = draft.row.trim()
+    const col = draft.col.trim()
+    if (row === '' && col === '') return { row: null, col: null }
+    if (row === '' || col === '') {
+      setTableError(`${displayTableLabel(label)}의 행/열을 모두 입력하거나 모두 비워주세요.`)
+      return null
+    }
+    const rowNum = Number(row)
+    const colNum = Number(col)
+    if (
+      !Number.isInteger(rowNum) ||
+      !Number.isInteger(colNum) ||
+      rowNum < MIN_GRID_INDEX ||
+      rowNum > MAX_GRID_INDEX ||
+      colNum < MIN_GRID_INDEX ||
+      colNum > MAX_GRID_INDEX
+    ) {
+      setTableError(`${displayTableLabel(label)}의 행/열은 ${MIN_GRID_INDEX}~${MAX_GRID_INDEX} 사이의 숫자여야 해요.`)
+      return null
+    }
+    return { row: rowNum, col: colNum }
+  }
+
+  // 편집 모드에서 바꾼 행/열을 한 번에 저장 — 드래그와 달리 입력은 즉시 반영되지 않고 "저장하기"를 눌러야 서버로 나간다
+  const handleSaveGridEdits = async () => {
+    if (tableActionBusy) return
+    const changes: { tableId: number; row: number | null; col: number | null }[] = []
+    for (const [idStr, draft] of Object.entries(gridEdits)) {
+      const tableId = Number(idStr)
+      const table = tables.find((t) => t.id === tableId)
+      if (!table) continue
+      const parsed = parseGridDraft(table.label, draft)
+      if (parsed === null) return // 검증 실패 — 저장 중단, 안내만 띄운다
+      if (parsed.row === table.gridRow && parsed.col === table.gridCol) continue // 변화 없음
+      changes.push({ tableId, ...parsed })
+    }
+
+    setTableActionBusy(true)
+    setTableError(null)
+    // 실패한 항목의 입력값은 지우지 않는다 — 중복 좌표 같은 오류로 실패해도 다시 타이핑하지 않고 고쳐서 재시도할 수 있게
+    const failedTableIds = new Set<number>()
+    try {
+      // 순차 저장 + 맞바꾸기 대비 — 순서만으로는 맞바꾸기가 409로 실패한다(lib/gridSavePlan.ts 주석).
+      // 목표 칸을 차지한 변경 대상을 먼저 비우고 옮긴다. 한 번 실패한 테이블은 뒤 단계도 건너뛴다.
+      const current = tables.map((t) => ({ tableId: t.id, row: t.gridRow ?? null, col: t.gridCol ?? null }))
+      for (const op of planGridSave(current, changes)) {
+        if (failedTableIds.has(op.tableId)) continue
+        const ok = await commitGridPosition(op.tableId, op.row, op.col)
+        if (!ok) failedTableIds.add(op.tableId)
+      }
+    } finally {
+      setTableActionBusy(false)
+    }
+    setGridEdits((prev) => {
+      const next: Record<number, GridDraft> = {}
+      for (const [idStr, draft] of Object.entries(prev)) {
+        if (failedTableIds.has(Number(idStr))) next[Number(idStr)] = draft
+      }
+      return next
+    })
+    if (failedTableIds.size === 0) setEditMode(false) // 전부 성공했을 때만 편집 모드를 닫는다
+  }
+
+  const handleConfirmPlacement = async (tableId: number) => {
+    const table = tables.find((t) => t.id === tableId)
+    if (!table || tableActionBusy) return
+    const parsed = parseGridDraft(table.label, placingDraft)
+    if (parsed === null || parsed.row === null || parsed.col === null) {
+      if (parsed !== null) setTableError(`${displayTableLabel(table.label)}의 행/열을 입력해주세요.`)
+      return
+    }
+    setTableActionBusy(true)
+    setTableError(null)
+    let ok = false
+    try {
+      ok = await commitGridPosition(tableId, parsed.row, parsed.col)
+    } finally {
+      setTableActionBusy(false)
+    }
+    // 실패(예: 중복 좌표)했을 때는 입력창을 닫지 않는다 — 값을 그대로 두고 고쳐서 다시 시도할 수 있게
+    if (ok) {
+      setPlacingId(null)
+      setPlacingDraft({ row: '', col: '' })
+    }
+  }
+
   return (
     <div className="min-h-screen w-full bg-[#f4f5f7]">
       <TopNav />
@@ -97,7 +172,7 @@ export default function TableHomePage() {
             <PillButton type="button" onClick={handleDeleteLastTable} disabled={tables.length === 0 || tableActionBusy}>
               테이블 삭제
             </PillButton>
-            <PillButton type="button" onClick={() => setEditMode(false)}>
+            <PillButton type="button" onClick={handleSaveGridEdits} disabled={tableActionBusy}>
               저장하기
             </PillButton>
           </>
@@ -121,18 +196,58 @@ export default function TableHomePage() {
 
       {editMode && unplacedTables.length > 0 && (
         <div className="border-b border-neutral-200 bg-neutral-100 px-10 py-4">
-          <p className="mb-2 text-sm text-neutral-400">미배치 테이블 — 눌러서 배치도에 놓기</p>
+          <p className="mb-2 text-sm text-neutral-400">미배치 테이블 — 눌러서 행/열 번호를 입력하고 배치하기</p>
           <div className="flex flex-wrap gap-3">
-            {unplacedTables.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => placeUnplacedTable(t.id)}
-                className="rounded-xl border border-neutral-300 bg-neutral-50 px-4 py-3 text-base font-semibold text-neutral-900"
-              >
-                {displayTableLabel(t.label)}
-              </button>
-            ))}
+            {unplacedTables.map((t) =>
+              placingId === t.id ? (
+                <div key={t.id} className="flex items-center gap-2 rounded-xl border border-neutral-300 bg-neutral-50 px-4 py-3">
+                  <span className="text-base font-semibold text-neutral-900">{displayTableLabel(t.label)}</span>
+                  <input
+                    type="number"
+                    min={MIN_GRID_INDEX}
+                    max={MAX_GRID_INDEX}
+                    placeholder="행"
+                    aria-label={`${displayTableLabel(t.label)} 행 번호`}
+                    value={placingDraft.row}
+                    onChange={(e) => setPlacingDraft({ row: e.target.value, col: placingDraft.col })}
+                    className="w-14 rounded-lg border border-neutral-300 px-2 py-1 text-center text-sm"
+                  />
+                  <input
+                    type="number"
+                    min={MIN_GRID_INDEX}
+                    max={MAX_GRID_INDEX}
+                    placeholder="열"
+                    aria-label={`${displayTableLabel(t.label)} 열 번호`}
+                    value={placingDraft.col}
+                    onChange={(e) => setPlacingDraft({ row: placingDraft.row, col: e.target.value })}
+                    className="w-14 rounded-lg border border-neutral-300 px-2 py-1 text-center text-sm"
+                  />
+                  <PillButton type="button" onClick={() => handleConfirmPlacement(t.id)} disabled={tableActionBusy}>
+                    배치
+                  </PillButton>
+                  <button
+                    type="button"
+                    onClick={() => setPlacingId(null)}
+                    className="text-sm text-neutral-400"
+                    aria-label="배치 취소"
+                  >
+                    취소
+                  </button>
+                </div>
+              ) : (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    setPlacingId(t.id)
+                    setPlacingDraft({ row: '', col: '' })
+                  }}
+                  className="rounded-xl border border-neutral-300 bg-neutral-50 px-4 py-3 text-base font-semibold text-neutral-900"
+                >
+                  {displayTableLabel(t.label)}
+                </button>
+              ),
+            )}
           </div>
         </div>
       )}
@@ -144,7 +259,7 @@ export default function TableHomePage() {
         <div className="flex flex-col items-center gap-4 px-10 py-24 text-center">
           <p className="text-lg text-neutral-400">
             {unplacedTables.length > 0
-              ? '배치되지 않은 테이블이 있어요. 테이블 편집에서 배치도에 놓아주세요.'
+              ? '위치(행/열)가 없는 테이블이 있어요. 테이블 편집에서 행과 열을 입력해주세요.'
               : '아직 등록된 테이블이 없어요. 테이블 편집에서 테이블을 추가해보세요.'}
           </p>
           <PillButton type="button" onClick={() => setEditMode(true)}>
@@ -153,23 +268,56 @@ export default function TableHomePage() {
         </div>
       )}
 
-      <div
-        className="relative px-10 pb-10"
-        style={{ height: canvasHeight, minWidth: canvasWidth, marginTop: HANDLE_SPACE }}
-      >
-        {placedTables.map((table) => (
-          <TableGridCard
-            key={table.id}
-            table={table}
-            editMode={editMode}
-            onClick={() => !editMode && setSelectedTableId(table.id)}
-            onMove={moveTable}
-            onDragEnd={commitTablePosition}
-            maxX={maxX}
-            now={now}
-          />
-        ))}
+      <div className="overflow-x-auto px-10 pb-10">
+        <div
+          className="grid gap-6"
+          style={{ gridTemplateColumns: `repeat(${columns}, 200px)`, marginTop: 24 }}
+        >
+          {placedTables.map((table) => (
+            <div key={table.id} style={{ gridRow: table.gridRow ?? undefined, gridColumn: table.gridCol ?? undefined }}>
+              <TableGridCard
+                table={table}
+                editMode={editMode}
+                onClick={() => !editMode && setSelectedTableId(table.id)}
+                gridDraft={
+                  editMode
+                    ? (gridEdits[table.id] ?? { row: String(table.gridRow ?? ''), col: String(table.gridCol ?? '') })
+                    : undefined
+                }
+                onGridDraftChange={
+                  editMode ? (draft) => setGridEdits((prev) => ({ ...prev, [table.id]: draft })) : undefined
+                }
+                now={now}
+              />
+            </div>
+          ))}
+        </div>
       </div>
+
+      {/* 위치(행/열)가 없는 테이블도 평소 화면에서 보여야 한다. 안 보이면 손님은 QR로 주문하는데
+          운영자는 카드가 없어 결제 모달을 열 수 없다. 이 기능 배포 직후엔 기존 테이블 전부가 이 상태로
+          시작하고, 축제 중 "테이블 추가"로 만든 테이블도 행/열을 넣기 전까지 이 상태다. */}
+      {!editMode && unplacedTables.length > 0 && placedTables.length > 0 && (
+        <div className="px-10 pb-10">
+          <p className="mb-3 text-sm text-neutral-400">위치 미지정 테이블 — "테이블 편집"에서 행과 열을 입력하세요</p>
+          <div className="flex flex-wrap gap-6">
+            {unplacedTables.map((table) => (
+              <div key={table.id} className="w-[200px]">
+                <TableGridCard table={table} editMode={false} onClick={() => setSelectedTableId(table.id)} now={now} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {!editMode && unplacedTables.length > 0 && placedTables.length === 0 && loaded && !error && (
+        <div className="flex flex-wrap justify-center gap-6 px-10 pb-10">
+          {unplacedTables.map((table) => (
+            <div key={table.id} className="w-[200px]">
+              <TableGridCard table={table} editMode={false} onClick={() => setSelectedTableId(table.id)} now={now} />
+            </div>
+          ))}
+        </div>
+      )}
 
       {selectedTable && (
         <PaymentModal

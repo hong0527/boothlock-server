@@ -5,6 +5,7 @@ import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableGridPositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionResponse;
@@ -140,6 +141,19 @@ public class TableController {
                                                @PathVariable Long tableId,
                                                @Valid @RequestBody TablePositionRequest request) {
         return tableAdminService.updatePosition(authorization, tableId, request);
+    }
+
+    /**
+     * O22b 테이블 그리드 좌표 저장 (명세서 밖, 파일럿 전용) — 운영자가 숫자로 직접 입력하는 행/열.
+     * O22(px 드래그)와는 별개 필드/엔드포인트다.
+     */
+    @Operation(summary = "O22b 테이블 그리드 좌표 저장",
+            description = "운영자가 직접 입력한 테이블의 행/열 번호를 저장한다. row·col을 모두 비우면 미배치로 되돌린다.")
+    @PatchMapping("/admin/tables/{tableId}/grid-position")
+    public TableStatusResponse updateGridPosition(@RequestHeader("Authorization") String authorization,
+                                                   @PathVariable Long tableId,
+                                                   @RequestBody TableGridPositionRequest request) {
+        return tableAdminService.updateGridPosition(authorization, tableId, request);
     }
 
     /** O6 퇴실·초기화 (Should) — 세션 종료+테이블 비움, 멱등(세션이 없어도 200으로 EMPTY), 미결제 있어도 warning만 */

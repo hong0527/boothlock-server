@@ -49,11 +49,19 @@ public class TableEntity {
     private TableStatus status = TableStatus.EMPTY;
 
     // 운영자 배치도 위치(O22) — px, 캔버스 좌상단 원점. 배치 전에는 NULL (DB스키마 §1 참조)
+    // 드래그앤드롭 배치(파일럿 이후 재사용 예정)용 필드라 그대로 둔다 — 파일럿 그리드 좌표는 아래 gridRow/gridCol을 쓴다
     @Column(name = "pos_x")
     private Integer posX;
 
     @Column(name = "pos_y")
     private Integer posY;
+
+    // 파일럿용 그리드 좌표(O22b) — 운영자가 숫자로 직접 입력하는 행/열. posX/posY(px, 드래그용)와는 별개 개념. 배치 전에는 NULL
+    @Column(name = "grid_row")
+    private Integer gridRow;
+
+    @Column(name = "grid_col")
+    private Integer gridCol;
 
     // 테이블 삭제 — 이용 이력이 있으면 soft delete만 한다(진짜로 지우면 과거 주문·세션 기록의 외래키가
     // 깨진다). 이력이 없는 마지막 번호 테이블은 TableAdminService가 행 자체를 지운다. 어느 쪽이든 번호는 반납되고,
@@ -99,10 +107,24 @@ public class TableEntity {
         return posY;
     }
 
+    public Integer getGridRow() {
+        return gridRow;
+    }
+
+    public Integer getGridCol() {
+        return gridCol;
+    }
+
     /** O22 배치 좌표 저장 */
     public void updatePosition(Integer posX, Integer posY) {
         this.posX = posX;
         this.posY = posY;
+    }
+
+    /** O22b 그리드 좌표 저장 — 둘 다 null이면 미배치로 되돌린다(트레이로 돌아감) */
+    public void updateGridPosition(Integer gridRow, Integer gridCol) {
+        this.gridRow = gridRow;
+        this.gridCol = gridCol;
     }
 
     public boolean isActive() {
@@ -123,6 +145,8 @@ public class TableEntity {
         this.status = TableStatus.EMPTY;
         this.posX = null;
         this.posY = null;
+        this.gridRow = null;
+        this.gridCol = null;
     }
 
     /** C1 세션 발급 — 활성 세션이 없어 새로 만들 때 테이블을 사용중으로 전환한다 */
