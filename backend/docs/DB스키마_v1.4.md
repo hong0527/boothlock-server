@@ -4,6 +4,7 @@
 > v1.1: MySQL 8.4·H2 실행 검증 — 멱등키 NULL 허용, password_hash 72자, call→staff_call, 세션 유일성 제약, utf8mb4, 타임존·조건부 UPDATE 원칙.
 > v1.2: 토큰·멱등키 `utf8mb4_bin`, ended_at_key를 자기 id 방식으로. v1.2.1: `orders.table_label`.
 > v1.3: `booth.category·map_x·map_y`, `booth_table.pos_x·pos_y`, `event_map` 신설, 좌석 현황을 세션으로 판정(원칙 14).
+> v1.4.1: `booth_table.grid_row·grid_col` 신설(파일럿 전용, 명세서 밖) — 운영자가 숫자로 직접 입력하는 행/열, pos_x·pos_y(픽셀 드래그)와 별개.
 > **v1.4 변경 (2026-09-16, 통합 PR 반영 — 코드가 정본)**: ① **문서 미기재였던 컬럼 5개 편입** — `booth.next_table_seq`, `booth_table.active`, `menu.category`, `order_item.canceled`, 제약 `uk_menu_booth_name(booth_id, name)` (deploy-mysql §5 실측) ② `booth_table.status`는 **VARCHAR(20)** — 엔티티에 `@JdbcTypeCode(VARCHAR)`를 붙여 MySQL 네이티브 ENUM 생성을 막았다 ③ **`idx_orders_session(session_id)`** 인덱스 신설(엔티티 `@Index` + 운영 SQL) ④ **운영 스키마는 `schema-mysql8.sql`을 먼저 적용하고 `ddl-auto=validate`로 기동** — 토큰 3컬럼의 `utf8mb4_bin`은 Hibernate가 만들 수 없다(원칙 17·18) ⑤ 원칙 15 **잠금 뒤 읽기**, 원칙 16 **미결제 정의**, 원칙 13 정정(인증 전환 완료), 원칙 14 갱신(미결제 예외) ⑥ §4를 "실습 코드 차이"에서 **"문서 ↔ Hibernate 자동 DDL ↔ 운영 SQL 차이표"** 로 교체 ⑦ **`booth.depositor_name VARCHAR(50) NULL`**(예금주명, main #57 → 통합 PR #54 병합) 편입.
 > 규칙: 엔티티에는 반드시 `@Table(name = "...")`로 아래 테이블명을 명시한다. 담당은 파트로 적는다(부스·테이블·메뉴·주문·대시보드·정산·홈).
 
@@ -81,7 +82,9 @@ erDiagram
 | status | **VARCHAR(20)** | NOT NULL DEFAULT 'EMPTY' | EMPTY / OCCUPIED. **v1.4: 엔티티에 `@JdbcTypeCode(SqlTypes.VARCHAR)` 추가** — 없으면 Hibernate가 MySQL에 네이티브 `enum('EMPTY','OCCUPIED')`를 만든다(실측). C1 새 세션 시 OCCUPIED, **O6 퇴실 시 EMPTY**(v1.3의 "되돌리는 코드가 없다"는 해소). 그래도 **좌석 집계의 근거로 쓰지 않는다**(원칙 14) |
 | pos_x | INT | NULL | 운영자 배치도 가로 px(캔버스 좌상단 원점), **0~10000**(O22가 반올림·범위 검증). NULL = 미배치 |
 | pos_y | INT | NULL | 세로 px. 엔티티 `Integer` |
-| **active** | BOOLEAN | NOT NULL DEFAULT TRUE | **v1.4 편입** — soft delete. O26이 **이용 이력(세션)이 있는 마지막 테이블**을 삭제할 때 FALSE로 둔다(과거 주문·세션 FK 보존). 이력 없는 테이블은 행을 지운다. FALSE인 테이블은 C1·O4·O5·O6·O22·O10·O14·O24에서 404, O3·E1·O4b·O16 tableCount에서 제외. 라벨 UNIQUE는 active와 무관하게 걸리므로, O25가 같은 번호를 다시 낼 때는 새 행을 넣지 않고 이 행을 TRUE로 되살린다(토큰 유지). 엔티티 `columnDefinition = "boolean default true"` |
+| grid_row | INT | NULL | **v1.4.1 편입** — 파일럿 전용(명세서 밖). 운영자가 숫자로 직접 입력하는 행 번호, **1~50**(O22b가 범위·중복 검증). pos_x/pos_y(픽셀 드래그, 파일럿 이후 재사용 예정)와는 별개 개념. NULL = 미배치 |
+| grid_col | INT | NULL | 열 번호. 엔티티 `Integer` |
+| **active** | BOOLEAN | NOT NULL DEFAULT TRUE | **v1.4 편입** — soft delete. O26이 **이용 이력(세션)이 있는 마지막 테이블**을 삭제할 때 FALSE로 둔다(과거 주문·세션 FK 보존). 이력 없는 테이블은 행을 지운다. FALSE인 테이블은 C1·O4·O5·O6·O22·O22b·O10·O14·O24에서 404, O3·E1·O4b·O16 tableCount에서 제외. 라벨 UNIQUE는 active와 무관하게 걸리므로, O25가 같은 번호를 다시 낼 때는 새 행을 넣지 않고 이 행을 TRUE로 되살린다(토큰 유지). 엔티티 `columnDefinition = "boolean default true"` |
 | _UNIQUE_ | | **uq_booth_label (booth_id, label)** | |
 
 - 엔티티 `@DynamicUpdate` — C1의 OCCUPIED 전환이 동시에 저장된 O5 새 토큰·O22 좌표·삭제(active=false)를 덮지 않게
@@ -256,6 +259,8 @@ CREATE TABLE booth_table (
   status      VARCHAR(20) NOT NULL DEFAULT 'EMPTY',
   pos_x       INT         NULL,
   pos_y       INT         NULL,
+  grid_row    INT         NULL,
+  grid_col    INT         NULL,
   active      BOOLEAN     NOT NULL DEFAULT TRUE,
   CONSTRAINT fk_table_booth FOREIGN KEY (booth_id) REFERENCES booth(id),
   CONSTRAINT uq_booth_label UNIQUE (booth_id, label),

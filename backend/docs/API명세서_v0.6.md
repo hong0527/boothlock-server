@@ -27,6 +27,7 @@
 | v0.6.4 | 2026-09-20 | **O19 정산 CSV 구현 완료 — 마지막 501 스텁 해소.** O18과 같은 ADMIN 전용으로 확정. 행은 취소되지 않은 OrderItem 1건, 수식 주입 방지 적용. §7 부록·확정 필요 표·501 에러 설명에서 O19 관련 문구 정리 |
 | v0.6.5 | 2026-09-23 | **O19 정산 CSV 조회를 "영업일 하루 고정"에서 사용자 지정 시간 범위로 확장.** `date`(영업일 단일 조회) 파라미터를 제거하고 `startAt`·`endAt`(둘 다 필수, KST, `datetime-local`)로 교체. 조회 기준은 그대로 주문 생성 시각(createdAt), `start <= createdAt < end` — 자정을 넘는 구간도 지원. **행 대상은 기존과 동일하게 결제 상태 무관 전체 원장**(UNPAID 포함, 개별 취소 OrderItem만 제외) — 이 부분은 동작 변경이 아니라 기존 동작의 재확인. CSV 마지막에 "총 결제완료 매출액" 요약(빈 줄 구분, `구분,금액` / `총 결제완료 매출액,{합계}`) 신규 추가 — PAID이면서 미취소인 상세 항목 금액만 합산, 상세 행과 같은 금액 값을 재사용해 중복 합산·불일치 방지. 프론트 `SettlementPage`도 날짜 1개 선택 → 시작/마감 일시 2개 입력으로 변경 |
 | v0.6.6 | 2026-09-23 | **O19 정산 파일을 CSV에서 엑셀(xlsx)로 전환.** CSV는 열 너비·서식을 담을 수 없어 주문시각 열이 엑셀에서 `#######`로 표시되는 문제가 있었다 — 열 너비·굵은 머리글·틀 고정·자동 필터·천 단위 콤마를 서버가 지정한다. 엔드포인트 `settlement.csv` → `settlement.xlsx`. **상세 행 대상을 전체 원장에서 결제완료(PAID)로 좁히고** 컬럼을 9개(`주문번호, 테이블, 주문시각, 메뉴명, 수량, 단가, 금액, 결제상태, 결제수단`)로 축소. 시트 2장으로 분리(「요약」·「매출상세」)하고 요약에 **메뉴별 판매수량·매출액**과 **환불대기 금액**, 결제수단별(계좌이체/현금) 분리 및 대사용 **계좌 입금 합계·현금 보유 합계** 신규 추가. 상세에 `결제수단` 컬럼 추가(계좌 대사용). 조회 구간 **최대 31일** 상한 신설. 수식 주입 방지 `'` 접두사는 xlsx 문자열 셀이라 제거. `SettlementCsvService` → `SettlementReportService` 개명 |
+| v0.6.7 | 2026-09-23 | **O22b 신설(명세서 밖, 파일럿 전용)** — 2026-09-23 실제 부스 운영자 시연 피드백. 35~40개 테이블 파일럿 규모에서 드래그앤드롭 대신 운영자가 행/열 숫자를 직접 입력하는 그리드 좌표(`gridRow`/`gridCol`, 1~50, 중복 배치 거부)를 먼저 도입 — O22(`posX`/`posY`, px 드래그)는 그대로 두고 별개 필드/엔드포인트로 추가(드래그앤드롭은 파일럿 이후 과제). `TableStatusResponse`에 `gridRow`/`gridCol` 필드 추가(O3·O22·O22b 공통) |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -539,6 +540,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | O20 | POST | `/api/v1/admin/feedback` | 7.4 운영자 피드백 제출 | Should |
 | O21 | POST | `/api/v1/admin/orders/{orderId}/refund-done` | 5.5 환불 송금 완료 처리 (**ADMIN 전용**) | Should |
 | O22 | PATCH | `/api/v1/admin/tables/{tableId}/position` | 4.6 테이블 배치 좌표 저장 | Should |
+| **O22b** | PATCH | `/api/v1/admin/tables/{tableId}/grid-position` | **테이블 그리드 좌표 저장 (명세서 밖, 파일럿 전용, v0.6.7 신설)** | - |
 | **O23** | PATCH | `/api/v1/admin/orders/{orderId}/items/{itemId}` | **5.3 보조 — 결제창 항목 수량 변경 (v0.6 편입)** | Should |
 | **O23b** | POST | `/api/v1/admin/orders/{orderId}/items/{itemId}/cancel` | **5.5 보조 — 결제창 항목 개별 취소 (v0.6 편입)** | Should |
 | **O24** | POST | `/api/v1/admin/orders/table-payment` | **5.4 테이블 일괄 입금 확인 (v0.6 신설, 9/14 결정)** | Must |
@@ -624,7 +626,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 }
 ```
 
-**v0.5 "명세 ↔ 구현 불일치"는 합집합으로 확정됐다.** `TableStatusResponse(id, label, status, needsCleanup, posX, posY, session, unpaidOrderCount)`, `Session(startedAt, lastActivityAt, id)`. O22 응답도 정확히 이 형태다.
+**v0.5 "명세 ↔ 구현 불일치"는 합집합으로 확정됐다.** `TableStatusResponse(id, label, status, needsCleanup, posX, posY, gridRow, gridCol, session, unpaidOrderCount)`, `Session(startedAt, lastActivityAt, id)`. O22·O22b 응답도 정확히 이 형태다. `gridRow`/`gridCol`은 v0.6.7 신설(파일럿 전용, O22b).
 
 | 필드 | 규칙 |
 |---|---|
@@ -954,6 +956,28 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 **Response 200**: **O3의 테이블 항목과 정확히 같은 형태** 1건 / **Errors**: `400` / `401` / `404`(타 부스·미존재·삭제)
 
 - 표시 전용. 겹침은 서버가 막지 않는다. 변경 컬럼만 UPDATE라 동시 C1·O5 값을 덮지 않는다
+
+---
+
+## O22b. PATCH /api/v1/admin/tables/{tableId}/grid-position — 테이블 그리드 좌표 저장 (명세서 밖, 파일럿 전용, v0.6.7 신설)
+
+> 2026-09-23 실제 부스 운영자 시연 피드백 — 35~40개 테이블 파일럿 규모에서는 드래그앤드롭 대신 운영자가 행/열 숫자를
+> 직접 입력하는 방식을 먼저 쓴다. O22(px 드래그)와는 별개 필드(`gridRow`/`gridCol`)·별개 엔드포인트다.
+> 드래그앤드롭은 파일럿 이후 과제로 남는다 — O22와 `posX`/`posY`는 이번 변경으로 건드리지 않는다.
+
+**Request**: `{ "row": 3, "col": 5 }` — 둘 다 값이 있거나 둘 다 `null`(또는 생략, 미배치로 되돌림)
+
+**검증 (`TableAdminService.validateGridIndex`)**
+
+| 입력 | 결과 |
+|---|---|
+| 정수 1~50, 둘 다 값 있음 | 저장 |
+| 둘 다 `null`(또는 생략) | 미배치로 되돌림(트레이로) |
+| 한쪽만 값 있음 | `400` |
+| 1 미만·50 초과, 소수, 문자열 | `400` — O22와 같은 이유로 필드를 `Object`로 받아 원래 JSON 타입을 확인한다(Jackson 기본 설정은 문자열·소수를 조용히 정수로 바꾼다) |
+| 같은 부스의 다른 활성 테이블이 이미 같은 (row, col) | `409 INVALID_STATE` — 겹쳐 배치 금지(O22와 달리 그리드는 겹침을 막는다) |
+
+**Response 200**: O3/O22와 정확히 같은 `TableStatusResponse` 형태(`gridRow`/`gridCol` 필드 포함) / **Errors**: `400` / `401` / `404`(타 부스·미존재·삭제) / `409`
 
 ---
 

@@ -17,6 +17,7 @@ import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
+import com.boothlock.boothlock_server.tableqr.dto.TableGridPositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusListResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusResponse;
@@ -51,7 +52,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * O2 테이블 일괄 등록·O3 좌석 현황·O5 QR 재발급·O6 퇴실·O22 배치 좌표 (명세서 O2·O3·O5·O6·O22) — JWT·STAFF 인증은 황대겸의 BoothJwtProvider·BoothInfoService를 그대로 재사용한다.
+ * O2 테이블 일괄 등록·O3 좌석 현황·O5 QR 재발급·O6 퇴실·O22 배치 좌표·O22b 그리드 좌표 (명세서 O2·O3·O5·O6·O22, O22b는 명세서 밖 파일럿 전용) — JWT·STAFF 인증은 황대겸의 BoothJwtProvider·BoothInfoService를 그대로 재사용한다.
  */
 @Service
 public class TableAdminService {
@@ -67,6 +68,9 @@ public class TableAdminService {
      * 캔버스가 고정 px라 실제 좌표는 수천 이내다. 약도 좌표(mapX·mapY) 상한과 같은 10000으로 둔다
      */
     private static final int MAX_POSITION = 10_000;
+
+    /** O22b 그리드 좌표 상한 — 파일럿 규모(35~40개 테이블)에 넉넉한 여유를 둔 값. posX/posY(px)와는 별개 단위(칸 번호)다 */
+    private static final int MAX_GRID_INDEX = 50;
 
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
 
@@ -379,6 +383,57 @@ public class TableAdminService {
     }
 
     /**
+     * O22b 그리드 좌표 저장 — 파일럿 전용(명세서 밖). 운영자가 숫자로 직접 입력하는 행/열이다(드래그앤드롭은 파일럿 이후).
+     * O22(posX/posY, px)와는 별개 필드라 서로 영향을 주지 않는다 — 응답은 O3/O22와 같은 {@link TableStatusResponse}.
+     * row/col은 둘 다 null(미배치로 되돌림)이거나 둘 다 값이 있어야 한다. 같은 부스의 다른 활성 테이블과 좌표가 겹치면 거부한다
+     * (겹치면 그리드 화면에서 두 테이블이 같은 칸에 그려진다).
+     */
+    @Transactional
+    public TableStatusResponse updateGridPosition(String authorization, Long tableId, TableGridPositionRequest request) {
+        BoothEntity staffBooth = authenticatedBooth(authorization);
+        if (request == null) {
+            throw new InvalidRequestException("row와 col이 필요합니다.");
+        }
+        Integer row = validateGridIndex("row", request.row(), request.col());
+        Integer col = validateGridIndex("col", request.col(), request.row());
+
+        // 부스 행 → 테이블 행 순서로 잠근다(deleteTable·일괄 등록과 같은 순서라 교착이 없다).
+        // 부스 잠금으로 같은 부스의 좌표 저장이 줄을 서므로, 두 운영자가 같은 칸에 동시에 놓아도 한쪽만 성공한다
+        BoothEntity locked = lockBooth(staffBooth.getId());
+        TableEntity table = tableRepository.findActiveByIdAndBoothIdForUpdate(tableId, locked.getId())
+                .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다."));
+        if (row != null
+                && !tableRepository.findGridConflictsForUpdate(locked.getId(), row, col, table.getId()).isEmpty()) {
+            throw new InvalidStateException("이미 다른 테이블이 배치된 칸입니다.");
+        }
+
+        table.updateGridPosition(row, col);
+        return toStatusResponses(List.of(table)).getFirst();
+    }
+
+    /**
+     * 그리드 좌표 검증 — row/col은 둘 다 null(미배치로 되돌림)이거나 둘 다 1~{@link #MAX_GRID_INDEX} 사이의 정수여야 한다.
+     * O22(px, 드래그 좌표)와 달리 관리자가 직접 타이핑하는 값이라 소수·문자열 관용이 필요 없다.
+     * Jackson은 JSON 문자열 "3"을 Integer 필드로 조용히 바꾸고 3.5(소수)는 3으로 잘라 받으므로(TablePositionRequest와 같은 문제),
+     * 필드를 Object로 받아 여기서 {@code instanceof Integer}로 원래 JSON 타입을 확인한다 — 정수 리터럴이 아니면 바로 400.
+     */
+    private Integer validateGridIndex(String field, Object value, Object other) {
+        if (value == null) {
+            if (other != null) {
+                throw new InvalidRequestException("row와 col은 함께 지정하거나 함께 비워야 합니다.");
+            }
+            return null;
+        }
+        if (!(value instanceof Integer intValue)) {
+            throw new InvalidRequestException(field + "는 1~" + MAX_GRID_INDEX + " 사이의 정수여야 합니다.");
+        }
+        if (intValue < 1 || intValue > MAX_GRID_INDEX) {
+            throw new InvalidRequestException(field + "는 1~" + MAX_GRID_INDEX + " 사이여야 합니다.");
+        }
+        return intValue;
+    }
+
+    /**
      * O6 퇴실·초기화("결제 완료"·"테이블 비우기" 버튼) — 열린 세션 종료(해당 sessionToken 즉시 410) + status EMPTY.
      * 미결제 주문이 있어도 막지 않고 warning으로만 알려준다(명세서 O6 "Should").
      *
@@ -462,6 +517,8 @@ public class TableAdminService {
                             needsCleanup,
                             table.getPosX(),
                             table.getPosY(),
+                            table.getGridRow(),
+                            table.getGridCol(),
                             session,
                             unpaid == null ? 0 : Math.toIntExact(unpaid.getUnpaidOrderCount()));
                 })

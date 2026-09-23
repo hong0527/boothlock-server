@@ -8,7 +8,7 @@ import java.time.OffsetDateTime;
  * O3 좌석 현황 응답의 테이블 1건 (명세서 O3).
  * needsCleanup은 OCCUPIED인데 활성 세션이 없는 경우다. posX/posY·session·unpaidOrderCount는
  * v0.5 신설 필드 — 명세와 기존 구현(needsCleanup만 반환)의 합집합으로 둘 다 유지한다 (O3 각주 참조).
- * O22 응답도 정확히 같은 형태를 쓴다.
+ * O22 응답도 정확히 같은 형태를 쓴다. gridRow/gridCol은 파일럿용 신설 필드(O22b) — posX/posY(px 드래그)와 별개다.
  *
  * @param session          종료되지 않았고 유휴 정책(SeatIdlePolicy)상 활성인 세션. 없거나 유휴면 null — 손님 홈 화면(E1)이 빈자리로 세는 기준과 같다
  * @param unpaidOrderCount 종료되지 않은 세션(유휴 포함)의 미결제(UnpaidOrderRule: RECEIVED·DONE && UNPAID) 주문 수 — 퇴실 전 확인용
@@ -20,6 +20,8 @@ public record TableStatusResponse(
         boolean needsCleanup,
         Integer posX,
         Integer posY,
+        Integer gridRow,
+        Integer gridCol,
         Session session,
         int unpaidOrderCount) {
 

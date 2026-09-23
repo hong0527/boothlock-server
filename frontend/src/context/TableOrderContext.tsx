@@ -31,8 +31,11 @@ type TableOrderContextValue = {
   moveTable: (tableId: number, x: number, y: number) => void
   /** O22 — 드래그가 끝났을 때(pointerup) 한 번 호출해 저장한다 */
   commitTablePosition: (tableId: number, x: number, y: number) => Promise<void>
-  /** 미배치 테이블을 빈 격자 자리에 배치한다 */
+  /** 미배치 테이블을 빈 격자 자리에 배치한다 (px 드래그 방식 — 파일럿 이후 재사용 예정) */
   placeUnplacedTable: (tableId: number) => Promise<void>
+  /** O22b — 파일럿 전용, 운영자가 직접 입력한 행/열을 저장한다. 둘 다 null이면 미배치로 되돌린다. 성공 여부를 돌려준다 —
+   * 실패(예: 중복 좌표 409)했을 때 호출자가 사용자 입력을 그대로 남겨둘지(재시도 가능하게) 판단하는 데 쓴다 */
+  commitGridPosition: (tableId: number, row: number | null, col: number | null) => Promise<boolean>
   /** 테이블 삭제(숨김 처리) — 사용 중인 테이블은 서버가 409로 거부한다 */
   deleteTable: (tableId: number) => Promise<void>
 }
@@ -139,16 +142,8 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
       setError(`테이블을 추가하지 못했어요 (${res.status})`)
       return
     }
-    const created: { id: number } = await res.json()
-
-    // 미배치 상태로 두고 사람이 드래그해서 놓게 하지 않고, 바로 빈 격자 자리에 배치까지 해버린다
-    const latest = await refetch()
-    const placed = latest.filter((t) => t.posX != null && t.posY != null) as (TableStatusInfo & {
-      posX: number
-      posY: number
-    })[]
-    const { x, y } = findFreeGridPosition(placed.map((t) => ({ x: t.posX, y: t.posY })))
-    await commitTablePosition(created.id, x, y)
+    // 그리드 좌표(파일럿)는 운영자가 숫자로 직접 입력한다 — 새 테이블은 항상 미배치 상태로 시작해 트레이에 나타난다
+    await refetch()
   }
 
   const deleteTable = async (tableId: number) => {
@@ -189,6 +184,24 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
     setTables((prev) => prev.map((t) => (t.id === tableId ? { ...t, ...updated } : t)))
   }
 
+  const commitGridPosition: TableOrderContextValue['commitGridPosition'] = async (tableId, row, col) => {
+    const res = await apiFetch(`/api/v1/admin/tables/${tableId}/grid-position`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row, col }),
+    })
+    if (!res.ok) {
+      setError(
+        res.status === 409 ? '이미 다른 테이블이 배치된 칸이에요.' : `테이블 위치를 저장하지 못했어요 (${res.status})`,
+      )
+      return false
+    }
+    // O22b 응답도 O22와 마찬가지로 orderItems/orderTotal/firstOrderAt이 없다 — 기존 값을 덮어쓰지 않게 얹어준다
+    const updated: Omit<TableStatusInfo, keyof TableOrderAggregate> = await res.json()
+    setTables((prev) => prev.map((t) => (t.id === tableId ? { ...t, ...updated } : t)))
+    return true
+  }
+
   const placeUnplacedTable: TableOrderContextValue['placeUnplacedTable'] = async (tableId) => {
     const placed = tables.filter((t) => t.posX != null && t.posY != null) as (TableStatusInfo & {
       posX: number
@@ -200,7 +213,18 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
 
   return (
     <TableOrderContext.Provider
-      value={{ tables, error, loaded, refetch, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable }}
+      value={{
+        tables,
+        error,
+        loaded,
+        refetch,
+        addTable,
+        moveTable,
+        commitTablePosition,
+        placeUnplacedTable,
+        commitGridPosition,
+        deleteTable,
+      }}
     >
       {children}
     </TableOrderContext.Provider>

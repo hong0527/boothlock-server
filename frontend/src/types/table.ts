@@ -33,6 +33,9 @@ export type TableStatusInfo = {
   needsCleanup: boolean
   posX: number | null
   posY: number | null
+  /** 파일럿용 그리드 좌표(O22b) — 운영자가 숫자로 직접 입력하는 행/열. posX/posY(드래그, 파일럿 이후 재사용 예정)와는 별개 */
+  gridRow: number | null
+  gridCol: number | null
   session: TableSessionInfo | null
   unpaidOrderCount: number
   /** O3 응답엔 없음 — 프론트가 O10 대시보드 주문을 테이블별로 묶어서 계산해 붙인 값(테이블-홈 카드 표시용) */
