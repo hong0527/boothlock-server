@@ -73,20 +73,20 @@ describe('SettlementPage', () => {
 
     expect(calledPaths).toHaveLength(1)
     const url = new URL(calledPaths[0], 'http://localhost')
-    expect(url.pathname).toBe('/api/v1/admin/reports/settlement.csv')
+    expect(url.pathname).toBe('/api/v1/admin/reports/settlement.xlsx')
     // UTC 변환·9시간 이동·초 단위 보정 없이 입력값 그대로
     expect(url.searchParams.get('startAt')).toBe('2026-09-30T22:00')
     expect(url.searchParams.get('endAt')).toBe('2026-10-01T03:00')
   })
 
-  it('자정을 넘는 범위도 그대로 전달한다', async () => {
+  it('한쪽에만 초가 붙어 같은 시각이면 요청을 보내지 않는다', async () => {
+    // 문자열 비교였다면 '22:00' < '22:00:00'이 참이라 같은 시각인데도 통과했다
     edit('시작 일시', '2026-09-30T22:00')
-    edit('마감 일시', '2026-10-01T03:00')
+    edit('마감 일시', '2026-09-30T22:00:00')
     await download()
 
-    const url = new URL(calledPaths[0], 'http://localhost')
-    expect(url.searchParams.get('startAt')).toBe('2026-09-30T22:00')
-    expect(url.searchParams.get('endAt')).toBe('2026-10-01T03:00')
+    expect(calledPaths).toHaveLength(0)
+    expect(JSON.stringify(render())).toContain('이후여야')
   })
 
   it('시작 일시가 비어 있으면 요청을 보내지 않는다', async () => {

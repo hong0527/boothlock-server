@@ -36,6 +36,9 @@ dependencies {
 	implementation 'com.google.zxing:core:3.5.3'
 	implementation 'com.google.zxing:javase:3.5.3'
 	implementation 'com.github.librepdf:openpdf:1.3.42'
+
+	// O19 정산 엑셀 — 열 너비·서식은 통합문서 안에만 저장할 수 있어서 CSV로는 지정할 방법이 없다
+	implementation 'org.apache.poi:poi-ooxml:5.4.1'
 }
 
 tasks.named('test') {

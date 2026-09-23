@@ -29,10 +29,32 @@ export function defaultRange(at: Date = new Date()) {
   }
 }
 
-/** Content-Disposition의 filename="..." 값을 뽑는다 — 못 찾으면 구간으로 대체 파일명 구성 */
+/**
+ * Content-Disposition의 filename="..." 값을 뽑는다 — 못 찾을 때만 쓰는 대체 파일명이다.
+ * 서버 파일명은 settlement_{boothId}_{시작}_{마감}.xlsx인데 이 화면은 boothId를 모르므로 그 자리는 비운다.
+ * 시각 부분만 서버와 같은 yyyyMMddTHHmmss로 맞춘다 — datetime-local 원본(2026-09-30T22:00)을 그대로 쓰면
+ * 파일명에 콜론이 들어가기 때문 (SettlementReportService.FILENAME_TIMESTAMP_FORMAT).
+ */
 function extractFilename(header: string | null, startAt: string, endAt: string) {
   const match = header?.match(/filename="([^"]+)"/)
-  return match?.[1] ?? `settlement_${startAt}_${endAt}.csv`
+  return match?.[1] ?? `settlement_${compactStamp(startAt)}_${compactStamp(endAt)}.xlsx`
+}
+
+/** 2026-09-30T22:00 → 20260930T220000 (초가 없으면 00으로 채운다) */
+function compactStamp(value: string) {
+  const [date = '', time = ''] = value.split('T')
+  const [hh = '00', mm = '00', ss = '00'] = time.split(':')
+  return `${date.replaceAll('-', '')}T${hh}${mm}${ss}`
+}
+
+/** 에러 응답 본문의 error.message를 꺼낸다 — 본문이 비었거나 JSON이 아니면 null */
+async function serverMessage(res: Response) {
+  try {
+    const body = await res.json()
+    return typeof body?.error?.message === 'string' ? body.error.message : null
+  } catch {
+    return null
+  }
 }
 
 export default function SettlementPage() {
@@ -48,7 +70,8 @@ export default function SettlementPage() {
       setError('시작 일시와 마감 일시를 모두 입력해주세요.')
       return
     }
-    if (!(startAt < endAt)) {
+    // 문자열 비교는 한쪽에만 초가 붙으면 '22:00' < '22:00:00'이 되어 같은 시각을 통과시킨다 — 시각으로 비교
+    if (!(new Date(startAt).getTime() < new Date(endAt).getTime())) {
       setError('마감 일시는 시작 일시보다 이후여야 해요.')
       return
     }
@@ -57,10 +80,12 @@ export default function SettlementPage() {
     try {
       // datetime-local 값을 UTC 변환 없이 그대로 query parameter로 보낸다 — 서버가 KST로 그대로 해석
       const params = new URLSearchParams({ startAt, endAt })
-      const res = await apiFetch(`/api/v1/admin/reports/settlement.csv?${params.toString()}`)
+      const res = await apiFetch(`/api/v1/admin/reports/settlement.xlsx?${params.toString()}`)
       if (!res.ok) {
-        if (res.status === 403) throw new Error('정산 CSV는 ADMIN 계정만 다운로드할 수 있어요.')
-        if (res.status === 400) throw new Error('시작/마감 일시를 다시 확인해주세요.')
+        if (res.status === 403) throw new Error('정산 파일은 ADMIN 계정만 다운로드할 수 있어요.')
+        // 400은 이유가 여러 개다(구간 역순, 31일 초과, 형식 오류) — 서버 문구를 그대로 보여줘야
+        // 무엇을 고쳐야 할지 알 수 있다. 본문을 못 읽으면 일반 문구로 되돌린다.
+        if (res.status === 400) throw new Error(await serverMessage(res) ?? '시작/마감 일시를 다시 확인해주세요.')
         throw new Error(`다운로드에 실패했어요 (${res.status})`)
       }
       const blob = await res.blob()
@@ -84,7 +109,7 @@ export default function SettlementPage() {
   return (
     <div className="min-h-screen w-full bg-[#f4f5f7]">
       <TopNav />
-      <SectionHeader title="정산 CSV 다운로드" />
+      <SectionHeader title="정산 엑셀 다운로드" />
 
       <div className="mx-auto flex w-full max-w-[600px] flex-col gap-6 px-6 py-10">
         <TextField
@@ -100,15 +125,15 @@ export default function SettlementPage() {
           onChange={(e) => setRange((prev) => ({ ...prev, endAt: e.target.value }))}
         />
         <p className="text-sm text-neutral-400">
-          입력한 시작 일시부터 마감 일시까지의 주문 내역을 CSV로 다운로드합니다. (예: 9/30 22:00 ~ 10/1 03:00)
+          입력한 시작 일시부터 마감 일시까지의 결제완료 매출을 엑셀(.xlsx)로 다운로드합니다. (예: 9/30 22:00 ~ 10/1 03:00)
           <br />
-          시작 일시는 포함, 마감 일시는 포함하지 않아요. 날짜가 바뀌는 시간 범위도 그대로 입력할 수 있어요.
+          시작 일시는 포함, 마감 일시는 포함하지 않아요. 날짜가 바뀌는 시간 범위도 그대로 입력할 수 있고, 한 번에 최대 31일까지 조회할 수 있어요.
         </p>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         <PrimaryButton type="button" onClick={handleDownload} disabled={loading} className="disabled:opacity-40">
-          {loading ? '다운로드 중...' : 'CSV 다운로드'}
+          {loading ? '다운로드 중...' : '엑셀 다운로드'}
         </PrimaryButton>
       </div>
     </div>

@@ -134,8 +134,13 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
      * O19 정산 CSV 전용 — 주문 생성 시각(createdAt) 구간으로 조회한다. start &lt;= createdAt &lt; end.
      * {@code searchForDashboard}는 businessDate(영업일 정확히 일치)와 8개 선택 조건을 조합하는 범용 조회라
      * "createdAt 임의 범위"라는 이번 조건을 억지로 끼워 넣으면 그 메서드의 다른 호출자(O10·O18)까지 흔들린다 —
-     * 별도 메서드로 분리한다. paymentStatus·hidden 여부는 걸지 않는다 — 정산 원장은 결제 상태·숨김 처리와
-     * 무관하게 그 시간대에 생성된 주문을 전부 보여줘야 한다(O19 서비스 상단 주석 참고).
+     * 별도 메서드로 분리한다.
+     *
+     * <p>돈이 실제로 들어온 주문만 본다 — {@code paymentStatus in (PAID, REFUND_NEEDED)}. UNPAID를 DB 단계에서
+     * 빼는 이유는 두 가지다. 리포트가 "결제완료 매출"만 보여주기 때문이고(O19 서비스 상단 주석), 미결제 주문까지
+     * 메모리로 끌어오면 구간을 넓게 잡았을 때 읽고 버리는 엔티티가 그만큼 늘기 때문이다. REFUND_NEEDED는 상세
+     * 행에는 안 나가지만 요약의 "환불대기 금액" 계산에 필요해서 같이 가져온다(환불 송금 전이라 그 돈은 아직
+     * 계좌에 있다). hidden 여부는 걸지 않는다 — 대시보드에서 숨긴 것과 정산은 무관하다.
      */
     @EntityGraph(attributePaths = "items")
     @Query("""
@@ -143,6 +148,9 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
             where o.boothId = :boothId
               and o.createdAt >= :startAt
               and o.createdAt < :endAt
+              and o.paymentStatus in (
+                  com.boothlock.boothlock_server.global.domain.PaymentStatus.PAID,
+                  com.boothlock.boothlock_server.global.domain.PaymentStatus.REFUND_NEEDED)
             order by o.createdAt asc, o.id asc
             """)
     List<OrderEntity> searchForSettlementRange(
