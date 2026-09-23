@@ -121,6 +121,8 @@ CREATE TABLE orders (
   UNIQUE KEY uq_orders_idempotency (idempotency_key),
   KEY idx_orders_search (booth_id, business_date, order_no),       -- 대시보드 주문번호 검색
   KEY idx_orders_session (session_id),                             -- 세션별 주문·미결제 집계 (엔티티 @Index, 문서 v1.3 미기재)
+  KEY idx_orders_settlement (booth_id, created_at),                -- O19 정산 CSV 시간 범위 조회 (#102) —
+                                                                   --   idx_orders_search는 두 번째가 business_date라 booth_id 프리픽스까지만 탄다
   CONSTRAINT fk_orders_booth   FOREIGN KEY (booth_id)   REFERENCES booth (id),
   CONSTRAINT fk_orders_session FOREIGN KEY (session_id) REFERENCES table_session (id),
   CONSTRAINT chk_orders_status         CHECK (status IN ('RECEIVED','DONE','CANCELED')),
