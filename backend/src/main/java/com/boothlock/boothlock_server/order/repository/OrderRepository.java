@@ -131,6 +131,34 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     Optional<OrderEntity> findByIdAndBoothId(Long id, Long boothId);
 
     /**
+     * O19 정산 CSV 전용 — 주문 생성 시각(createdAt) 구간으로 조회한다. start &lt;= createdAt &lt; end.
+     * {@code searchForDashboard}는 businessDate(영업일 정확히 일치)와 8개 선택 조건을 조합하는 범용 조회라
+     * "createdAt 임의 범위"라는 이번 조건을 억지로 끼워 넣으면 그 메서드의 다른 호출자(O10·O18)까지 흔들린다 —
+     * 별도 메서드로 분리한다.
+     *
+     * <p>돈이 실제로 들어온 주문만 본다 — {@code paymentStatus in (PAID, REFUND_NEEDED)}. UNPAID를 DB 단계에서
+     * 빼는 이유는 두 가지다. 리포트가 "결제완료 매출"만 보여주기 때문이고(O19 서비스 상단 주석), 미결제 주문까지
+     * 메모리로 끌어오면 구간을 넓게 잡았을 때 읽고 버리는 엔티티가 그만큼 늘기 때문이다. REFUND_NEEDED는 상세
+     * 행에는 안 나가지만 요약의 "환불대기 금액" 계산에 필요해서 같이 가져온다(환불 송금 전이라 그 돈은 아직
+     * 계좌에 있다). hidden 여부는 걸지 않는다 — 대시보드에서 숨긴 것과 정산은 무관하다.
+     */
+    @EntityGraph(attributePaths = "items")
+    @Query("""
+            select o from OrderEntity o
+            where o.boothId = :boothId
+              and o.createdAt >= :startAt
+              and o.createdAt < :endAt
+              and o.paymentStatus in (
+                  com.boothlock.boothlock_server.global.domain.PaymentStatus.PAID,
+                  com.boothlock.boothlock_server.global.domain.PaymentStatus.REFUND_NEEDED)
+            order by o.createdAt asc, o.id asc
+            """)
+    List<OrderEntity> searchForSettlementRange(
+            @Param("boothId") Long boothId,
+            @Param("startAt") LocalDateTime startAt,
+            @Param("endAt") LocalDateTime endAt);
+
+    /**
      * O11 입금 확인 — 조건부 UPDATE(WHERE payment_status='UNPAID')로 상태 전이.
      * 조회 후 갱신으로 나누면 동시 클릭 시 두 요청 모두 조건을 통과해 승인 기록이 서로를 덮는다 (DB스키마 §3-9)
      */

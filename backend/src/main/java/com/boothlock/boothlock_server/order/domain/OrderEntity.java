@@ -45,7 +45,10 @@ import java.util.List;
                 @Index(name = "idx_orders_search", columnList = "booth_id, business_date, order_no"),
                 // 세션 단위 조회용 — O6 퇴실 경고·O3 미결제 집계·O10 activeSessionOnly·C1 유휴 판정이 session_id로 찾는다.
                 // 없으면 부스 인덱스 앞부분만 타고 그 부스의 주문을 훑는다 (운영 스키마 SQL의 idx_orders_session과 같은 이름)
-                @Index(name = "idx_orders_session", columnList = "session_id")})
+                @Index(name = "idx_orders_session", columnList = "session_id"),
+                // O19 정산 CSV 전용 — created_at 범위로 거른다. idx_orders_search는 두 번째 컬럼이 business_date라
+                // booth_id 프리픽스까지만 타고 나머지는 행 필터링이 되어, CSV를 뽑을 때마다 그 부스 주문을 전부 훑는다.
+                @Index(name = "idx_orders_settlement", columnList = "booth_id, created_at")})
 public class OrderEntity {
 
     /** 소비자 취소의 canceled_by 표기 — 운영자 취소는 운영자 loginId를 넣는다 (DB스키마 §1) */

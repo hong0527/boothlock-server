@@ -14,12 +14,12 @@ const LOGOUT_ITEM = { label: '로그아웃', to: null }
 
 export default function SettingsPage() {
   const navigate = useNavigate()
-  // O19 정산 CSV는 ADMIN 전용(백엔드 403) — STAFF에게는 눌러도 안 되는 항목을 아예 안 보여준다.
+  // O19 정산 엑셀은 ADMIN 전용(백엔드 403) — STAFF에게는 눌러도 안 되는 항목을 아예 안 보여준다.
   // Figma 디자인은 없는 화면(파일럿 스코프 밖) — SettlementPage.tsx 상단 주석 참고
   const isAdmin = getStaff()?.role === 'ADMIN'
   const menuItems = [
     ...BASE_MENU_ITEMS,
-    ...(isAdmin ? [{ label: '정산 CSV 다운로드', to: '/settings/settlement' }] : []),
+    ...(isAdmin ? [{ label: '정산 엑셀 다운로드', to: '/settings/settlement' }] : []),
     LOGOUT_ITEM,
   ]
 

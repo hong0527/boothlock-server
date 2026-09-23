@@ -4,7 +4,7 @@ import com.boothlock.boothlock_server.settle.dto.FeedbackRequest;
 import com.boothlock.boothlock_server.settle.dto.SalesStatsResponse;
 import com.boothlock.boothlock_server.settle.service.FeedbackService;
 import com.boothlock.boothlock_server.settle.service.SalesStatsService;
-import com.boothlock.boothlock_server.settle.service.SettlementCsvService;
+import com.boothlock.boothlock_server.settle.service.SettlementReportService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -18,10 +18,12 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * [담당: 백지연] 정산·통계·피드백 — API 명세서 O18·O19·O20
- * 핵심 규칙: 매출은 PAID 기준, date=영업일(06:00~익일05:59), CSV는 행=주문항목·BOM·수식주입 방지.
+ * 핵심 규칙: O18 매출은 PAID 기준·영업일(06:00~익일05:59). O19 엑셀은 사용자가 지정한 [startAt, endAt) 구간의
+ * 결제완료(PAID) 매출 상세 + 메뉴별·총계 요약 — 시트 2장(요약·매출상세), 행=주문항목.
  */
 @Tag(name = "정산·통계·피드백", description = "운영자 정산·통계·피드백 (명세서 O18·O19·O20, 담당: 백지연)")
 @RestController
@@ -30,13 +32,13 @@ public class SettleController {
 
     private final FeedbackService feedbackService;
     private final SalesStatsService salesStatsService;
-    private final SettlementCsvService settlementCsvService;
+    private final SettlementReportService settlementReportService;
 
     public SettleController(FeedbackService feedbackService, SalesStatsService salesStatsService,
-            SettlementCsvService settlementCsvService) {
+            SettlementReportService settlementReportService) {
         this.feedbackService = feedbackService;
         this.salesStatsService = salesStatsService;
-        this.settlementCsvService = settlementCsvService;
+        this.settlementReportService = settlementReportService;
     }
 
     /** O18 매출 집계 (Should) — 수단별 분리, 환불필요·환불됨 별도 집계 */
@@ -49,16 +51,20 @@ public class SettleController {
         return salesStatsService.getSales(authorization, date);
     }
 
-    /** O19 정산 CSV (Should) — 전체 원장(승인·취소·환불 이력 컬럼), UTF-8 BOM. O18과 같은 ADMIN 전용 */
-    @Operation(summary = "O19 정산 CSV 다운로드", description = "영업일 기준 전체 주문 항목 원장을 CSV로 내려받는다.")
-    @GetMapping("/admin/reports/settlement.csv")
+    /** O19 정산 엑셀 (Should) — 시작~마감(KST) 구간의 결제완료 매출 상세 + 메뉴별·총계 요약. O18과 같은 ADMIN 전용 */
+    @Operation(summary = "O19 정산 엑셀 다운로드",
+            description = "시작~마감 일시(KST) 구간에 생성(createdAt)된 결제완료(PAID) 주문 항목을 xlsx로 내려받는다. "
+                    + "'요약' 시트에 메뉴별 판매수량·매출액과 총계, '매출상세' 시트에 항목별 원본 행. 구간은 최대 31일.")
+    @GetMapping("/admin/reports/settlement.xlsx")
     public ResponseEntity<byte[]> downloadSettlement(
             @RequestHeader("Authorization") String authorization,
-            @RequestParam(required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        SettlementCsvService.Result result = settlementCsvService.generate(authorization, date);
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startAt,
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endAt) {
+        SettlementReportService.Result result = settlementReportService.generate(authorization, startAt, endAt);
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                .contentType(MediaType.parseMediaType(SettlementReportService.CONTENT_TYPE))
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + result.filename() + "\"")
                 .body(result.content());
     }
