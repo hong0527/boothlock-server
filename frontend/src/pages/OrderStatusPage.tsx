@@ -21,6 +21,7 @@ import {
   type OrderStatus,
   type OrderSummary,
 } from '../types/dashboard'
+import { onResume } from '../lib/onResume'
 
 const TABS: { status: OrderStatus; label: string }[] = [
   { status: 'RECEIVED', label: '진행' },
@@ -81,7 +82,11 @@ export default function OrderStatusPage() {
   useEffect(() => {
     refetchAll()
     const id = setInterval(() => refetchAll({ skipIfBusy: true }), POLL_INTERVAL_MS)
-    return () => clearInterval(id)
+    const offResume = onResume(() => refetchAll({ skipIfBusy: true }))
+    return () => {
+      clearInterval(id)
+      offResume()
+    }
   }, [refetchAll])
 
   const counts = useMemo(
@@ -128,13 +133,25 @@ export default function OrderStatusPage() {
     try {
       const res = await action()
       if (!res.ok) {
-        setError(`${failMessage} (${res.status})`)
+        // 409 = 다른 기기(같은 부스 운영자)가 먼저 바꿨거나, 응답을 못 받은 앞선 요청이 이미 처리된 경우다.
+        // 숫자만 보여주면 운영자가 다시 누르며 헤맨다 — 최신 목록을 불러와 실제 상태를 보여준다
+        if (res.status === 409) {
+          // 문구는 재조회 뒤에 건다 — 재조회가 성공하면 오류 문구를 지우기 때문
+          await refetchAll()
+          setError(`${failMessage} — 이미 다른 상태로 바뀌었어요. 최신 목록을 불러왔어요.`)
+          return
+        }
+        const body: { error?: { message?: string } } | null = await res.json().catch(() => null)
+        setError(`${failMessage} (${body?.error?.message ?? res.status})`)
         return
       }
       setError(null)
       await refetchAll()
     } catch {
-      if (getAuthToken()) setError(`${failMessage} — 서버에 연결할 수 없어요. 네트워크 상태를 확인해주세요.`)
+      if (!getAuthToken()) return
+      // 요청은 서버에 닿았는데 응답만 잃었을 수 있다 — 화면을 실제 상태로 맞춘 뒤 알린다(재조회도 실패하면 끊김 배너가 뜬다)
+      await refetchAll()
+      setError(`${failMessage} — 응답을 받지 못했어요. 처리됐을 수 있으니 목록을 확인해 주세요.`)
     } finally {
       pendingRef.current.delete(orderId)
       setPendingOrderIds(new Set(pendingRef.current))

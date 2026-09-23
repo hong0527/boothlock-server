@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
+import ConnectionBanner from './components/ConnectionBanner'
 import { CartProvider } from './context/CartContext'
 import { TableOrderProvider } from './context/TableOrderContext'
 import { SIGNUP_ENABLED } from './lib/featureFlags'
@@ -27,6 +28,7 @@ import OrderHistoryPage from './pages/customer/OrderHistoryPage'
 function App() {
   return (
     <CartProvider>
+      <ConnectionBanner />
       <Routes>
         <Route path="/" element={<LoginPage />} />
         {/* 임시 데모 (Figma 237:344) — 기본 꺼짐, VITE_SIGNUP_ENABLED=true일 때만 노출. SignupPage.tsx 상단 주석 참고.

@@ -7,6 +7,7 @@ import { getSessionInfo } from '../../lib/customerSession'
 import { displayTableLabel } from '../../lib/tableLabel'
 import { formatClockTime } from '../../lib/time'
 import type { OrderSummary } from '../../types/customer'
+import { onResume } from '../../lib/onResume'
 
 const POLL_INTERVAL_MS = 7000
 
@@ -39,7 +40,11 @@ export default function OrderHistoryPage() {
   useEffect(() => {
     fetchOrders()
     const id = setInterval(() => fetchOrders(true), POLL_INTERVAL_MS)
-    return () => clearInterval(id)
+    const offResume = onResume(() => fetchOrders(true))
+    return () => {
+      clearInterval(id)
+      offResume()
+    }
   }, [fetchOrders])
 
   return (

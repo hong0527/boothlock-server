@@ -4,6 +4,7 @@ import boothlockLogo from '../assets/icons/boothlock-logo.svg'
 import PrimaryButton from '../components/PrimaryButton'
 import TextField from '../components/TextField'
 import { apiUrl } from '../lib/apiBase'
+import { fetchWithTimeout } from '../lib/fetchWithTimeout'
 import { setAuth } from '../lib/auth'
 import { SIGNUP_ENABLED } from '../lib/featureFlags'
 
@@ -25,7 +26,7 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const res = await fetch(apiUrl('/api/v1/admin/auth/login'), {
+      const res = await fetchWithTimeout(apiUrl('/api/v1/admin/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ loginId, password }),

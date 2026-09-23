@@ -45,3 +45,32 @@ describe('cartFingerprint', () => {
     expect(cartFingerprint([{ menuId: 1, qty: 1 }])).not.toBe(cartFingerprint([{ menuId: 1, qty: 2 }]))
   })
 })
+
+describe('customerOrderKeys (손님 주문 키 — 화면이 다시 떠도 유지)', () => {
+  it('모듈 단위라 다시 import해도 같은 키 — 뒤로 갔다 와도 재시도가 중복 주문이 되지 않는다', async () => {
+    const { customerOrderKeys: a, customerOrderFingerprint } = await import('./idempotencyKey')
+    a.clear()
+    const fp = customerOrderFingerprint('tok', [{ menuId: 1, qty: 2 }])
+    const first = a.keyFor(fp)
+    const { customerOrderKeys: b } = await import('./idempotencyKey')
+    expect(b.keyFor(fp)).toBe(first)
+  })
+
+  it('세션이 다르면 같은 장바구니여도 새 키', async () => {
+    const { customerOrderKeys, customerOrderFingerprint } = await import('./idempotencyKey')
+    customerOrderKeys.clear()
+    const items = [{ menuId: 1, qty: 2 }]
+    const k1 = customerOrderKeys.keyFor(customerOrderFingerprint('tok-a', items))
+    expect(customerOrderKeys.keyFor(customerOrderFingerprint('tok-b', items))).not.toBe(k1)
+  })
+
+  it('clearCustomerSession(퇴실·만료)이 진행 중 키를 버린다', async () => {
+    const { customerOrderKeys, customerOrderFingerprint } = await import('./idempotencyKey')
+    const { clearCustomerSession } = await import('./customerSession')
+    customerOrderKeys.clear()
+    const fp = customerOrderFingerprint('tok', [{ menuId: 1, qty: 2 }])
+    const k1 = customerOrderKeys.keyFor(fp)
+    clearCustomerSession()
+    expect(customerOrderKeys.keyFor(fp)).not.toBe(k1)
+  })
+})

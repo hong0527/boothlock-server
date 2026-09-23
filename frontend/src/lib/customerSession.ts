@@ -1,5 +1,6 @@
 import type { CustomerSessionInfo } from '../types/customer'
 import { readStored, readStoredJson, removeStored, writeStored } from './safeStorage'
+import { customerOrderKeys } from './idempotencyKey'
 
 // 명세서 §1.2: sessionToken은 쿠키 금지, 커스텀 헤더(X-Session-Token)로만 실어 보낸다.
 // tableToken(QR 원본 토큰)은 교환 즉시 버리고 여기엔 저장하지 않는다.
@@ -23,6 +24,8 @@ export function setCustomerSession(sessionToken: string, info: CustomerSessionIn
 }
 
 export function clearCustomerSession() {
+  // 세션이 끝나면 진행 중이던 주문 키도 버린다 — 다음 세션 주문이 이전 세션 키로 나가 400을 받지 않게
+  customerOrderKeys.clear()
   removeStored(SESSION_TOKEN_KEY)
   removeStored(SESSION_INFO_KEY)
 }
