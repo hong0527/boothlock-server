@@ -102,6 +102,24 @@ class MenuUploadApiTests {
                 .andExpect(status().isOk());
     }
 
+    /** 서브샘플링 디코딩 뒤에도 큰 사진의 출력 크기는 원본 비율 그대로 긴 변 1080px이다 */
+    @Test
+    void largeImageIsStoredAtExactOutputDimensions() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "large.jpg", MediaType.IMAGE_JPEG_VALUE, imageBytes("jpg", 6000, 4000));
+
+        String response = mockMvc.perform(multipart("/api/v1/admin/uploads")
+                        .file(file)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        String url = objectMapper.readTree(response).get("url").asText();
+        BufferedImage stored = ImageIO.read(UPLOAD_DIR.resolve(url.substring("/uploads/menu/".length())).toFile());
+        assertThat(stored.getWidth()).isEqualTo(1080);
+        assertThat(stored.getHeight()).isEqualTo(720);
+    }
+
     @Test
     void rejectsMissingFile() throws Exception {
         mockMvc.perform(multipart("/api/v1/admin/uploads")

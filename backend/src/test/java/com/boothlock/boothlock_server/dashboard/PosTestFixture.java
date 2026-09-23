@@ -122,18 +122,18 @@ public class PosTestFixture {
 
     /** 테이블 지정 수기 주문(O14) — 활성 세션이 없으면 만들고 붙는다 */
     public OrderCreateResponse manualOrder(TableEntity target, Long menuId, int qty) {
-        return manualOrderService.create(bearer(staffToken), new ManualOrderRequest(target.getId(),
-                List.of(new OrderCreateRequest.OrderItemRequest(menuId, qty))));
+        return manualOrderService.create(bearer(staffToken), null, new ManualOrderRequest(target.getId(),
+                List.of(new OrderCreateRequest.OrderItemRequest(menuId, qty)))).response();
     }
 
     public OrderCreateResponse manualOrder(TableEntity target, List<OrderCreateRequest.OrderItemRequest> items) {
-        return manualOrderService.create(bearer(staffToken), new ManualOrderRequest(target.getId(), items));
+        return manualOrderService.create(bearer(staffToken), null, new ManualOrderRequest(target.getId(), items)).response();
     }
 
     /** 남의 부스 운영자가 남의 테이블에 넣는 수기 주문 — 교차 부스 테스트의 "B 부스 주문" 재료 */
     public OrderCreateResponse otherBoothManualOrder() {
-        return manualOrderService.create(bearer(otherBoothToken), new ManualOrderRequest(otherBoothTable.getId(),
-                List.of(new OrderCreateRequest.OrderItemRequest(otherBoothMenuId, 1))));
+        return manualOrderService.create(bearer(otherBoothToken), null, new ManualOrderRequest(otherBoothTable.getId(),
+                List.of(new OrderCreateRequest.OrderItemRequest(otherBoothMenuId, 1)))).response();
     }
 
     /** 손님 주문(C3) — 인증 계층을 통과했다고 보고 활성 세션 id로 바로 넣는다 */

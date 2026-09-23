@@ -135,7 +135,8 @@ class CallApiTests {
     @Test
     void callCountsAsSessionActivity() throws Exception {
         // 좌석 현황(E1)은 lastActivityAt으로 빈자리를 판정한다 — 호출만 하고 폴링이 없는 테이블이 빈자리로 잡히면 안 된다 (명세서 §1.2)
-        LocalDateTime stale = LocalDateTime.now(KST).minusHours(5);
+        // 유휴 임계(3시간) 안쪽으로 둔다 — 임계를 넘긴 세션(미결제 없음)은 인증 계층이 410으로 거절한다(TableSessionAuthService)
+        LocalDateTime stale = LocalDateTime.now(KST).minusHours(2);
         jdbcTemplate.update("update table_session set started_at = ?, last_activity_at = ? where id = ?", stale, stale, sessionId);
         LocalDateTime before = LocalDateTime.now(KST).minusSeconds(1);
 

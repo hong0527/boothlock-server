@@ -139,7 +139,7 @@ public class OrderRaceTestFixture {
     }
 
     public OrderCreateResponse manualOrder(List<OrderCreateRequest.OrderItemRequest> items) {
-        return manualOrderService.create(bearer(staffToken), new ManualOrderRequest(table.getId(), items));
+        return manualOrderService.create(bearer(staffToken), null, new ManualOrderRequest(table.getId(), items)).response();
     }
 
     /** 손님 주문(C3) — 인증 계층을 통과했다고 보고 활성 세션 id로 바로 넣는다. 활성 세션이 없으면 새로 연다 */

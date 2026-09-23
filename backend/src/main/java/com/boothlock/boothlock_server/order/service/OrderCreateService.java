@@ -52,6 +52,11 @@ public class OrderCreateService {
     private static final int MAX_LABEL_LENGTH = 6;
     private static final int MAX_RAW_LABEL_LENGTH = 20;   // table_label VARCHAR(20) — 원본 스냅샷 저장 한도
     private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 64;
+    /**
+     * O14 수기 주문 멱등키 접두 — 손님 C3 키와 같은 전역 unique 컬럼(idempotency_key)을 나눠 쓰므로 저장 값을 구별해 둔다.
+     * 접두만으로 막지는 않는다: 손님이 "m:..." 키를 보내면 C3이 그대로 저장하므로, 재조회 때 수기 주문인지(manual)도 함께 본다
+     */
+    private static final String MANUAL_KEY_PREFIX = "m:";
     private static final int MAX_NUMBERING_ATTEMPTS = 3;
 
     private final OrderRepository orderRepository;
@@ -120,12 +125,51 @@ public class OrderCreateService {
     }
 
     /**
-     * O14 수기 주문 — C3(create)와 검증·메뉴 조회·금액 계산을 그대로 재사용한다(복붙 금지).
-     * C3과 다른 점만: 멱등키·rate limit 없음, sessionId·tableLabel은 호출자(ManualOrderService)가 이미 정한 값,
-     * label은 tableId 지정 시 그 테이블의 정규화 라벨, 미지정 시 "M" (주문번호 M-{통산}, 명세서 O14).
+     * O14 수기 주문의 Idempotency-Key 헤더를 저장 값("m:" + 키)으로 바꾼다. 헤더가 없으면 null — 멱등 처리 없이 기존과 똑같이 동작한다.
+     * 길이 검사는 C3과 같은 이유(컬럼 VARCHAR(64), 저장 단계에서 터지면 500)로 하되 접두 2자를 뺀 62자까지다.
+     * 빈 값은 "없음"으로 보지 않고 400이다 — 조용히 멱등 없이 저장하면 클라이언트는 재시도가 안전하다고 믿은 채 이중 주문을 만든다
      */
-    public OrderCreateResponse createManual(Long boothId, Long sessionId, String label, String tableLabel,
-                                             List<OrderCreateRequest.OrderItemRequest> items) {
+    public String toManualIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null) {
+            return null;
+        }
+        if (idempotencyKey.isBlank()) {
+            throw new InvalidRequestException("Idempotency-Key가 비어 있습니다");
+        }
+        if (MANUAL_KEY_PREFIX.length() + idempotencyKey.length() > MAX_IDEMPOTENCY_KEY_LENGTH) {
+            throw new InvalidRequestException("Idempotency-Key가 너무 깁니다");
+        }
+        return MANUAL_KEY_PREFIX + idempotencyKey;
+    }
+
+    /**
+     * O14 멱등 재요청 — 같은 키로 이미 만든 수기 주문이 있으면 그 주문을 C3과 같은 응답 형태로 돌려준다(없으면 null).
+     * 호출자(ManualOrderService)는 세션 확보·사전 검증보다 먼저 부른다: 재요청이 퇴실한 테이블에 세션을 새로 열거나
+     * 그 사이 품절·마감으로 뒤집혀서는 안 된다(C3이 isOpen보다 먼저 재조회하는 것과 같은 이유).
+     */
+    public OrderCreateResponse findManualReplay(Long boothId, String manualIdempotencyKey) {
+        if (manualIdempotencyKey == null) {
+            return null;
+        }
+        OrderEntity replayed = findReplayedManualOrder(manualIdempotencyKey, boothId);
+        if (replayed == null) {
+            return null;
+        }
+        BoothEntity booth = boothRepository.findById(boothId)
+                .orElseThrow(() -> new NotFoundException("부스를 찾을 수 없습니다"));
+        return toResponse(replayed, booth.getBankAccount(), booth.getDepositorName());
+    }
+
+    /**
+     * O14 수기 주문 — C3(create)와 검증·메뉴 조회·금액 계산을 그대로 재사용한다(복붙 금지).
+     * C3과 다른 점만: rate limit 없음, 멱등키는 선택(헤더가 있을 때만 toManualIdempotencyKey 값, 없으면 null),
+     * sessionId·tableLabel은 호출자(ManualOrderService)가 이미 정한 값,
+     * label은 tableId 지정 시 그 테이블의 정규화 라벨, 미지정 시 "M" (주문번호 M-{통산}, 명세서 O14).
+     * 같은 키 동시 요청은 C3과 같은 방식으로 복구한다 — 진 쪽의 unique 위반을 저장 트랜잭션 밖에서 받아 이긴 주문을 재조회한다(saveWithRetry)
+     */
+    public OrderCreationResult createManual(Long boothId, Long sessionId, String label, String tableLabel,
+                                            String manualIdempotencyKey,
+                                            List<OrderCreateRequest.OrderItemRequest> items) {
         OrderCreateRequest request = new OrderCreateRequest(items);
         validateRequest(request);
 
@@ -144,11 +188,11 @@ public class OrderCreateService {
                 .toList();
 
         OrderWriter.OrderSpec spec = new OrderWriter.OrderSpec(
-                boothId, sessionId, label, tableLabel, null,
+                boothId, sessionId, label, tableLabel, manualIdempotencyKey,
                 totalAmount(request, menus), orderItems, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), true);
-        // 멱등키가 없어 재요청 복구 분기는 항상 타지 않는다 — 채번 충돌 재시도만 의미가 있다
+        // 멱등키가 없으면 재요청 복구 분기는 타지 않는다 — 채번 충돌 재시도만 의미가 있다
         try {
-            return saveWithRetry(spec, booth.getBankAccount(), booth.getDepositorName()).response();
+            return saveWithRetry(spec, booth.getBankAccount(), booth.getDepositorName());
         } catch (SessionExpiredException e) {
             // 호출자(O14)가 세션을 정한 뒤 저장 전에 퇴실(O6)이 끼어든 경우 — 운영자에게는 손님용 410이 아니라
             // 409로 "다시 시도" 신호를 준다. 재시도하면 활성 세션이 새로 만들어진다
@@ -185,8 +229,11 @@ public class OrderCreateService {
                 if (spec.idempotencyKey() == null) {
                     continue;
                 }
-                // 저장 트랜잭션이 끝난 뒤라 여기서는 재조회가 안전하다
-                OrderEntity winner = findReplayedOrder(spec.idempotencyKey(), spec.boothId(), spec.sessionId());
+                // 저장 트랜잭션이 끝난 뒤라 여기서는 재조회가 안전하다.
+                // 수기 주문은 세션이 없을 수 있고(테이블 미지정) 재요청이 퇴실 뒤 새 세션으로 올 수 있어 부스·수기 여부만 본다
+                OrderEntity winner = spec.manual()
+                        ? findReplayedManualOrder(spec.idempotencyKey(), spec.boothId())
+                        : findReplayedOrder(spec.idempotencyKey(), spec.boothId(), spec.sessionId());
                 if (winner != null) {
                     return new OrderCreationResult(toResponse(winner, bankAccount, depositorName), false);
                 }
@@ -206,6 +253,22 @@ public class OrderCreateService {
         }
         if (!sessionId.equals(found.getSessionId()) || !boothId.equals(found.getBoothId())) {
             // 같은 키로는 영영 주문할 수 없으므로 키를 새로 만들라는 신호를 준다 (무한 400 루프 방지)
+            throw new InvalidRequestException("요청 키를 새로 생성해 다시 시도해주세요");
+        }
+        return found;
+    }
+
+    /**
+     * O14판 findReplayedOrder — 키가 전역 unique라 남의 부스 주문이나 같은 키의 손님 주문(C3이 "m:..." 키를 그대로 저장한 경우)이
+     * 잡힐 수 있다. 그 경우 C3과 똑같이 400으로 거절한다. 세션은 비교하지 않는다 — 테이블 미지정 수기 주문은 세션이 없고,
+     * 첫 요청 뒤 퇴실(O6)이 끼어들면 재요청이 여는 세션은 다른 세션이지만 같은 주문을 돌려주는 것이 맞다
+     */
+    private OrderEntity findReplayedManualOrder(String manualIdempotencyKey, Long boothId) {
+        OrderEntity found = orderRepository.findByIdempotencyKey(manualIdempotencyKey).orElse(null);
+        if (found == null) {
+            return null;
+        }
+        if (!boothId.equals(found.getBoothId()) || !found.isManual()) {
             throw new InvalidRequestException("요청 키를 새로 생성해 다시 시도해주세요");
         }
         return found;

@@ -486,14 +486,14 @@ class OrderCreateServiceTests {
         endSession(mySession);
 
         assertThrows(InvalidStateException.class, () -> orderCreateService.createManual(
-                boothId, mySession, "A3", TABLE_LABEL, List.of(new OrderCreateRequest.OrderItemRequest(3L, 1))));
+                boothId, mySession, "A3", TABLE_LABEL, null, List.of(new OrderCreateRequest.OrderItemRequest(3L, 1))));
         assertEquals(0, orderRepository.count());
     }
 
     @Test
     void manualOrderWithoutTableSkipsSessionCheck() {
         OrderCreateResponse response = orderCreateService.createManual(
-                boothId, null, "M", null, List.of(new OrderCreateRequest.OrderItemRequest(3L, 2)));
+                boothId, null, "M", null, null, List.of(new OrderCreateRequest.OrderItemRequest(3L, 2))).response();
 
         assertEquals("M-1", response.orderNo());
         assertEquals(16000, response.totalAmount());
@@ -515,7 +515,7 @@ class OrderCreateServiceTests {
         // 채번 증가는 실패한 저장과 같은 트랜잭션에서 롤백되므로 재시도마다 다시 1번이 나와 3회 모두 충돌한다 —
         // 카운터와 orders가 어긋난 비정상 상태라 조용히 다른 주문을 돌려주는 대신 제약 위반으로 실패해야 한다
         assertThrows(DataIntegrityViolationException.class, () -> orderCreateService.createManual(
-                boothId, mySession, "A3", TABLE_LABEL, List.of(new OrderCreateRequest.OrderItemRequest(3L, 1))));
+                boothId, mySession, "A3", TABLE_LABEL, null, List.of(new OrderCreateRequest.OrderItemRequest(3L, 1))));
         assertEquals(1, orderRepository.count());   // 새 주문도, 잘못 돌려준 주문도 없다
 
         // 테이블 미지정(세션 없음) 수기 주문도 같은 충돌에서 NPE 대신 제약 위반으로 끝난다
@@ -524,7 +524,7 @@ class OrderCreateServiceTests {
         orderRepository.deleteAll();
         orderRepository.save(manualSquatter);
         assertThrows(DataIntegrityViolationException.class, () -> orderCreateService.createManual(
-                boothId, null, "M", null, List.of(new OrderCreateRequest.OrderItemRequest(3L, 1))));
+                boothId, null, "M", null, null, List.of(new OrderCreateRequest.OrderItemRequest(3L, 1))));
     }
 
     // ── 멱등 재응답의 취소 항목 제외 (audit2 M3) ─────────────────

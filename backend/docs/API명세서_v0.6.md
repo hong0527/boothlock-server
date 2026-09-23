@@ -28,6 +28,7 @@
 | v0.6.5 | 2026-09-23 | **O19 정산 CSV 조회를 "영업일 하루 고정"에서 사용자 지정 시간 범위로 확장.** `date`(영업일 단일 조회) 파라미터를 제거하고 `startAt`·`endAt`(둘 다 필수, KST, `datetime-local`)로 교체. 조회 기준은 그대로 주문 생성 시각(createdAt), `start <= createdAt < end` — 자정을 넘는 구간도 지원. **행 대상은 기존과 동일하게 결제 상태 무관 전체 원장**(UNPAID 포함, 개별 취소 OrderItem만 제외) — 이 부분은 동작 변경이 아니라 기존 동작의 재확인. CSV 마지막에 "총 결제완료 매출액" 요약(빈 줄 구분, `구분,금액` / `총 결제완료 매출액,{합계}`) 신규 추가 — PAID이면서 미취소인 상세 항목 금액만 합산, 상세 행과 같은 금액 값을 재사용해 중복 합산·불일치 방지. 프론트 `SettlementPage`도 날짜 1개 선택 → 시작/마감 일시 2개 입력으로 변경 |
 | v0.6.6 | 2026-09-23 | **O19 정산 파일을 CSV에서 엑셀(xlsx)로 전환.** CSV는 열 너비·서식을 담을 수 없어 주문시각 열이 엑셀에서 `#######`로 표시되는 문제가 있었다 — 열 너비·굵은 머리글·틀 고정·자동 필터·천 단위 콤마를 서버가 지정한다. 엔드포인트 `settlement.csv` → `settlement.xlsx`. **상세 행 대상을 전체 원장에서 결제완료(PAID)로 좁히고** 컬럼을 9개(`주문번호, 테이블, 주문시각, 메뉴명, 수량, 단가, 금액, 결제상태, 결제수단`)로 축소. 시트 2장으로 분리(「요약」·「매출상세」)하고 요약에 **메뉴별 판매수량·매출액**과 **환불대기 금액**, 결제수단별(계좌이체/현금) 분리 및 대사용 **계좌 입금 합계·현금 보유 합계** 신규 추가. 상세에 `결제수단` 컬럼 추가(계좌 대사용). 조회 구간 **최대 31일** 상한 신설. 수식 주입 방지 `'` 접두사는 xlsx 문자열 셀이라 제거. `SettlementCsvService` → `SettlementReportService` 개명 |
 | v0.6.7 | 2026-09-23 | **O22b 신설(명세서 밖, 파일럿 전용)** — 2026-09-23 실제 부스 운영자 시연 피드백. 35~40개 테이블 파일럿 규모에서 드래그앤드롭 대신 운영자가 행/열 숫자를 직접 입력하는 그리드 좌표(`gridRow`/`gridCol`, 1~50, 중복 배치 거부)를 먼저 도입 — O22(`posX`/`posY`, px 드래그)는 그대로 두고 별개 필드/엔드포인트로 추가(드래그앤드롭은 파일럿 이후 과제). `TableStatusResponse`에 `gridRow`/`gridCol` 필드 추가(O3·O22·O22b 공통) |
+| v0.6.8 | 2026-09-24 | **축제 대비 백엔드 방어 5건.** ① §1.2 유휴 세션 토큰을 인증 단계에서 `410` — 단 현재 영업일 미결제가 있으면 v0.6대로 통과(폴링이 유휴 세션을 되살려 다음 손님에게 넘어가던 문제) ② O14 `Idempotency-Key` 헤더(선택) ③ O6 `requireSettled` 쿼리 + `409 CHECKOUT_UNPAID_REMAINS` ④ O9 디코딩 서브샘플링·업로드 직렬화 + `503 UPLOAD_BUSY` ⑤ O10 `activeSessionOnly=true`는 `businessDate` 생략 시 영업일로 거르지 않음(O24 대상과 같은 범위) |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -129,7 +130,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | **유휴 세션** | 열린 세션인데 활성이 아닌 것. 유휴 임계 기본 180분(설정값, 확정 필요 #2) |
 | **종료** | ① O6 퇴실 ② **C1 재스캔 시 유휴 세션이면 종료하고 새 세션 발급**(`restored:false`) ③ O26 삭제 전 검사 — 스케줄러는 없다. 유휴 세션은 누군가 재스캔하거나 퇴실 처리하기 전까지 열린 채 남는다 |
 
-- 유휴 세션의 토큰은 **종료되기 전까지는 인증에 통과한다**(인증은 "열린 세션"만 본다). 손님이 다시 조회·주문하면 `last_activity_at`이 갱신돼 활성으로 돌아온다. 그 사이 다른 손님이 같은 QR을 찍으면 그 순간 종료되고 옛 토큰은 `410`
+- **v0.6.8 변경**: 유휴 세션의 토큰은 인증(C2~C6)에서 **`410`** 이다 — 판정은 C1·O3와 같은 `SeatIdlePolicy.Criteria#isActive`. v0.6까지는 "종료되기 전까지 통과 + 통과할 때마다 `last_activity_at` 갱신"이라, 어제 손님 폰의 폴링 한 번이 유휴 세션을 되살렸고 그 사이 QR을 찍은 새 손님이 C1 `restored:true`로 앞 손님 세션(주문 보기·취소)을 넘겨받았다. **예외: 현재 영업일 미결제가 있는 유휴 세션은 v0.6대로 통과**(C1도 그 세션을 복원하므로 결제 안내를 계속 봐야 한다). 인증 단계는 세션을 종료하지 않는다(410이 트랜잭션을 롤백) — 종료는 다음 C1 스캔이 한다
 - 미결제 예외는 **현재 영업일 주문**만 세션을 붙잡는다. 06:00이 지나면 전날 미결제는 세션을 활성으로 만들지 않는다 (확정 필요 #6)
 - 유휴 만료는 **세션만** 종료한다. 테이블 `status`는 그대로 OCCUPIED이고, O3는 `session:null`·`needsCleanup:true`로 "정리 필요"를 표시한다. O6를 누르면 EMPTY로 돌아간다
 - 만료·종료된 토큰으로 호출 시 `410 SESSION_EXPIRED` → "QR을 다시 스캔해주세요" (C1이 새 세션 발급)
@@ -152,7 +153,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 
 | HTTP | code | 상황 |
 |---|---|---|
-| 400 | `INVALID_REQUEST` | 필드 누락·형식 오류·검증 실패, 본문 JSON 파싱 실패, 경로변수 타입 오류, 인증 헤더 외 필수 헤더 누락(`Idempotency-Key`), 업로드 5MB 초과. **존재하지 않거나 타 부스의 `menuId`**(요청 검증으로 취급). **폐기된 임시 파라미터**(O10 `boothId`, C6 `sessionId`)를 보낸 경우 |
+| 400 | `INVALID_REQUEST` | 필드 누락·형식 오류·검증 실패, 본문 JSON 파싱 실패, 경로변수 타입 오류, 인증 헤더 외 필수 헤더 누락(`Idempotency-Key`), 업로드 5MB 초과. 멱등키 재사용 거절(C3: 다른 세션·부스, O14: 다른 부스·손님 주문), O14 멱등키 빈 값·62자 초과. **존재하지 않거나 타 부스의 `menuId`**(요청 검증으로 취급). **폐기된 임시 파라미터**(O10 `boothId`, C6 `sessionId`)를 보낸 경우 |
 | 401 | `UNAUTHORIZED` | `Authorization`·`X-Session-Token` 헤더 누락, JWT 서명·만료·클레임 불일치, 정지 계정, 비번 재발급으로 무효화된 JWT, 부스 클레임 ≠ 현재 부스(대시보드·O16) |
 | 401 | `LOGIN_FAILED` | 아이디/비밀번호 불일치 (남은 시도 횟수 미노출) |
 | 403 | `FORBIDDEN` | 롤 부족 — STAFF의 bankAccount 변경·O18·O21, SUPER_ADMIN의 `/admin/*` |
@@ -162,11 +163,13 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | 409 | `ORDER_CLOSED` | 부스 `isOpen=false`에서 주문·수량 증가 시도. message `"지금은 주문을 받지 않습니다."` |
 | 409 | `INVALID_STATE` | 불가능한 상태 전이(재취소·재완료·PAID 주문의 손님 취소·항목 수정), **메뉴명 중복**(O7·O8), 테이블 삭제 거부(O26), O24 대상 없음·합계 불일치, O14 퇴실 경합 |
 | 409 | `ALREADY_PAID` | 이미 결제된 주문에 입금 확인 재시도 |
-| 410 | `SESSION_EXPIRED` | 빈 토큰·미존재 토큰·종료된 세션 토큰. message `"세션이 만료되었습니다. 테이블 QR을 다시 스캔해주세요."` |
+| 409 | `CHECKOUT_UNPAID_REMAINS` | O6 `requireSettled=true`인데 종료할 세션에 미결제가 남음 — 전체 롤백 (`details.unpaidOrderCount`) |
+| 410 | `SESSION_EXPIRED` | 빈 토큰·미존재 토큰·종료된 세션 토큰·**유휴 세션 토큰(현재 영업일 미결제 없음, v0.6.8)**. message `"세션이 만료되었습니다. 테이블 QR을 다시 스캔해주세요."` |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Content-Type 불일치 (보조 코드) |
 | 429 | `CALL_COOLDOWN` | 직원 호출 30초 내 재시도 (`details.retryAfterSeconds`) |
 | 429 | `ORDER_RATE_LIMITED` | 세션당 미결제(RECEIVED·UNPAID) 주문 8건 초과. message `"미결제 주문이 많습니다. 입금 확인 후 추가 주문해주세요."` |
 | 429 | `LOGIN_LOCKED` | 로그인 연속 실패 잠금 (`details.retryAfterSeconds`) |
+| 503 | `UPLOAD_BUSY` | O9 메뉴 사진 업로드 — 다른 업로드 처리 중이라 대기 시간(기본 10초) 안에 차례가 오지 않음. 잠시 뒤 재시도 |
 | 500 | `INTERNAL_ERROR` | 서버 오류. 디스코드 웹훅 통보는 **미구현**(TODO) — 계좌 변경 웹훅만 구현됨 |
 | 501 | `NOT_IMPLEMENTED` | 미구현 스텁 — v0.6.4부터 없음(O19 구현 완료) |
 
@@ -667,7 +670,13 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 - `unpaidWarning`(boolean)은 기존 프론트가 읽는 필드. `warning`은 미결제가 있을 때만 있고 없으면 **필드 자체가 생략**된다(`@JsonInclude(NON_NULL)`)
 - **열린 세션이 없어도 200**(v0.5 구현의 410은 폐기). '정리 필요' 테이블을 비우는 유일한 경로라 410이면 영영 비울 수 없다
 
-**Errors**: `404`(타 부스·미존재·삭제 테이블)
+**Query (v0.6.8)**
+
+| 파라미터 | 예 | 설명 |
+|---|---|---|
+| requireSettled | `true` | 기본 `false`. `true`면 아래 3번에서 센 미결제가 1건이라도 있을 때 **`409 CHECKOUT_UNPAID_REMAINS`**(`details.unpaidOrderCount`)로 거절하고 **전체를 롤백**한다 — 세션은 열린 채, 테이블은 OCCUPIED, 주문은 그대로(5번 자동 완료도 없음). **'결제 완료' 버튼(O24 → O6)이 쓴다**: O24와 O6 사이에 들어온 손님 주문이 5번 자동 완료에 묻혀 주방 대기열에서 조용히 사라지지 않게. '테이블 비우기'는 생략(기존 동작) |
+
+**Errors**: `404`(타 부스·미존재·삭제 테이블) / `409 CHECKOUT_UNPAID_REMAINS`(`requireSettled=true`일 때만)
 
 **부작용·순서 (`TableAdminService.checkoutTable`)**
 1. 테이블 행 `FOR UPDATE` — C1 세션 생성·O26 삭제가 같은 행을 먼저 잠그므로 퇴실·재스캔·연타가 직렬화된다
@@ -721,6 +730,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 - **Request**: `multipart/form-data`, 필드명 `file`. 최대 5MB(초과 400). jpg/png/webp — 매직바이트 검증, SVG 거부
 - **Response 201**: `{ "url": "/uploads/menu/3f2a....jpg" }` + `X-Content-Type-Options: nosniff`. URL은 **API 서버 기준 상대 경로**
 - 처리: 긴 변 1080px로 재인코딩(jpg) 저장, 파일명은 서버 생성 UUID, 서빙(`/uploads/menu/**`) 시 nosniff
+- 메모리 방어(v0.6.8): 5000만 화소 초과 `400`(헤더만 읽고 거절). 그 안쪽도 긴 변 2160px 이하가 되게 **서브샘플링해 디코딩**한다(출력 크기는 원본 비율 그대로). 디코딩~저장은 **서버 전체에서 한 번에 하나** — 앞 업로드를 10초(`boothlock.upload.menu-wait-millis`) 넘게 기다리면 **`503 UPLOAD_BUSY`**
 
 ## O10. GET /api/v1/admin/orders — 실시간 대시보드 (폴링 3~5초, 기능 5.1)
 
@@ -734,7 +744,7 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | paymentStatus | `UNPAID` | 결제 상태 필터. `REFUND_NEEDED` = 환불 미처리 목록 |
 | businessDate | `2026-09-15` | 조회 영업일. **생략 시 현재 영업일(06:00 경계)** — v0.6 확정. 달력 날짜(`todayKst`)를 보내면 00~06시에 전날 영업일 주문이 빠지므로 프론트는 파라미터를 생략한다. 형식 오류 `400` |
 | tableId | `12` | 그 테이블의 주문만 — 조회 영업일 범위의 **모든 세션**. 미존재·타 부스·**삭제 테이블은 `404`** |
-| **activeSessionOnly** | `true` | **v0.6 신설.** `tableId`와 함께 true면 그 테이블의 **열린 세션**(`ended_at IS NULL`, `ended_at_key = 0`, 유휴 포함) 주문만 — 결제창이 "지금 앉은 손님" 주문만 보는 수단. 세션이 없으면 빈 목록 200. **`tableId` 없이 true는 `400`.** 기본 false. O24 대상 범위와 같은 세션 조건 |
+| **activeSessionOnly** | `true` | **v0.6 신설.** `tableId`와 함께 true면 그 테이블의 **열린 세션**(`ended_at IS NULL`, `ended_at_key = 0`, 유휴 포함) 주문만 — 결제창이 "지금 앉은 손님" 주문만 보는 수단. 세션이 없으면 빈 목록 200. **`tableId` 없이 true는 `400`.** 기본 false. O24 대상 범위와 같은 세션 조건. **v0.6.8: 이때 `businessDate`를 생략하면 영업일로 거르지 않는다** — 06:00을 넘긴 열린 세션의 전 영업일 미결제도 나와 모달 합계가 O24 서버 합계와 같다(거르면 O24가 영원히 409). `businessDate`를 보내면 그 영업일로 거른다 |
 | q | `A3-17` | 주문번호 **부분 검색**(`like %q%`). 조회 영업일 범위 안에서 |
 
 **상한**: `status=RECEIVED` 조회는 무제한. 그 외(상태 필터 없음·DONE·CANCELED)는 **최신 500건**에서 조용히 잘린다 — 그 이전 건은 `q`·`businessDate`로 찾는다
@@ -813,10 +823,11 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 5. 저장(C3와 같은 `createManual`). 저장 직전 세션이 퇴실됐으면 **`409 INVALID_STATE`**("테이블이 퇴실 처리되어 주문을 붙일 수 없습니다. 다시 시도해주세요.") — 손님용 410을 운영자에게 주지 않고, 자동으로 새 세션을 만들어 재시도하지도 않는다
 
 - `tableId` 생략 → 테이블 미지정, `orderNo = M-{통산번호}`, `sessionId = null`, 세션 부수효과 없음
-- rate limit·멱등키 없음(운영자 화면은 버튼 비활성화로 더블탭 방지). `manual: true`
+- rate limit 없음. `manual: true`
+- **`Idempotency-Key` 헤더(선택, v0.6.8)**: 보내면 `"m:" + 키`로 저장한다(멱등키 컬럼 64자 → 키는 **62자 이하**, 빈 값·초과 `400`). 같은 키 재요청은 **인증 직후, 위 2~5단계보다 먼저** 기존 수기 주문을 찾아 **`200`** 으로 같은 본문을 돌려준다(새로 만들면 `201`) — 퇴실 뒤 늦게 온 재시도가 빈 테이블에 세션을 다시 열거나, 그 사이 품절·마감으로 뒤집히지 않는다. 같은 키가 다른 부스 주문이거나 수기 주문이 아니면(손님 C3가 `m:...` 키를 쓴 경우) `400 INVALID_REQUEST`. 동시 중복은 C3과 같은 방식(unique 위반 뒤 재조회)으로 한 건에 모인다. **헤더가 없으면 예전과 같이 매번 새 주문**
 - 본문의 `boothId`는 무시된다(부스는 JWT)
 
-**Response 201**: C3와 동일 형태 / **Errors**: `400` / `401` / `404` / `409 SOLD_OUT`·`ORDER_CLOSED`·`INVALID_STATE`
+**Response 201**(같은 `Idempotency-Key` 재요청이면 `200`): C3와 동일 형태 / **Errors**: `400` / `401` / `404` / `409 SOLD_OUT`·`ORDER_CLOSED`·`INVALID_STATE`
 
 ## O15. PATCH /api/v1/admin/calls/{callId}/ack — 호출 확인 (기능 2.4·5.1)
 

@@ -64,6 +64,14 @@ class RdsProfilePropertiesTests {
         }
     }
 
+    /** 기본값 0(무한)이면 응답 없이 끊긴 소켓에 요청 스레드가 영원히 묶여 풀이 마른다 — URL이 아니라 이 파일이 건다 */
+    @Test
+    void 드라이버_네트워크_타임아웃을_건다() throws IOException {
+        Properties rds = load("application-rds.properties");
+        assertEquals("5000", rds.getProperty("spring.datasource.hikari.data-source-properties.connectTimeout"));
+        assertEquals("30000", rds.getProperty("spring.datasource.hikari.data-source-properties.socketTimeout"));
+    }
+
     @Test
     void MySQL_드라이버를_쓴다() throws IOException {
         assertEquals("com.mysql.cj.jdbc.Driver",

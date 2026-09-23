@@ -6,6 +6,7 @@ import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.booth.service.BoothInfoService;
 import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
 import com.boothlock.boothlock_server.global.error.ForbiddenException;
+import com.boothlock.boothlock_server.global.error.CheckoutUnpaidRemainsException;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
@@ -455,9 +456,16 @@ public class TableAdminService {
      * 끼어든 주문은 이미 커밋돼 있고(집계에 잡힘) 그 뒤 주문은 410으로 막힌다. 집계를 먼저 하면 그 틈의 주문이 경고에서 빠진다(M2).
      * 세션 조회와 집계는 둘 다 잠금 읽기(FOR UPDATE)다 — 일반 조회는 MySQL REPEATABLE READ에서 인증 시점 스냅샷을 읽어
      * 잠금을 기다리는 사이 커밋된 세션·주문을 못 본다(MySQL 8.4 실측: 끼어든 주문이 경고에서 빠짐).
+     *
+     * <p>requireSettled=true("결제 완료" 버튼) — 프론트는 O24 일괄 입금 확인 뒤에 이 O6를 부른다. 그 둘 사이에 손님 주문(C3)이
+     * 들어오면 기본 동작은 그 주문을 경고만 남기고 완료(DONE)로 넘겨 주방 대기열에서 조용히 사라지게 한다.
+     * 그래서 이 플래그가 켜져 있으면, 위와 같은 잠금·종료 순서로 끼어든 주문까지 센 뒤 미결제가 한 건이라도 있으면
+     * 409 CHECKOUT_UNPAID_REMAINS를 던져 세션 종료·테이블 비움·자동 완료를 전부 롤백한다(세션은 열린 채, 주문은 그대로).
+     * 판정은 반드시 잠금·종료 뒤에 한다 — 먼저 세면 판정과 종료 사이에 들어온 주문을 놓친다(위 warning과 같은 이유).
+     * false(기본, "테이블 비우기")는 예전과 똑같이 막지 않고 warning만 준다.
      */
     @Transactional
-    public TableCheckoutResponse checkoutTable(String authorization, Long tableId) {
+    public TableCheckoutResponse checkoutTable(String authorization, Long tableId, boolean requireSettled) {
         BoothEntity staffBooth = authenticatedBooth(authorization);
 
         TableEntity table = tableRepository.findActiveByIdAndBoothIdForUpdate(tableId, staffBooth.getId())
@@ -469,6 +477,9 @@ public class TableAdminService {
         tableSessionRepository.endOpenSessions(table.getId(), seatIdlePolicy.now());
         long unpaidOrderCount = endingSessionIds.isEmpty() ? 0
                 : tableUnpaidOrderRepository.findUnpaidOrdersOfSessionsForUpdate(endingSessionIds, staffBooth.getId()).size();
+        if (requireSettled && unpaidOrderCount > 0) {
+            throw new CheckoutUnpaidRemainsException(unpaidOrderCount);
+        }
         table.vacate();
         int completedOrderCount = endingSessionIds.isEmpty() ? 0
                 : tableCheckoutOrderRepository.completeReceivedOrdersOfSessions(endingSessionIds, staffBooth.getId());

@@ -670,6 +670,70 @@ class TablePosApiTests {
                 .andExpect(jsonPath("$.booths[0].tables.empty").value(1));
     }
 
+    // ── O6 requireSettled ("결제 완료" 버튼: O24 → O6 사이 끼어든 주문 보호) ───────────
+
+    /** O24 일괄 입금 뒤 O6 전에 들어온 미결제 주문 — 409로 전체 롤백: 세션은 열린 채, 주문은 접수 상태 그대로, 테이블은 사용중 */
+    @Test
+    void o6RequireSettledRejectsWhenUnpaidOrderRemainsAndChangesNothing() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        paidOrder(booth, session.getId());                          // O24가 입금 확인한 주문
+        OrderEntity lateOrder = unpaidOrder(booth, session.getId()); // O24와 O6 사이에 들어온 새 주문
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .param("requireSettled", "true")
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("CHECKOUT_UNPAID_REMAINS"))
+                .andExpect(jsonPath("$.error.details.unpaidOrderCount").value(1));
+
+        assertNull(reloadSession(session.getId()).getEndedAt());
+        assertEquals(0, reloadSession(session.getId()).getEndedAtKey());
+        assertEquals(TableStatus.OCCUPIED, reloadTable(table.getId()).getStatus());
+        OrderEntity reloaded = orderRepository.findById(lateOrder.getId()).orElseThrow();
+        assertEquals(OrderStatus.RECEIVED, reloaded.getStatus());      // 주방 대기열에서 사라지지 않았다
+        assertEquals(PaymentStatus.UNPAID, reloaded.getPaymentStatus());
+        // 손님 토큰도 그대로 살아 있다
+        mockMvc.perform(get("/api/v1/orders").header("X-Session-Token", "sess-a1")).andExpect(status().isOk());
+    }
+
+    @Test
+    void o6RequireSettledSucceedsWhenEverythingIsPaid() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        paidOrder(booth, session.getId());
+        canceledUnpaidOrder(booth, session.getId());   // 취소된 미입금은 미결제가 아니다(UnpaidOrderRule)
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .param("requireSettled", "true")
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unpaidWarning").value(false))
+                .andExpect(jsonPath("$.status").value("EMPTY"))
+                .andExpect(jsonPath("$.warning").doesNotExist());
+
+        assertNotNull(reloadSession(session.getId()).getEndedAt());
+        assertEquals(TableStatus.EMPTY, reloadTable(table.getId()).getStatus());
+    }
+
+    /** 파라미터를 안 주면("테이블 비우기") 예전처럼 막지 않고 warning만 — 남은 접수 주문은 완료로 넘어간다 */
+    @Test
+    void o6WithoutRequireSettledStillOnlyWarnsOnUnpaidOrder() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity unpaid = unpaidOrder(booth, session.getId());
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unpaidWarning").value(true))
+                .andExpect(jsonPath("$.warning").value("미결제 주문 1건 있음"))
+                .andExpect(jsonPath("$.completedOrderCount").value(1));
+
+        assertNotNull(reloadSession(session.getId()).getEndedAt());
+        assertEquals(OrderStatus.DONE, orderRepository.findById(unpaid.getId()).orElseThrow().getStatus());
+    }
+
     private String scan(String tableToken, boolean expectRestored) throws Exception {
         String body = mockMvc.perform(post("/api/v1/table-sessions").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"tableToken\":\"" + tableToken + "\"}"))

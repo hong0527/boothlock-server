@@ -19,6 +19,7 @@ import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
 import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
 
+import com.jayway.jsonpath.JsonPath;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.test.web.servlet.MockMvc;
@@ -40,6 +42,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -504,6 +507,37 @@ class DashboardQueryApiTests {
                         .param("tableId", tableA3Id.toString())
                         .param("activeSessionOnly", "true")
                         .param("businessDate", prevDay.toString()))
+                .andExpect(jsonPath("$.orders.length()").value(0));
+    }
+
+    /**
+     * 06:00 경계 — 열린 세션에 전 영업일 미결제가 남아 있으면 결제 모달(activeSessionOnly, businessDate 생략)에도 보여야 한다.
+     * O24 일괄 입금 대상은 영업일과 무관하게 열린 세션의 미결제 전부라, 모달이 현재 영업일로 거르면 모달 합계와 서버 합계가 달라
+     * 그 테이블은 O24가 영원히 409다. 모달 합계를 expectedTotal로 보낸 O24가 통과하는지까지 본다
+     */
+    @Test
+    void activeSessionOnlyIncludesPreviousBusinessDayOrdersOfTheOpenSessionLikeO24() throws Exception {
+        newOrder(boothId, a3SecondSessionId, "A-3", "A3-8", prevDay, 8, prevDay.atTime(23, 0), false, OrderStatus.RECEIVED);
+
+        String body = mockMvc.perform(dashboard(staffToken)
+                        .param("tableId", tableA3Id.toString())
+                        .param("activeSessionOnly", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orders.length()").value(2))
+                .andExpect(jsonPath("$.orders[*].orderNo").value(Matchers.containsInAnyOrder("A3-2", "A3-8")))
+                .andReturn().getResponse().getContentAsString();
+        List<Integer> totals = JsonPath.read(body, "$.orders[*].totalAmount");
+        int modalTotal = totals.stream().mapToInt(Integer::intValue).sum();
+
+        mockMvc.perform(post("/api/v1/admin/orders/table-payment")
+                        .header("Authorization", "Bearer " + staffToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tableId\":" + tableA3Id + ",\"expectedTotal\":" + modalTotal
+                                + ",\"method\":\"BANK_TRANSFER\"}"))
+                .andExpect(status().isOk());
+
+        // 대시보드 기본 목록(테이블 필터 없음)은 예전처럼 현재 영업일만이다
+        mockMvc.perform(dashboard(staffToken).param("q", "A3-8"))
                 .andExpect(jsonPath("$.orders.length()").value(0));
     }
 

@@ -38,6 +38,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -629,5 +630,156 @@ class ManualOrderApiTests {
         OrderEntity saved = orderRepository.findById(orderId).orElseThrow();
         assertEquals(PaymentStatus.PAID, saved.getPaymentStatus());
         assertEquals(OrderStatus.RECEIVED, saved.getStatus());
+    }
+
+    // ── Idempotency-Key (선택 헤더) ─────────────────────────
+
+    private MockHttpServletRequestBuilder manualWithKey(String token, String key, String body) {
+        return manual(token, body).header("Idempotency-Key", key);
+    }
+
+    @Test
+    void sameIdempotencyKeyTwiceCreatesOneOrderAndReplaysIt() throws Exception {
+        String body = tableBody(tableId, items(kimchiId, 2));
+        MvcResult first = mockMvc.perform(manualWithKey(staffToken, "manual-key-1", body))
+                .andExpect(status().isCreated()).andReturn();
+        MvcResult second = mockMvc.perform(manualWithKey(staffToken, "manual-key-1", body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderNo").value("A3-1"))
+                .andExpect(jsonPath("$.totalAmount").value(16000))
+                .andExpect(jsonPath("$.payment.method").value("BANK_TRANSFER"))
+                .andReturn();
+
+        assertEquals(orderIdOf(first), orderIdOf(second));
+        assertEquals(1, orderRepository.count());
+        assertEquals(1, tableSessionRepository.count());
+        assertEquals("m:manual-key-1", orderRepository.findById(orderIdOf(first)).orElseThrow().getIdempotencyKey());
+        // 첫 응답과 재응답 본문이 같다 — 프론트는 둘을 구별할 필요가 없다
+        assertEquals(first.getResponse().getContentAsString(), second.getResponse().getContentAsString());
+    }
+
+    @Test
+    void differentIdempotencyKeysCreateTwoOrders() throws Exception {
+        String body = "{\"items\":" + items(kimchiId, 1) + "}";
+        Long a = orderIdOf(mockMvc.perform(manualWithKey(staffToken, "manual-key-a", body))
+                .andExpect(status().isCreated()).andReturn());
+        Long b = orderIdOf(mockMvc.perform(manualWithKey(staffToken, "manual-key-b", body))
+                .andExpect(status().isCreated()).andReturn());
+
+        assertFalse(a.equals(b));
+        assertEquals(2, orderRepository.count());
+    }
+
+    @Test
+    void withoutIdempotencyKeyEveryRequestIsANewOrderAsBefore() throws Exception {
+        String body = "{\"items\":" + items(kimchiId, 1) + "}";
+        mockMvc.perform(manual(staffToken, body)).andExpect(status().isCreated());
+        mockMvc.perform(manual(staffToken, body)).andExpect(status().isCreated());
+
+        assertEquals(2, orderRepository.count());
+        orderRepository.findAll().forEach(order -> assertNull(order.getIdempotencyKey()));
+    }
+
+    @Test
+    void idempotencyKeyUsedByAnotherBoothIsRejectedLikeC3() throws Exception {
+        mockMvc.perform(manualWithKey(otherBoothToken, "shared-key", "{\"items\":" + items(otherBoothMenuId, 1) + "}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(manualWithKey(staffToken, "shared-key", tableBody(tableId, items(kimchiId, 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+        assertEquals(1, orderRepository.count());
+        assertEquals(0, tableSessionRepository.count());   // 거절된 재사용 키가 빈 테이블에 세션을 열지 않는다
+    }
+
+    /** 손님 C3 키는 접두 없이 저장된다 — 손님이 "m:..." 키를 먼저 썼으면 같은 저장 값이라 수기 주문이 아닌 것으로 보고 거절한다 */
+    @Test
+    void idempotencyKeyThatCollidesWithCustomerOrderIsRejected() throws Exception {
+        String sessionToken = scanQr(tableToken);
+        mockMvc.perform(post("/api/v1/orders")
+                        .header("X-Session-Token", sessionToken)
+                        .header("Idempotency-Key", "m:customer-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"items\":" + items(kimchiId, 1) + "}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(manualWithKey(staffToken, "customer-key", "{\"items\":" + items(kimchiId, 1) + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+        assertEquals(1, orderRepository.count());
+    }
+
+    @Test
+    void idempotencyKeyLengthIsLimitedToFitColumnWithPrefix() throws Exception {
+        String body = "{\"items\":" + items(kimchiId, 1) + "}";
+        mockMvc.perform(manualWithKey(staffToken, "k".repeat(63), body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+        mockMvc.perform(manualWithKey(staffToken, " ", body))
+                .andExpect(status().isBadRequest());
+        assertEquals(0, orderRepository.count());
+
+        mockMvc.perform(manualWithKey(staffToken, "k".repeat(62), body)).andExpect(status().isCreated());
+    }
+
+    /** 퇴실(O6) 뒤 늦게 도착한 재시도가 빈 테이블에 세션을 다시 열지 않는다 — 재조회가 세션 확보보다 먼저다 */
+    @Test
+    void replayAfterCheckoutReturnsOrderWithoutReopeningTable() throws Exception {
+        String body = tableBody(tableId, items(kimchiId, 1));
+        Long orderId = orderIdOf(mockMvc.perform(manualWithKey(staffToken, "manual-key-checkout", body))
+                .andExpect(status().isCreated()).andReturn());
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", tableId)
+                        .header("Authorization", "Bearer " + staffToken))
+                .andExpect(status().isOk());
+
+        Long replayed = orderIdOf(mockMvc.perform(manualWithKey(staffToken, "manual-key-checkout", body))
+                .andExpect(status().isOk()).andReturn());
+
+        assertEquals(orderId, replayed);
+        assertEquals(1, orderRepository.count());
+        assertEquals(1, tableSessionRepository.count());
+        assertTrue(tableSessionRepository.findByTableIdAndEndedAtIsNull(tableId).isEmpty());
+        assertEquals(TableStatus.EMPTY, tableRepository.findById(tableId).orElseThrow().getStatus());
+    }
+
+    /** 같은 키 동시 요청 — 진 쪽은 unique 위반을 트랜잭션 밖에서 받아 이긴 주문을 돌려준다(C3과 같은 복구) */
+    @Test
+    void concurrentRequestsWithSameIdempotencyKeyCreateOneOrder() throws Exception {
+        String body = tableBody(tableId, items(kimchiId, 1));
+        int n = 4;
+        ExecutorService pool = Executors.newFixedThreadPool(n);
+        CountDownLatch ready = new CountDownLatch(n);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<MvcResult>> futures = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            futures.add(pool.submit(() -> {
+                ready.countDown();
+                start.await();
+                return mockMvc.perform(manualWithKey(staffToken, "manual-key-race", body)).andReturn();
+            }));
+        }
+        ready.await();
+        start.countDown();
+        List<MvcResult> results = new ArrayList<>();
+        try {
+            for (Future<MvcResult> future : futures) {
+                results.add(future.get(30, TimeUnit.SECONDS));
+            }
+        } finally {
+            pool.shutdownNow();
+            pool.awaitTermination(30, TimeUnit.SECONDS);
+        }
+
+        Set<Long> ids = new HashSet<>();
+        int created = 0;
+        for (MvcResult result : results) {
+            int code = result.getResponse().getStatus();
+            assertTrue(code == 201 || code == 200, result.getResponse().getContentAsString());
+            created += code == 201 ? 1 : 0;
+            ids.add(orderIdOf(result));
+        }
+        assertEquals(1, created);
+        assertEquals(1, ids.size());
+        assertEquals(1, orderRepository.count());
     }
 }

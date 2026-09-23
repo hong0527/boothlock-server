@@ -135,6 +135,12 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.CONFLICT, "ORDER_CLOSED", e.getMessage(), null);
     }
 
+    @ExceptionHandler(CheckoutUnpaidRemainsException.class)
+    public ResponseEntity<ErrorResponse> handleCheckoutUnpaidRemains(CheckoutUnpaidRemainsException e) {
+        return body(HttpStatus.CONFLICT, "CHECKOUT_UNPAID_REMAINS", e.getMessage(),
+                Map.of("unpaidOrderCount", e.getUnpaidOrderCount()));
+    }
+
     @ExceptionHandler(AlreadyPaidException.class)
     public ResponseEntity<ErrorResponse> handleAlreadyPaid(AlreadyPaidException e) {
         return body(HttpStatus.CONFLICT, "ALREADY_PAID", e.getMessage(), null);
@@ -162,6 +168,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleLoginLocked(LoginLockedException e) {
         return body(HttpStatus.TOO_MANY_REQUESTS, "LOGIN_LOCKED", e.getMessage(),
                 Map.of("retryAfterSeconds", e.getRetryAfterSeconds()));
+    }
+
+    // ── 503 ──────────────────────────────────────────────
+
+    @ExceptionHandler(UploadBusyException.class)
+    public ResponseEntity<ErrorResponse> handleUploadBusy(UploadBusyException e) {
+        return body(HttpStatus.SERVICE_UNAVAILABLE, "UPLOAD_BUSY", e.getMessage(), null);
     }
 
     // ── 501 · 500 ────────────────────────────────────────

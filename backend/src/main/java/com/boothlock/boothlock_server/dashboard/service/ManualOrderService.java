@@ -5,6 +5,7 @@ import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.global.error.SessionExpiredException;
 import com.boothlock.boothlock_server.order.dto.OrderCreateResponse;
+import com.boothlock.boothlock_server.order.dto.OrderCreationResult;
 import com.boothlock.boothlock_server.order.service.OrderCreateService;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.dto.AuthenticatedSession;
@@ -22,6 +23,11 @@ import java.util.function.Supplier;
  * C3 저장 경로(OrderCreateService.createManual) (명세서 O14). 검증·가격 재계산은 C3을 그대로 재사용한다.
  * 클래스·메서드에 @Transactional을 걸지 않는다: 안에서 부르는 C3 저장(OrderWriter)과 C1 세션 발급(TableSessionWriter)이
  * 각자 트랜잭션을 끊고 제약 위반을 밖에서 복구하는 구조라, 여기서 감싸면 그 복구 경로가 막힌다.
+ *
+ * <p>Idempotency-Key 헤더(선택) — 운영자 화면의 네트워크 재시도·버튼 연타가 수기 주문을 두 번 만들지 않게 한다.
+ * 헤더가 있으면 인증 직후, 소속 확인·사전 검증·세션 확보보다 먼저 같은 키의 수기 주문을 찾아 그대로 돌려준다(created=false).
+ * 재요청이 빈 테이블을 사용중으로 바꾸거나(퇴실 뒤 재시도) 그 사이 품절·마감으로 뒤집히지 않게 하려는 순서다.
+ * 헤더가 없으면 예전과 똑같이 매번 새 주문이다.
  */
 @Service
 public class ManualOrderService {
@@ -46,13 +52,19 @@ public class ManualOrderService {
         this.tableSessionAuthService = tableSessionAuthService;
     }
 
-    public OrderCreateResponse create(String authorization, ManualOrderRequest request) {
+    public OrderCreationResult create(String authorization, String idempotencyKey, ManualOrderRequest request) {
         Long boothId = staffAuthenticator.authenticateBoothId(authorization);
+
+        String manualKey = orderCreateService.toManualIdempotencyKey(idempotencyKey);
+        OrderCreateResponse replayed = orderCreateService.findManualReplay(boothId, manualKey);
+        if (replayed != null) {
+            return new OrderCreationResult(replayed, false);
+        }
 
         if (request == null || request.tableId() == null) {
             // 테이블 미지정 — 세션이 없어 부수효과가 없으니 C3 검증을 저장 경로에 그대로 맡긴다
             return orderCreateService.createManual(
-                    boothId, null, NO_TABLE_LABEL, null, request == null ? null : request.items());
+                    boothId, null, NO_TABLE_LABEL, null, manualKey, request == null ? null : request.items());
         }
 
         // 소속 확인은 세션·주문보다 먼저 — 남의 부스·삭제된 테이블이면 어떤 부수효과도 남기지 않고 404
@@ -64,7 +76,7 @@ public class ManualOrderService {
         Supplier<Long> sessionResolver = activeSessionOf(table, boothId);
         try {
             return orderCreateService.createManual(
-                    boothId, sessionResolver.get(), label, table.getLabel(), request.items());
+                    boothId, sessionResolver.get(), label, table.getLabel(), manualKey, request.items());
         } catch (SessionExpiredException e) {
             // 세션을 잡은 직후 저장 전에 퇴실(O6)이 커밋된 경우 — 운영자 화면에 손님용 410(QR 재스캔)을 주지 않는다.
             // 자동으로 새 세션을 만들어 재시도하지 않는 이유: 방금 퇴실한 테이블을 운영자 의도 확인 없이 다시 사용중으로 바꾸게 된다
