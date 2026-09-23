@@ -22,6 +22,8 @@ const columnsForViewport = () => {
 type TableOrderContextValue = {
   tables: TableStatusInfo[]
   error: string | null
+  /** 테이블 목록을 한 번이라도 제대로 받았는지 — 받기 전의 빈 배열을 "테이블 없음"으로 읽으면 안 된다 */
+  loaded: boolean
   /** 폴링을 기다리지 않고 즉시 다시 읽는다 — 퇴실 직후 카드가 바로 비게 */
   refetch: () => Promise<TableStatusInfo[]>
   addTable: () => Promise<void>
@@ -82,6 +84,7 @@ const aggregateTableOrders = (
 export function TableOrderProvider({ children }: { children: ReactNode }) {
   const [tables, setTables] = useState<TableStatusInfo[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
 
   const pollGuard = useRef(createPollGuard())
 
@@ -109,6 +112,7 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
       if (!pollGuard.current.isLatest(runId)) return merged
       setTables(merged)
       setError(null)
+      setLoaded(true)
       return merged
     } catch (err) {
       if (pollGuard.current.isLatest(runId)) {
@@ -196,7 +200,7 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
 
   return (
     <TableOrderContext.Provider
-      value={{ tables, error, refetch, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable }}
+      value={{ tables, error, loaded, refetch, addTable, moveTable, commitTablePosition, placeUnplacedTable, deleteTable }}
     >
       {children}
     </TableOrderContext.Provider>
