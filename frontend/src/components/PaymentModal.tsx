@@ -3,6 +3,7 @@ import closeIcon from '../assets/icons/x.svg'
 import PrimaryButton from './PrimaryButton'
 import { readApiError } from '../lib/apiError'
 import { getAuthToken } from '../lib/auth'
+import { cartFingerprint, createIdempotencyKeyStore } from '../lib/idempotencyKey'
 import { apiFetch } from '../lib/apiFetch'
 import { createPollGuard } from '../lib/pollGuard'
 import {
@@ -120,7 +121,8 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     const runId = pollGuard.current.begin(skipIfBusy)
     if (runId === null) return orders
     try {
-      // businessDate 생략 = 현재 영업일. activeSessionOnly=true — 그 테이블의 종료 안 된 세션(지금 앉은 손님) 주문만 서버가 골라 준다.
+      // activeSessionOnly=true — 그 테이블의 종료 안 된 세션(지금 앉은 손님) 주문만 서버가 골라 준다.
+      // businessDate를 생략하면 영업일로 거르지 않는다(v0.6.8) — 06:00을 넘긴 세션의 전날 미결제까지 보여야 O24 합계와 맞는다.
       // 세션이 없는 테이블은 빈 목록. 이전 손님의 PAID·DONE이 결제 대상·전체 취소 대상에 섞이지 않는다 (audit2 ②-2·②-3)
       const res = await apiFetch(`/api/v1/admin/orders?tableId=${table.id}&activeSessionOnly=true`)
       if (!res.ok) throw new Error(`주문 내역을 불러오지 못했어요 (${res.status})`)
@@ -297,14 +299,18 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 담아둔 메뉴를 확인/비우기/결제완료 중 아무 버튼이나 누르는 순간 한 번에 새 주문 1건으로 등록한다 —
   // 별도의 "등록" 버튼 없이, 그 버튼들이 원래 하던 동작(닫기·퇴실·결제) 앞에 얹혀서 나간다.
   // 실패하면(품절 등) false를 돌려줘 호출부가 원래 동작을 진행하지 않고 에러만 보여준 채 멈춘다.
+  // 수기 주문 멱등키 — 응답을 못 받고 다시 눌러도 같은 담은 메뉴면 같은 키라 서버가 한 건만 만든다.
+  // 성공하면 버린다: 같은 메뉴를 다시 담아 확인하면 새 주문이어야 한다(키 재사용 창 3분도 이중 안전장치)
+  const manualKeys = useRef(createIdempotencyKeyStore())
   const submitDraftIfAny = async (): Promise<boolean> => {
     if (draft.length === 0) return true
-    const res = await runAction(
-      () => createManualOrder(draft.map((d) => ({ menuId: d.menuId, qty: d.qty })), table.id),
-      '주문 등록에 실패했어요',
-      MANUAL_ADD_409,
-    )
+    const items = draft.map((d) => ({ menuId: d.menuId, qty: d.qty }))
+    const key = manualKeys.current.keyFor(`${table.id}|${cartFingerprint(items)}`)
+    const res = await runAction(() => createManualOrder(items, table.id, key), '주문 등록에 실패했어요', MANUAL_ADD_409)
+    // 400(키가 다른 주문과 겹침 등)은 같은 키로 영영 통과 못 한다 — 버려야 다음 클릭이 새 키로 나간다
+    if (res?.status === 400) manualKeys.current.clear()
     if (!res?.ok) return false
+    manualKeys.current.clear()
     setDraft([])
     return true
   }
@@ -432,15 +438,27 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // O6 퇴실 — 성공하면 모달을 닫는다. 응답의 warning(미결제 남음)은 닫기 전에 한 번 보여준다.
   // announcedReceived = 확인창에서 "완료 처리됩니다"라고 알린 건수. 확인창 목록은 현재 영업일 주문만이라(O10 기본 조회),
   // 영업일을 넘긴 세션의 어제 접수 주문까지 서버가 완료했으면 그 차이를 함께 알린다
-  const checkout = async (announcedReceived = 0): Promise<boolean> => {
-    const res = await checkoutTable(table.id)
+  /**
+   * afterPayment: 방금 입금 확인(O24)이 성공한 뒤의 퇴실 — 실패 문구에 "입금은 됐다"를 밝혀야 운영자가 입금을 다시 받지 않는다.
+   * 그때는 requireSettled도 켠다(그 사이 새 주문이 있으면 서버가 퇴실을 되돌림).
+   */
+  const checkout = async (announcedReceived = 0, { afterPayment = false } = {}): Promise<boolean> => {
+    const res = await checkoutTable(table.id, { requireSettled: afterPayment })
     if (res.status === 410) {
       // 개정 전 백엔드: 이미 퇴실 처리된 테이블 — 할 일이 없으니 닫는다 (개정 후에는 멱등 200)
       onCheckedOut()
       return true
     }
     if (!res.ok) {
-      setError(`퇴실 처리에 실패했어요 (${res.status})`)
+      const { code } = await readApiError(res)
+      const paidNote = afterPayment ? '입금 확인은 완료됐어요. ' : ''
+      if (res.status === 409 && code === 'CHECKOUT_UNPAID_REMAINS') {
+        // 입금 확인 뒤 손님이 새로 주문했다 — 같은 일행 주문이니 그 주문까지 받고 퇴실해야 한다
+        setError(`${paidNote}그 사이 새 주문이 들어와 퇴실하지 않았어요. 새 주문을 확인한 뒤 "결제 완료"를 다시 눌러주세요.`)
+      } else {
+        setError(`${paidNote}퇴실 처리에 실패했어요 (${res.status}). "결제 완료"를 다시 눌러 퇴실해 주세요.`)
+      }
+      refetch()
       return false
     }
     const result: TableCheckoutResult | null = await res.json().catch(() => null)
@@ -528,12 +546,9 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
         return
       }
       paymentConfirmed = true
-      const checkedOut = await checkout(receivedCount(freshOrders))
-      if (!checkedOut) {
-        // 입금은 반영됐는데 퇴실만 실패 — 운영자가 "처리됐다"고 믿고 떠나면 다음 일행이 이 세션에 합류한다
-        setError('입금 확인은 완료됐지만 퇴실 처리가 안 됐어요. "결제 완료"를 한 번 더 눌러 퇴실해 주세요.')
-        refetch()
-      }
+      // 입금은 반영됐는데 퇴실만 실패하면 checkout이 그 사실을 밝혀 알린다 — 운영자가 "처리됐다"고 믿고
+      // 떠나면 다음 일행이 이 세션에 합류한다
+      await checkout(receivedCount(freshOrders), { afterPayment: true })
     } catch {
       if (paymentConfirmed) {
         // 퇴실 응답만 잃었다 — 다시 누르면 미결제 0건이라 퇴실만 진행된다(O6는 멱등)

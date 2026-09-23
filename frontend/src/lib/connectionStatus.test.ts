@@ -30,8 +30,8 @@ describe('끊김 배너 상태 — fetchWithTimeout이 기록', () => {
     expect(isServerUnreachable()).toBe(true)
   })
 
-  it('502·503·504(nginx는 떴는데 api가 안 닿음)는 끊김, 4xx·500은 서버와 닿은 것', async () => {
-    for (const [status, expected] of [[502, true], [503, true], [504, true], [409, false], [500, false], [401, false]] as const) {
+  it('502·504(nginx는 떴는데 api가 안 닿음)는 끊김, 4xx·500·503(api가 낸 UPLOAD_BUSY)은 서버와 닿은 것', async () => {
+    for (const [status, expected] of [[502, true], [503, false], [504, true], [409, false], [500, false], [401, false]] as const) {
       markReachable()
       vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status })))
       await fetchWithTimeout('/x')
