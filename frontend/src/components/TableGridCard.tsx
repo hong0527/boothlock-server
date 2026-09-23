@@ -1,15 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import moreHorizontal from '../assets/icons/more-horizontal.svg'
-import { formatClockTime } from '../lib/time'
+import { formatClockTime, isLongWait } from '../lib/time'
 import { displayTableLabel } from '../lib/tableLabel'
 import type { TableStatusInfo } from '../types/table'
-
-/** 첫 주문 후 이 시간(분)이 지나면 카드 시간 텍스트가 빨강으로 바뀐다 — 표시 전용, 자동 조치 없음, 고객 비노출(스태프 화면 전용) */
-const LONG_WAIT_MINUTES = 120
-
-export function isLongWait(firstOrderAt: string | null, now: number): boolean {
-  return firstOrderAt != null && (now - new Date(firstOrderAt).getTime()) / 60000 > LONG_WAIT_MINUTES
-}
 
 type TableGridCardProps = {
   table: TableStatusInfo

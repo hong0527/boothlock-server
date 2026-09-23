@@ -29,3 +29,14 @@ export function businessDateKst(now: Date = new Date()): string {
     day: '2-digit',
   }).format(shifted)
 }
+
+/** 첫 주문 후 이 시간(분)이 지나면 테이블 카드 시간 텍스트가 빨강으로 바뀐다 — 표시 전용, 자동 조치 없음, 고객 비노출(스태프 화면 전용) */
+export const LONG_WAIT_MINUTES = 120
+
+/**
+ * 첫 주문 후 2시간을 "넘겼는지"(정확히 2시간은 아직 아님). 요구사항 "주점 2시간 제한"의 표시용 판정.
+ * 서버는 createdAt을 +09:00 오프셋과 함께 주므로 기기 시간대와 무관하게 절대시각 차이로 계산된다.
+ */
+export function isLongWait(firstOrderAt: string | null, now: number): boolean {
+  return firstOrderAt != null && (now - new Date(firstOrderAt).getTime()) / 60000 > LONG_WAIT_MINUTES
+}
