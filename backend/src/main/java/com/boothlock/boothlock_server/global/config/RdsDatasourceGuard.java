@@ -1,8 +1,5 @@
 package com.boothlock.boothlock_server.global.config;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 
 /**
  * {@code rds} 프로필로 떴는데 접속 주소가 비어 있으면 기동을 멈춘다.
@@ -14,15 +11,17 @@ import org.springframework.context.annotation.Profile;
  * <p>빈 값으로 뜨느니 아예 안 뜨는 게 낫다. 안 뜨면 이전 컨테이너가 살아 있거나 로그에 이유가 남는다.
  *
  * <p>값이 전달되지 않는 흔한 이유는 compose 변수 치환이다. {@code environment:}에 쓴
- * {@code ${VAR}}는 {@code env_file}을 보지 않고 셸이나 {@code .env}만 본다. 그래서
- * {@code docker-compose.rds.yml}은 {@code environment:}로 데이터소스를 넘기지 않고
- * {@code env_file}이 전달한 값을 그대로 쓴다.
+ * {@code ${VAR}}는 {@code env_file}을 보지 않고 셸이나 {@code .env}만 본다. 그래서 DB 설정은
+ * compose에 적지 않고 {@code .env.prod}(env_file)에만 둔다.
+ *
+ * <p>반대 경우(주소는 MySQL인데 rds 프로필이 없음)는 {@link ProdH2DatasourceGuard}가 잡는다.
+ *
+ * <p>이 클래스는 빈이 아니다. {@link DatasourceSettingsGuard}가 모든 빈보다 먼저 호출한다 —
+ * 일반 빈으로 두면 DataSource 생성이 먼저 실패해 이 메시지가 나오지 않는다(2026-09-23 실측).
  */
-@Configuration
-@Profile("rds")
 public class RdsDatasourceGuard {
 
-    public RdsDatasourceGuard(@Value("${spring.datasource.url:}") String url) {
+    public RdsDatasourceGuard(String url) {
         if (url == null || url.isBlank()) {
             throw new IllegalStateException(
                     "rds 프로필인데 spring.datasource.url이 비어 있습니다. "
@@ -39,7 +38,7 @@ public class RdsDatasourceGuard {
     }
 
     /** 오류 메시지에 비밀번호가 섞여 나가지 않게 — URL에 자격증명을 박는 형식도 있다 */
-    private static String maskCredentials(String url) {
+    static String maskCredentials(String url) {
         return url.replaceAll("://[^@/]*@", "://***@").replaceAll("(?i)password=[^&]*", "password=***");
     }
 }

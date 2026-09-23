@@ -19,8 +19,16 @@ services:
     restart: unless-stopped
     env_file:
       - .env.prod
-    environment:
-      SPRING_PROFILES_ACTIVE: prod
+    # 프로필은 여기서 정하지 않는다 — 이미지 기본값(backend/Dockerfile의 SPRING_PROFILES_ACTIVE=prod)을
+    # .env.prod가 덮어쓴다. 도커 우선순위가 environment > env_file > 이미지 ENV라서, 여기에 적으면
+    # .env.prod로 바꿀 수 없게 된다. DB 선택(H2 ↔ RDS)은 .env.prod 한 곳에서만 한다:
+    #   H2(기본)  : .env.prod에 SPRING_PROFILES_ACTIVE·SPRING_DATASOURCE_* 를 두지 않는다
+    #   RDS       : SPRING_PROFILES_ACTIVE=prod,rds + SPRING_DATASOURCE_* 세 줄
+    # 어느 쪽이든 재배포 명령은 같다: docker compose -f docker-compose.prod.yml up -d --build
+    #
+    # 전에는 여기에 prod를 못박고 RDS는 별도 오버레이(-f docker-compose.rds.yml)로 켰다. 그러자
+    # 문서대로 재배포한 사람이 오버레이를 빠뜨려 "H2 드라이버 + MySQL 주소"로 기동이 실패했고,
+    # 결국 RDS가 꺼졌다(2026-09-22). 명령을 외워야 하는 구조를 없앤다.
     ports:
       # 호스트 루프백에만 노출 — EC2 안에서 curl로 진단할 때만 쓴다. 실제 트래픽은 frontend 컨테이너가
       # 도커 내부망(서비스명 api)으로 중계하므로 이 포트를 퍼블릭에 열 필요가 없다
