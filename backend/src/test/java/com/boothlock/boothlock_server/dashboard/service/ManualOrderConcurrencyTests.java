@@ -146,8 +146,8 @@ class ManualOrderConcurrencyTests {
 
         List<Callable<String>> tasks = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
-            tasks.add(() -> manualOrderService.create(authorization, manual(null)).orderNo());
-            tasks.add(() -> manualOrderService.create(authorization, manual(manualTable.getId())).orderNo());
+            tasks.add(() -> manualOrderService.create(authorization, null, manual(null)).response().orderNo());
+            tasks.add(() -> manualOrderService.create(authorization, null, manual(manualTable.getId())).response().orderNo());
         }
         for (int i = 0; i < 5; i++) {
             tasks.add(() -> orderCreateService.create(booth.getId(), customerSession.getId(), "B-1",
@@ -189,7 +189,7 @@ class ManualOrderConcurrencyTests {
 
             List<Callable<Long>> tasks = new ArrayList<>();
             tasks.add(() -> {
-                String orderNo = manualOrderService.create(authorization, manual(table.getId())).orderNo();
+                String orderNo = manualOrderService.create(authorization, null, manual(table.getId())).response().orderNo();
                 return orderRepository.findAll().stream()
                         .filter(o -> o.getOrderNo().equals(orderNo) && o.getSessionId() != null)
                         .filter(o -> o.getTableLabel().equals(table.getLabel()))

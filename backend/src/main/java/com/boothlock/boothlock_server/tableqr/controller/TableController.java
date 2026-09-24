@@ -16,6 +16,7 @@ import com.boothlock.boothlock_server.tableqr.service.TableQrService;
 import com.boothlock.boothlock_server.tableqr.service.TableSessionService;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.validation.Valid;
@@ -156,11 +157,18 @@ public class TableController {
         return tableAdminService.updateGridPosition(authorization, tableId, request);
     }
 
-    /** O6 퇴실·초기화 (Should) — 세션 종료+테이블 비움, 멱등(세션이 없어도 200으로 EMPTY), 미결제 있어도 warning만 */
-    @Operation(summary = "O6 퇴실·초기화", description = "열린 세션을 종료하고 테이블을 빈 자리로 되돌린다. 세션이 없어도 200으로 EMPTY를 돌려준다(멱등). 미결제 주문이 있어도 막지 않고 unpaidWarning·warning만 준다.")
+    /**
+     * O6 퇴실·초기화 (Should) — 세션 종료+테이블 비움, 멱등(세션이 없어도 200으로 EMPTY), 미결제 있어도 warning만.
+     * requireSettled=true면 미결제가 남은 경우 409 CHECKOUT_UNPAID_REMAINS로 전체 롤백한다("결제 완료" 버튼용, TableAdminService 주석)
+     */
+    @Operation(summary = "O6 퇴실·초기화", description = "열린 세션을 종료하고 테이블을 빈 자리로 되돌린다. 세션이 없어도 200으로 EMPTY를 돌려준다(멱등). "
+            + "미결제 주문이 있어도 막지 않고 unpaidWarning·warning만 준다. "
+            + "requireSettled=true면 종료할 세션에 미결제가 남아 있을 때 409 CHECKOUT_UNPAID_REMAINS(details.unpaidOrderCount)로 거절하고 아무것도 바꾸지 않는다.")
     @PostMapping("/admin/tables/{tableId}/checkout")
     public TableCheckoutResponse checkout(@RequestHeader("Authorization") String authorization,
-                                           @PathVariable Long tableId) {
-        return tableAdminService.checkoutTable(authorization, tableId);
+                                           @PathVariable Long tableId,
+                                           @Parameter(description = "true면 미결제가 남은 퇴실을 409로 거절한다(\"결제 완료\" 버튼). 기본 false(\"테이블 비우기\")")
+                                           @RequestParam(defaultValue = "false") boolean requireSettled) {
+        return tableAdminService.checkoutTable(authorization, tableId, requireSettled);
     }
 }

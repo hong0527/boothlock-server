@@ -56,6 +56,7 @@ public class DashboardQueryService {
     /**
      * 부스는 JWT로만 정한다 — STAFF·ADMIN 허용, 무토큰 401, SUPER_ADMIN 403 (명세서 §1.2·§7-21).
      * activeSessionOnly는 tableId의 하위 옵션이다 — 테이블 없이 "활성 세션만"은 뜻이 없으므로 조용히 무시하지 않고 400.
+     * activeSessionOnly=true에 businessDate를 생략하면 영업일 필터를 걸지 않는다(열린 세션의 주문 전부 — O24 대상과 같은 범위).
      */
     @Transactional(readOnly = true)
     public DashboardResponse getDashboard(String authorization, OrderStatus status, PaymentStatus paymentStatus,
@@ -70,7 +71,13 @@ public class DashboardQueryService {
             tableLookup.requireTableOfBooth(tableId, boothId);
         }
 
-        LocalDate effectiveDate = resolveBusinessDate(businessDate, LocalDateTime.now(KST_ZONE));
+        // activeSessionOnly(결제 모달)는 businessDate를 생략하면 영업일로 거르지 않는다 — O24 일괄 입금 대상
+        // (TablePaymentOrderRepository: 열린 세션의 미결제 전부, 영업일 무관)과 같은 집합이어야 한다.
+        // 영업일로 거르면 06:00 경계를 넘긴 열린 세션에서 전 영업일 미결제가 모달 합계(expectedTotal)에서 빠지고,
+        // 서버 합계에는 남아 O24가 영원히 409가 된다. 열린 세션 하나의 주문이라 범위가 스스로 좁다
+        LocalDate effectiveDate = activeSessionOnly && businessDate == null
+                ? null
+                : resolveBusinessDate(businessDate, LocalDateTime.now(KST_ZONE));
         Limit limit = status == OrderStatus.RECEIVED ? Limit.unlimited() : DASHBOARD_LIST_LIMIT;
         // excludeHidden=true — 삭제(hidden=true) 처리된 취소 주문을 limit(500건)과 같은 쿼리에서 DB 단계부터 뺀다.
         // limit을 먼저 적용하고 나중에(Java에서) hidden을 지우면 hidden 행이 그 자리를 차지해 정상 취소 주문이

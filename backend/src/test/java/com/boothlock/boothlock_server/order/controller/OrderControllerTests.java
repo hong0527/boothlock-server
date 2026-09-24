@@ -24,6 +24,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -44,8 +46,11 @@ class OrderControllerTests {
     private static final String MY_TOKEN = "tok-my-session-000000000000000000000001";
     private static final String OTHER_TOKEN = "tok-other-session-00000000000000000002";
     // 세션 시작 시각은 반드시 과거로 — 인증 계층이 요청마다 lastActivityAt을 "현재 시각"으로 touch하므로
-    // 미래 시각을 심으면 "폴링 후 갱신됨" 단언이 성립할 수 없다
-    private static final LocalDateTime NOW = LocalDateTime.of(2026, 1, 15, 18, 30);
+    // 미래 시각을 심으면 "폴링 후 갱신됨" 단언이 성립할 수 없다.
+    // 동시에 유휴 임계(기본 3시간) 안쪽이어야 한다 — 인증 계층이 유휴 세션(미결제 없음)을 410으로 거절하므로
+    // 고정 날짜를 심으면 모든 요청이 410이 된다. 시드 주문(NOW + 최대 9분)도 과거에 머물도록 30분 전으로 둔다
+    private static final LocalDateTime NOW =
+            LocalDateTime.now(ZoneId.of("Asia/Seoul")).minusMinutes(30).truncatedTo(ChronoUnit.MICROS);
 
     @Autowired private MockMvc mockMvc;
     @Autowired private OrderRepository orderRepository;

@@ -244,7 +244,7 @@ class TableSoftDeleteGuardTests {
                 assertTrue(tableRepository.findById(table.getId()).orElseThrow().isActive());
                 assertEquals(1, tableSessionRepository.findOpenByTableIds(List.of(table.getId())).size());
                 // 다음 판이 "마지막 테이블" 규칙에 걸리지 않게 이 판의 세션을 정리한다
-                tableAdminService.checkoutTable(authorization, table.getId());
+                tableAdminService.checkoutTable(authorization, table.getId(), false);
                 tableAdminService.deleteTable(authorization, table.getId());
             }
         }

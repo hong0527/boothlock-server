@@ -112,7 +112,7 @@ class TableCheckoutConcurrencyTests {
             TableEntity table = tableRepository.save(new TableEntity(booth, "D" + round, "tok-double-" + round));
             String token = tableSessionService.createOrRestore(new TableSessionCreateRequest(table.getTableToken())).sessionToken();
 
-            List<Object> results = race(4, (i, checkoutDone) -> () -> tableAdminService.checkoutTable(authorization, table.getId()));
+            List<Object> results = race(4, (i, checkoutDone) -> () -> tableAdminService.checkoutTable(authorization, table.getId(), false));
 
             // 멱등 — 연타 전부 200이고 status는 EMPTY다. 유니크 위반·500 같은 예상 밖 예외는 없어야 한다
             for (Object result : results) {
@@ -137,7 +137,7 @@ class TableCheckoutConcurrencyTests {
 
             // 손님 스레드는 퇴실이 끝날 때까지 계속 재스캔하고, 끝난 뒤 한 번 더 찍는다 — 퇴실 전·중·후가 반드시 겹친다
             List<Object> results = race(3, (i, checkoutDone) -> i == 0
-                    ? () -> tableAdminService.checkoutTable(authorization, table.getId())
+                    ? () -> tableAdminService.checkoutTable(authorization, table.getId(), false)
                     : () -> {
                         List<Object> outcomes = new ArrayList<>();
                         while (!checkoutDone.get()) {
@@ -180,7 +180,7 @@ class TableCheckoutConcurrencyTests {
             String token = tableSessionService.createOrRestore(new TableSessionCreateRequest(table.getTableToken())).sessionToken();
 
             List<Object> results = race(3, (i, checkoutDone) -> i == 0
-                    ? () -> tableAdminService.checkoutTable(authorization, table.getId())
+                    ? () -> tableAdminService.checkoutTable(authorization, table.getId(), false)
                     : () -> {
                         // C2~C4 폴링 — 퇴실이 끝날 때까지 두드리고 끝난 뒤 한 번 더
                         List<Object> outcomes = new ArrayList<>();
@@ -232,7 +232,7 @@ class TableCheckoutConcurrencyTests {
             OrderCreateRequest order = new OrderCreateRequest(List.of(new OrderCreateRequest.OrderItemRequest(menu.getId(), 1)));
 
             List<Object> results = race(3, (i, checkoutDone) -> i == 0
-                    ? () -> tableAdminService.checkoutTable(authorization, table.getId())
+                    ? () -> tableAdminService.checkoutTable(authorization, table.getId(), false)
                     : () -> {
                         List<Object> outcomes = new ArrayList<>();
                         boolean lastRound;
@@ -288,7 +288,7 @@ class TableCheckoutConcurrencyTests {
             tx.executeWithoutResult(status -> {
                 TableSessionEntity stale = tableSessionRepository.findBySessionToken(token).orElseThrow();
                 try {
-                    executor.submit(() -> tableAdminService.checkoutTable(authorization, table.getId())).get(10, TimeUnit.SECONDS);
+                    executor.submit(() -> tableAdminService.checkoutTable(authorization, table.getId(), false)).get(10, TimeUnit.SECONDS);
                 } catch (Exception e) {
                     throw new IllegalStateException(e);
                 }
@@ -322,7 +322,7 @@ class TableCheckoutConcurrencyTests {
                 orderRepository.save(new com.boothlock.boothlock_server.order.domain.OrderEntity(booth.getId(), sessionId, "W1-1",
                         LocalDate.now(KST), 1, "idem-inflight", 8000, false, LocalDateTime.now(KST)));
                 orderRepository.flush();
-                Future<TableCheckoutResponse> pending = executor.submit(() -> tableAdminService.checkoutTable(authorization, table.getId()));
+                Future<TableCheckoutResponse> pending = executor.submit(() -> tableAdminService.checkoutTable(authorization, table.getId(), false));
                 try {
                     // H2 기본 잠금 대기(1초)보다 짧게 본다 — 퇴실이 이 시간 안에 끝나면 잠금을 기다리지 않은 것이다
                     pending.get(300, TimeUnit.MILLISECONDS);
@@ -348,7 +348,7 @@ class TableCheckoutConcurrencyTests {
     void touchIfActiveDoesNothingOnEndedSession() {
         TableEntity table = tableRepository.save(new TableEntity(booth, "S2", "tok-touch"));
         String token = tableSessionService.createOrRestore(new TableSessionCreateRequest(table.getTableToken())).sessionToken();
-        tableAdminService.checkoutTable(authorization, table.getId());
+        tableAdminService.checkoutTable(authorization, table.getId(), false);
         TableSessionEntity ended = tableSessionRepository.findBySessionToken(token).orElseThrow();
 
         assertEquals(0, tableSessionRepository.touchIfActive(ended.getId(), LocalDateTime.now(KST).plusHours(1)));

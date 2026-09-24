@@ -19,6 +19,7 @@ import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.order.dto.OrderCreateResponse;
+import com.boothlock.boothlock_server.order.dto.OrderCreationResult;
 import com.boothlock.boothlock_server.tableqr.service.TableSessionAuthService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -28,6 +29,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -66,7 +68,8 @@ public class DashboardController {
             description = "JWT 부스의 주문 목록과 미확인 호출을 한 번에 조회한다. 폴링 주기 3~5초 권장. "
                     + "businessDate를 생략하면 현재 영업일(06:00 경계). tableId를 주면 그 테이블의 모든 세션 주문만 반환하고, "
                     + "미존재·타 부스 테이블은 404. activeSessionOnly=true를 tableId와 함께 주면 그 테이블의 종료 안 된 세션 주문만 "
-                    + "(세션이 없으면 빈 목록). tableId 없이 activeSessionOnly=true는 400.")
+                    + "(세션이 없으면 빈 목록) — 이때 businessDate를 생략하면 영업일로 거르지 않아 06:00 전에 받은 미결제도 함께 나온다(O24 대상과 같은 범위). "
+                    + "tableId 없이 activeSessionOnly=true는 400.")
     @GetMapping("/admin/orders")
     public DashboardResponse getDashboard(
             @RequestHeader("Authorization") String authorization,
@@ -131,16 +134,23 @@ public class DashboardController {
      * 보드를 갱신하자"는 최적화를 넣으면 수기 주문 카드에서 수기 배지와 테이블 라벨이 사라지고,
      * 결제 모달의 항목 +/-·개별 취소가 {@code itemId} 없이 엉뚱한 항목을 가리킨다.
      * 그렇게 바꿀 거면 응답 타입을 먼저 OrderSummary로 맞춰야 한다.
+     *
+     * <p>Idempotency-Key 헤더는 선택이다(C3은 필수). 보내면 C3처럼 새로 만들었을 때 201, 같은 키 재요청이면 기존 주문을 200으로
+     * 같은 본문 형태로 돌려준다. 안 보내면 예전과 똑같이 매번 새 주문(201)이다.
      */
     @Operation(summary = "O14 수기 주문", description = "tableId를 지정하면 그 테이블 세션에 귀속시킨다(없으면 자동 생성). "
             + "생략하면 테이블 미지정 주문(M-통산번호)으로 만든다. 검증은 소비자 주문(C3)과 동일하며, "
-            + "품절·마감·잘못된 요청이면 세션을 만들지 않는다. tableId는 JWT 부스 소속이어야 한다(아니면 404).")
+            + "품절·마감·잘못된 요청이면 세션을 만들지 않는다. tableId는 JWT 부스 소속이어야 한다(아니면 404). "
+            + "Idempotency-Key 헤더(선택, 62자 이하)를 보내면 같은 키 재요청은 기존 주문을 200으로 반환하고, "
+            + "남의 부스·손님 주문이 쓴 키면 400이다.")
     @PostMapping("/admin/orders")
-    @ResponseStatus(HttpStatus.CREATED)
-    public OrderCreateResponse manualOrder(
+    public ResponseEntity<OrderCreateResponse> manualOrder(
             @RequestHeader("Authorization") String authorization,
+            @Parameter(description = "수기 주문 시도마다 클라이언트가 생성하는 UUID(선택). 재시도 시 같은 키 재사용")
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @RequestBody ManualOrderRequest request) {
-        return manualOrderService.create(authorization, request);
+        OrderCreationResult result = manualOrderService.create(authorization, idempotencyKey, request);
+        return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK).body(result.response());
     }
 
     /** O24 테이블 일괄 입금 확인 — 그 테이블 활성 세션의 미결제 주문 전부, 화면 합계와 다르면 409 */
@@ -214,7 +224,7 @@ public class DashboardController {
 
     /** C6 직원 호출 (Should) — reason: HELP|WATER|ETC, 같은 세션 30초 재호출 제한(429) */
     @Operation(summary = "C6 직원 호출", description = "테이블에서 직원을 호출한다. 세션은 X-Session-Token 헤더로 식별한다"
-            + "(누락 401, 미존재·종료 토큰 410). 같은 세션 30초 내 재호출은 429.")
+            + "(누락 401, 미존재·종료·유휴 토큰 410). 같은 세션 30초 내 재호출은 429.")
     @PostMapping("/calls")
     @ResponseStatus(HttpStatus.CREATED)
     public CallResponse call(
@@ -224,7 +234,7 @@ public class DashboardController {
             @RequestParam(name = "sessionId", required = false) String legacySessionId,
             @Valid @RequestBody CallRequest request) {
         rejectLegacyParam("sessionId", legacySessionId, "세션은 X-Session-Token 헤더로 식별합니다.");
-        // C3·C4·C5와 같은 인증 계층 — 헤더 누락 401, 미존재·종료 토큰 410, 호출도 세션 활동으로 기록된다
+        // C3·C4·C5와 같은 인증 계층 — 헤더 누락 401, 미존재·종료·유휴 토큰 410, 호출도 세션 활동으로 기록된다
         return callService.create(sessionAuthService.authenticate(sessionToken).sessionId(), request);
     }
 
