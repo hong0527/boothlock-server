@@ -4,6 +4,7 @@ import BackButton from '../components/customer/BackButton'
 import PrimaryButton from '../components/PrimaryButton'
 import TextField from '../components/TextField'
 import { apiUrl } from '../lib/apiBase'
+import { fetchWithTimeout } from '../lib/fetchWithTimeout'
 import { setAuth } from '../lib/auth'
 
 type SignupErrorBody = {
@@ -51,7 +52,7 @@ export default function SignupPage() {
 
     setLoading(true)
     try {
-      const res = await fetch(apiUrl('/api/v1/admin/auth/signup'), {
+      const res = await fetchWithTimeout(apiUrl('/api/v1/admin/auth/signup'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ boothName, loginId, password }),

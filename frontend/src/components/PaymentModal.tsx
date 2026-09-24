@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import closeIcon from '../assets/icons/x.svg'
 import PrimaryButton from './PrimaryButton'
 import { readApiError } from '../lib/apiError'
+import { getAuthToken } from '../lib/auth'
+import { cartFingerprint, createIdempotencyKeyStore } from '../lib/idempotencyKey'
 import { apiFetch } from '../lib/apiFetch'
 import { createPollGuard } from '../lib/pollGuard'
 import {
@@ -18,6 +20,7 @@ import { formatClockTime } from '../lib/time'
 import { PAYMENT_STATUS_LABEL, type OrderStatus, type OrderSummary, type PaymentStatus } from '../types/dashboard'
 import type { TableCheckoutResult, TableStatusInfo } from '../types/table'
 import type { MenuItem } from '../types/menu'
+import { onResume } from '../lib/onResume'
 
 type PaymentModalProps = {
   table: TableStatusInfo
@@ -118,7 +121,8 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     const runId = pollGuard.current.begin(skipIfBusy)
     if (runId === null) return orders
     try {
-      // businessDate 생략 = 현재 영업일. activeSessionOnly=true — 그 테이블의 종료 안 된 세션(지금 앉은 손님) 주문만 서버가 골라 준다.
+      // activeSessionOnly=true — 그 테이블의 종료 안 된 세션(지금 앉은 손님) 주문만 서버가 골라 준다.
+      // businessDate를 생략하면 영업일로 거르지 않는다(v0.6.8) — 06:00을 넘긴 세션의 전날 미결제까지 보여야 O24 합계와 맞는다.
       // 세션이 없는 테이블은 빈 목록. 이전 손님의 PAID·DONE이 결제 대상·전체 취소 대상에 섞이지 않는다 (audit2 ②-2·②-3)
       const res = await apiFetch(`/api/v1/admin/orders?tableId=${table.id}&activeSessionOnly=true`)
       if (!res.ok) throw new Error(`주문 내역을 불러오지 못했어요 (${res.status})`)
@@ -140,7 +144,11 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   useEffect(() => {
     refetch()
     const id = setInterval(() => refetch({ skipIfBusy: true }), POLL_INTERVAL_MS)
-    return () => clearInterval(id)
+    const offResume = onResume(() => refetch({ skipIfBusy: true }))
+    return () => {
+      clearInterval(id)
+      offResume()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table.id])
 
@@ -222,6 +230,13 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
 
   const visibleMenus = menus.filter((m) => m.visible && (category === 'ALL' || m.category === category))
 
+  // 응답을 못 받은 경우(인터넷 끊김·제한 시간 초과) — 서버에는 반영됐을 수도 있어서 목록을 새로 읽고 확인을 부탁한다.
+  // 로그인 만료(apiFetch가 이미 로그인 화면으로 보내는 중)면 문구를 띄우지 않는다
+  const reportNoResponse = (what: string) => {
+    if (!getAuthToken()) return
+    setError(`${what} — 응답을 받지 못했어요. 새로 불러온 내역에서 반영됐는지 확인하고 필요하면 다시 눌러주세요.`)
+  }
+
   const runAction = async (
     action: () => Promise<Response>,
     failMessage: string,
@@ -241,6 +256,10 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       // 방금 등록한 주문이 결제 완료 흐름의 미결제 합계 계산에 바로 반영되도록 새로고침을 기다린 뒤 돌려준다
       await refetch()
       return res
+    } catch {
+      reportNoResponse(failMessage)
+      await refetch()
+      return undefined
     } finally {
       // action()이 던지면(토큰 만료·네트워크 오류) busy가 안 풀려서 이후 모든 버튼이 영원히 잠긴다
       setBusy(false)
@@ -280,14 +299,18 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 담아둔 메뉴를 확인/비우기/결제완료 중 아무 버튼이나 누르는 순간 한 번에 새 주문 1건으로 등록한다 —
   // 별도의 "등록" 버튼 없이, 그 버튼들이 원래 하던 동작(닫기·퇴실·결제) 앞에 얹혀서 나간다.
   // 실패하면(품절 등) false를 돌려줘 호출부가 원래 동작을 진행하지 않고 에러만 보여준 채 멈춘다.
+  // 수기 주문 멱등키 — 응답을 못 받고 다시 눌러도 같은 담은 메뉴면 같은 키라 서버가 한 건만 만든다.
+  // 성공하면 버린다: 같은 메뉴를 다시 담아 확인하면 새 주문이어야 한다(키 재사용 창 3분도 이중 안전장치)
+  const manualKeys = useRef(createIdempotencyKeyStore())
   const submitDraftIfAny = async (): Promise<boolean> => {
     if (draft.length === 0) return true
-    const res = await runAction(
-      () => createManualOrder(draft.map((d) => ({ menuId: d.menuId, qty: d.qty })), table.id),
-      '주문 등록에 실패했어요',
-      MANUAL_ADD_409,
-    )
+    const items = draft.map((d) => ({ menuId: d.menuId, qty: d.qty }))
+    const key = manualKeys.current.keyFor(`${table.id}|${cartFingerprint(items)}`)
+    const res = await runAction(() => createManualOrder(items, table.id, key), '주문 등록에 실패했어요', MANUAL_ADD_409)
+    // 400(키가 다른 주문과 겹침 등)은 같은 키로 영영 통과 못 한다 — 버려야 다음 클릭이 새 키로 나간다
+    if (res?.status === 400) manualKeys.current.clear()
     if (!res?.ok) return false
+    manualKeys.current.clear()
     setDraft([])
     return true
   }
@@ -366,6 +389,10 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       setError(null)
       await refetch()
       return true
+    } catch {
+      reportNoResponse('수량 변경')
+      await refetch()
+      return false
     } finally {
       // cancelItem·updateItemQty가 던지면(토큰 만료·네트워크 오류) busy가 안 풀려서 모달의 모든 조작이
       // 잠기고, 유일한 탈출구가 X(변경사항 버리고 닫기)뿐이던 문제 — finally로 항상 풀어준다
@@ -399,6 +426,9 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       // 방금 취소된 주문의 항목을 가리키던 adjustments가 남아있으면 나중에 엉뚱한 주문에 적용될 수 있다
       setAdjustments({})
       refetch()
+    } catch {
+      reportNoResponse('전체 취소')
+      refetch()
     } finally {
       // cancelOrder가 던지면(토큰 만료·네트워크 오류) busy가 안 풀려서 모달이 잠기는 문제 — finally로 방지
       setBusy(false)
@@ -408,15 +438,27 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // O6 퇴실 — 성공하면 모달을 닫는다. 응답의 warning(미결제 남음)은 닫기 전에 한 번 보여준다.
   // announcedReceived = 확인창에서 "완료 처리됩니다"라고 알린 건수. 확인창 목록은 현재 영업일 주문만이라(O10 기본 조회),
   // 영업일을 넘긴 세션의 어제 접수 주문까지 서버가 완료했으면 그 차이를 함께 알린다
-  const checkout = async (announcedReceived = 0): Promise<boolean> => {
-    const res = await checkoutTable(table.id)
+  /**
+   * afterPayment: 방금 입금 확인(O24)이 성공한 뒤의 퇴실 — 실패 문구에 "입금은 됐다"를 밝혀야 운영자가 입금을 다시 받지 않는다.
+   * 그때는 requireSettled도 켠다(그 사이 새 주문이 있으면 서버가 퇴실을 되돌림).
+   */
+  const checkout = async (announcedReceived = 0, { afterPayment = false } = {}): Promise<boolean> => {
+    const res = await checkoutTable(table.id, { requireSettled: afterPayment })
     if (res.status === 410) {
       // 개정 전 백엔드: 이미 퇴실 처리된 테이블 — 할 일이 없으니 닫는다 (개정 후에는 멱등 200)
       onCheckedOut()
       return true
     }
     if (!res.ok) {
-      setError(`퇴실 처리에 실패했어요 (${res.status})`)
+      const { code } = await readApiError(res)
+      const paidNote = afterPayment ? '입금 확인은 완료됐어요. ' : ''
+      if (res.status === 409 && code === 'CHECKOUT_UNPAID_REMAINS') {
+        // 입금 확인 뒤 손님이 새로 주문했다 — 같은 일행 주문이니 그 주문까지 받고 퇴실해야 한다
+        setError(`${paidNote}그 사이 새 주문이 들어와 퇴실하지 않았어요. 새 주문을 확인한 뒤 "결제 완료"를 다시 눌러주세요.`)
+      } else {
+        setError(`${paidNote}퇴실 처리에 실패했어요 (${res.status}). "결제 완료"를 다시 눌러 퇴실해 주세요.`)
+      }
+      refetch()
       return false
     }
     const result: TableCheckoutResult | null = await res.json().catch(() => null)
@@ -441,8 +483,20 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   }
 
   // "결제 완료" = 미결제 합계를 확인받고 O24 일괄 입금확인 → 성공하면 O6 퇴실. 미결제 0건이면 O24 없이 바로 퇴실
+  // 결제 완료·비우기 재진입 가드 — checkingOut은 확인창 뒤에야 켜져서, 그 전 refetch(최대 10초) 사이 연타하면 흐름이 둘 겹친다
+  const checkoutFlowRef = useRef(false)
+
   const handleConfirmPayment = async () => {
-    if (checkingOut || busy) return
+    if (checkingOut || busy || checkoutFlowRef.current) return
+    checkoutFlowRef.current = true
+    try {
+      await confirmPaymentFlow()
+    } finally {
+      checkoutFlowRef.current = false
+    }
+  }
+
+  const confirmPaymentFlow = async () => {
     if (!(await commitPending())) return
     // commitPending이 이미 refetch를 기다렸어도, 그 안에서 만들어진 orders 클로저는 이 함수의 것과 다르다 —
     // 방금 등록·수정한 내역까지 포함한 최신 목록으로 직접 다시 계산해야 미결제 합계가 안 어긋난다
@@ -459,8 +513,14 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
           : ''
       if (!window.confirm(`입금 확인할 미결제 주문이 없어요.${receivedNote(freshOrders)}\n퇴실 처리할까요?${serverNote}`)) return
       setCheckingOut(true)
-      await checkout(receivedCount(freshOrders))
-      setCheckingOut(false)
+      try {
+        await checkout(receivedCount(freshOrders))
+      } catch {
+        reportNoResponse('퇴실 처리')
+        refetch()
+      } finally {
+        setCheckingOut(false)
+      }
       return
     }
 
@@ -470,26 +530,55 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     if (!ok) return
 
     setCheckingOut(true)
-    const res = await confirmTablePayment(table.id, freshUnpaidAmount, 'BANK_TRANSFER')
-    if (!res.ok) {
-      setCheckingOut(false)
-      if (res.status === 409) {
-        // 합계 불일치(그 사이 주문·취소)·대상 0건 — 최신 목록으로 다시 확인받는다
-        setError('주문이 바뀌었어요. 새로고침된 내역을 확인한 뒤 다시 눌러주세요.')
+    // 입금 확인(O24)과 퇴실(O6)은 요청이 둘이다 — 어디서 끊겼는지에 따라 운영자에게 할 말이 다르다
+    let paymentConfirmed = false
+    try {
+      const res = await confirmTablePayment(table.id, freshUnpaidAmount, 'BANK_TRANSFER')
+      if (!res.ok) {
+        if (res.status === 409) {
+          // 합계 불일치(그 사이 주문·취소)·대상 0건 — 최신 목록으로 다시 확인받는다
+          setError('주문이 바뀌었어요. 새로고침된 내역을 확인한 뒤 다시 눌러주세요.')
+        } else {
+          const { message } = await readApiError(res)
+          setError(message ? `입금 확인에 실패했어요: ${message}` : `입금 확인에 실패했어요 (${res.status})`)
+        }
+        refetch()
+        return
+      }
+      paymentConfirmed = true
+      // 입금은 반영됐는데 퇴실만 실패하면 checkout이 그 사실을 밝혀 알린다 — 운영자가 "처리됐다"고 믿고
+      // 떠나면 다음 일행이 이 세션에 합류한다
+      await checkout(receivedCount(freshOrders), { afterPayment: true })
+    } catch {
+      if (paymentConfirmed) {
+        // 퇴실 응답만 잃었다 — 다시 누르면 미결제 0건이라 퇴실만 진행된다(O6는 멱등)
+        if (getAuthToken()) {
+          setError('입금 확인은 완료됐지만 퇴실 응답을 받지 못했어요. "결제 완료"를 한 번 더 눌러 퇴실해 주세요.')
+        }
       } else {
-        const { message } = await readApiError(res)
-        setError(message ? `입금 확인에 실패했어요: ${message}` : `입금 확인에 실패했어요 (${res.status})`)
+        // 입금 확인이 서버에 반영됐는데 응답만 잃었을 수 있다. 다시 누르면 목록부터 새로 읽으므로
+        // 이미 입금된 주문은 "미결제 없음 → 퇴실"로 넘어가 이중 처리되지 않는다(O24는 대상 0건이면 409)
+        reportNoResponse('입금 확인')
       }
       refetch()
-      return
+    } finally {
+      // 예전에는 여기서 예외가 나면 버튼이 "처리 중..."으로 영영 잠겼다
+      setCheckingOut(false)
     }
-    await checkout(receivedCount(freshOrders))
-    setCheckingOut(false)
   }
 
   // "테이블 비우기" = 입금확인 없이 O6만(남은 접수 주문 완료는 O6가 함께 한다). 미결제가 남는다는 것을 확인받는다
   const handleVacate = async () => {
-    if (checkingOut || busy) return
+    if (checkingOut || busy || checkoutFlowRef.current) return
+    checkoutFlowRef.current = true
+    try {
+      await vacateFlow()
+    } finally {
+      checkoutFlowRef.current = false
+    }
+  }
+
+  const vacateFlow = async () => {
     if (!(await commitPending())) return
     const freshOrders = await refetch()
     const freshUnpaidCount = freshOrders.filter((o) => o.status !== 'CANCELED').filter(isUnpaid).length
@@ -500,8 +589,14 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
         : `테이블을 비울까요? 손님 화면은 바로 접속이 끊어져요.${receivedNote(freshOrders)}`
     if (!window.confirm(message)) return
     setCheckingOut(true)
-    await checkout(receivedCount(freshOrders))
-    setCheckingOut(false)
+    try {
+      await checkout(receivedCount(freshOrders))
+    } catch {
+      reportNoResponse('테이블 비우기')
+      refetch()
+    } finally {
+      setCheckingOut(false)
+    }
   }
 
   return (

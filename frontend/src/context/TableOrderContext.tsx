@@ -4,6 +4,7 @@ import { createPollGuard } from '../lib/pollGuard'
 import { isOrderOfSession } from '../lib/sessionOrders'
 import type { OrderSummary } from '../types/dashboard'
 import type { TableStatusInfo } from '../types/table'
+import { onResume } from '../lib/onResume'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -132,7 +133,11 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     runRefetch(false)
     const id = setInterval(() => runRefetch(true), POLL_INTERVAL_MS)
-    return () => clearInterval(id)
+    const offResume = onResume(() => runRefetch(true))
+    return () => {
+      clearInterval(id)
+      offResume()
+    }
   }, [runRefetch])
 
   const addTable = async () => {

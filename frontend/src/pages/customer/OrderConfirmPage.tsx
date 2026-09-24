@@ -1,11 +1,12 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
 import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { useCart } from '../../context/CartContext'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { getSessionInfo, getSessionToken } from '../../lib/customerSession'
-import { cartFingerprint, createIdempotencyKeyStore } from '../../lib/idempotencyKey'
+import { customerOrderFingerprint, customerOrderKeys } from '../../lib/idempotencyKey'
+import { TimeoutError } from '../../lib/fetchWithTimeout'
 import { displayTableLabel } from '../../lib/tableLabel'
 
 type OrderErrorBody = { error: { code: string; message: string } }
@@ -16,8 +17,6 @@ export default function OrderConfirmPage() {
   const { items, totalAmount, clear } = useCart()
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  // 멱등키는 클릭마다 새로 만들지 않는다 — 실패 뒤 재시도는 같은 키로 보내 서버가 중복 주문을 만들지 않게 한다
-  const idempotencyRef = useRef(createIdempotencyKeyStore())
 
   const handleSubmit = async () => {
     if (loading || items.length === 0) return
@@ -29,7 +28,8 @@ export default function OrderConfirmPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyRef.current.keyFor(cartFingerprint(items)),
+          // 멱등키는 클릭·화면마다 새로 만들지 않는다(customerOrderKeys 참조) — 재시도는 같은 키라 서버가 중복 주문을 만들지 않는다
+          'Idempotency-Key': customerOrderKeys.keyFor(customerOrderFingerprint(getSessionToken(), items)),
         },
         body: JSON.stringify({ items: items.map((item) => ({ menuId: item.menuId, qty: item.qty })) }),
       })
@@ -40,17 +40,27 @@ export default function OrderConfirmPage() {
         if (code === 'SOLD_OUT') setError('품절된 메뉴가 포함되어 있어요. 장바구니를 다시 확인해주세요.')
         else if (code === 'ORDER_RATE_LIMITED') setError('미결제 주문이 많습니다. 입금 확인 후 추가 주문해주세요.')
         else if (code === 'ORDER_CLOSED') setError('지금은 주문 접수 시간이 아니에요.')
-        else setError('주문에 실패했어요. 잠시 후 다시 시도해주세요.')
+        else if (res.status === 400) {
+          // 키가 다른 세션 주문과 겹친 경우 서버가 "키를 새로" 달라고 한다 — 버려야 다음 클릭이 통과한다
+          customerOrderKeys.clear()
+          setError('주문에 실패했어요. 다시 눌러주세요.')
+        } else setError('주문에 실패했어요. 잠시 후 다시 시도해주세요.')
         return
       }
 
       await res.json()
-      idempotencyRef.current.clear()
+      customerOrderKeys.clear()
       clear()
       navigate('/order-history', { replace: true })
-    } catch {
+    } catch (e) {
       // 410(퇴실·만료)으로 customerApiFetch가 세션을 지우고 이동 중이면 네트워크 오류 문구가 잠깐 비치지 않게 한다
-      if (getSessionToken()) setError('서버에 연결할 수 없어요. 네트워크 상태를 확인해주세요.')
+      if (!getSessionToken()) return
+      // 응답만 못 받았을 수 있다(주문은 들어감) — 다시 눌러도 같은 키라 두 번 들어가지 않는다는 걸 알려 불안한 연타·재주문을 막는다
+      setError(
+        e instanceof TimeoutError
+          ? '응답이 늦어요. 다시 눌러도 주문은 한 번만 들어가요.'
+          : '서버에 연결할 수 없어요. 다시 눌러도 주문은 한 번만 들어가요.',
+      )
     } finally {
       setLoading(false)
     }

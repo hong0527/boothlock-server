@@ -53,11 +53,17 @@ export function deleteOrder(orderId: number) {
   return apiFetch(`/api/v1/admin/orders/${orderId}`, { method: 'DELETE' })
 }
 
-/** O14 수기 주문 — tableId 지정 시 그 테이블 세션에 귀속(없으면 자동 생성), 생략 시 테이블 미지정(M-통산) */
-export function createManualOrder(items: { menuId: number; qty: number }[], tableId?: number) {
+/**
+ * O14 수기 주문 — tableId 지정 시 그 테이블 세션에 귀속(없으면 자동 생성), 생략 시 테이블 미지정(M-통산).
+ * idempotencyKey(v0.6.8): 응답을 못 받고 다시 눌렀을 때 서버가 이미 만든 주문을 200으로 돌려준다 — 없으면 두 번 청구된다
+ */
+export function createManualOrder(items: { menuId: number; qty: number }[], tableId?: number, idempotencyKey?: string) {
   return apiFetch('/api/v1/admin/orders', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+    },
     body: JSON.stringify({ tableId, items }),
   })
 }
@@ -98,6 +104,9 @@ export function refundDone(orderId: number) {
  * 테이블 갈래 개정 후에는 활성 세션이 없어도 200(멱등)이고, 미결제가 있으면 응답에 warning이 실린다.
  * 개정 전 구현은 세션이 없으면 410을 내므로 호출부는 410도 "이미 비어 있음"으로 처리한다
  */
-export function checkoutTable(tableId: number) {
-  return apiFetch(`/api/v1/admin/tables/${tableId}/checkout`, { method: 'POST' })
+export function checkoutTable(tableId: number, { requireSettled = false }: { requireSettled?: boolean } = {}) {
+  // requireSettled(v0.6.8): "결제 완료"에서만 켠다 — 입금 확인(O24)과 퇴실 사이에 들어온 새 주문이 있으면
+  // 서버가 409 CHECKOUT_UNPAID_REMAINS로 퇴실을 통째로 되돌린다(조리 전 주문이 완료로 넘어가 주방에서 사라지지 않게)
+  const query = requireSettled ? '?requireSettled=true' : ''
+  return apiFetch(`/api/v1/admin/tables/${tableId}/checkout${query}`, { method: 'POST' })
 }

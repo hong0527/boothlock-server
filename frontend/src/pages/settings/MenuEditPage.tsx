@@ -92,6 +92,8 @@ export default function MenuEditPage() {
     formData.append('file', file)
     apiFetch('/api/v1/admin/uploads', { method: 'POST', body: formData })
       .then((res) => {
+        // 503 UPLOAD_BUSY(v0.6.8): 서버가 메모리 보호로 사진을 한 번에 하나씩 처리한다 — 다른 부스 업로드가 길면 잠시 뒤 다시
+        if (res.status === 503) throw new Error('다른 사진을 처리하고 있어요. 잠시 뒤 다시 올려주세요.')
         if (!res.ok) throw new Error(`사진 업로드에 실패했어요 (${res.status})`)
         return res.json()
       })

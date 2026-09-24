@@ -37,7 +37,7 @@ export default function MenuListPage() {
             className="flex h-[120px] items-center gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-5"
           >
             <div className="h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-neutral-300">
-              {menu.imageUrl && <img src={assetUrl(menu.imageUrl)} alt="" className="h-full w-full object-cover" />}
+              {menu.imageUrl && <img src={assetUrl(menu.imageUrl)} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />}
             </div>
             <div className="flex flex-col gap-2">
               <span className="text-[22px] leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">

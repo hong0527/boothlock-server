@@ -52,7 +52,7 @@ export default function MenuListItem({ menu, orderingDisabled, onAdd }: MenuList
       }`}
     >
       <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-[12px] bg-[#d9d9d9]">
-        {menu.imageUrl && <img src={assetUrl(menu.imageUrl)} alt="" className="h-full w-full object-cover" />}
+        {menu.imageUrl && <img src={assetUrl(menu.imageUrl)} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />}
         {menu.soldOut && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50">
             <span className="text-caption text-neutral-50">SOLD OUT</span>

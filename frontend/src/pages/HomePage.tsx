@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CameraIcon } from '../components/customer/icons'
 import { apiUrl, assetUrl } from '../lib/apiBase'
+import { fetchWithTimeout } from '../lib/fetchWithTimeout'
 import { containRect, crowdLevel, pinPosition, seatDescription, type CrowdLevel } from '../lib/eventMap'
 import {
   BOOTH_CATEGORY_LABEL,
@@ -10,6 +11,8 @@ import {
   type EventBooth,
   type EventMapResponse,
 } from '../types/event'
+import { onResume } from '../lib/onResume'
+import { createPollGuard } from '../lib/pollGuard'
 
 /*
  * 홈 화면 — Figma fileKey OZSYaIZ3UgdVIAdzmq5R8y
@@ -90,7 +93,7 @@ export default function HomePage() {
   // E2 약도 — 진입 시 한 번. 404면 지도 없이 목록만 (명세 E2)
   useEffect(() => {
     let cancelled = false
-    fetch(apiUrl('/api/v1/event/map'))
+    fetchWithTimeout(apiUrl('/api/v1/event/map'))
       .then((res) => (res.ok ? (res.json() as Promise<EventMapResponse>) : null))
       .then((data) => {
         if (!cancelled) setMap(data)
@@ -104,23 +107,36 @@ export default function HomePage() {
   }, [])
 
   // E1 부스 목록·좌석 — 카테고리 필터는 서버 파라미터(대소문자 무시, 모르는 값이면 빈 배열)
-  const fetchBooths = useCallback(async () => {
+  // 겹침·응답 역전 가드 — 카테고리를 빠르게 바꾸면 늦게 온 이전 카테고리 응답이 새 목록을 덮는다(pollGuard 참조)
+  const boothPollGuard = useRef(createPollGuard())
+  // 주기 폴링·화면 복귀는 skipIfBusy — 앞 요청이 돌면 건너뛴다. 카테고리 변경은 새로 던져 옛 응답을 버리게 한다
+  const fetchBooths = useCallback(async (skipIfBusy = false) => {
+    const runId = boothPollGuard.current.begin(skipIfBusy)
+    if (runId === null) return
     try {
       const query = category ? `?category=${encodeURIComponent(category)}` : ''
-      const res = await fetch(apiUrl(`/api/v1/event/booths${query}`))
+      const res = await fetchWithTimeout(apiUrl(`/api/v1/event/booths${query}`))
       if (!res.ok) throw new Error(`부스 현황을 불러오지 못했어요 (${res.status})`)
       const data: BoothListResponse = await res.json()
+      if (!boothPollGuard.current.isLatest(runId)) return
       setBooths(data.booths)
       setBoothsError(null)
     } catch (err) {
+      if (!boothPollGuard.current.isLatest(runId)) return
       setBoothsError(err instanceof Error ? err.message : '부스 현황을 불러오지 못했어요.')
+    } finally {
+      boothPollGuard.current.end()
     }
   }, [category])
 
   useEffect(() => {
     fetchBooths()
-    const id = setInterval(fetchBooths, BOOTH_POLL_INTERVAL_MS)
-    return () => clearInterval(id)
+    const id = setInterval(() => fetchBooths(true), BOOTH_POLL_INTERVAL_MS)
+    const offResume = onResume(() => fetchBooths(true))
+    return () => {
+      clearInterval(id)
+      offResume()
+    }
   }, [fetchBooths])
 
   // 지도 컨테이너 크기 — 접힘/펼침 전환(height transition)과 회전에 따라 핀 위치를 다시 환산한다

@@ -20,7 +20,7 @@ export default function CartPage() {
           <div key={item.menuId} className="flex items-start gap-[19px] border-b border-neutral-100 py-6">
             <div className="h-20 w-20 shrink-0 overflow-hidden rounded-[12px] bg-[#d9d9d9]">
               {item.imageUrl && (
-                <img src={assetUrl(item.imageUrl)} alt="" className="h-full w-full object-cover" />
+                <img src={assetUrl(item.imageUrl)} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
               )}
             </div>
             <div className="flex flex-1 flex-col justify-between self-stretch">
