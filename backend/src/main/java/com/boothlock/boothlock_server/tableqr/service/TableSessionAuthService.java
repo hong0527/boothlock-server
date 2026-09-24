@@ -75,6 +75,6 @@ public class TableSessionAuthService {
         }
 
         TableEntity table = session.getTable();
-        return new AuthenticatedSession(session.getId(), table.getBooth().getId(), table.getLabel());
+        return new AuthenticatedSession(session.getId(), table.getBooth().getId(), table.getLabel(), session.getPartySize());
     }
 }

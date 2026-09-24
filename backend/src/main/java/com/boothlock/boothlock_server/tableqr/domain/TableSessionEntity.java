@@ -49,6 +49,10 @@ public class TableSessionEntity {
     @Column(name = "ended_at_key", nullable = false)
     private long endedAtKey = 0;
 
+    // 손님이 PartySizePage에서 선택한 인원수 — 자릿세(첫 주문에만 서버가 부과) 계산에 쓴다. 미선택이면 NULL(자릿세 미부과)
+    @Column(name = "party_size")
+    private Integer partySize;
+
     protected TableSessionEntity() {
     }
 
@@ -102,8 +106,17 @@ public class TableSessionEntity {
         return endedAtKey;
     }
 
+    public Integer getPartySize() {
+        return partySize;
+    }
+
     /** C1 세션 복원 — 활성 세션을 다시 찾은 시점을 활동 시각으로 기록한다(폴링도 활동으로 인정) */
     public void touch(LocalDateTime at) {
         this.lastActivityAt = Objects.requireNonNull(at, "at must not be null");
+    }
+
+    /** PartySizePage 제출 — 인원수를 저장한다. 세션이 끝났는지는 호출자(TableSessionService)가 조건부 UPDATE로 가른다 */
+    public void updatePartySize(int partySize) {
+        this.partySize = partySize;
     }
 }

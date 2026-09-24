@@ -28,6 +28,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -49,6 +50,8 @@ public class OrderCreateService {
     private static final int MAX_ITEM_KINDS = 20;
     private static final int MAX_QTY = 30;
     private static final int MAX_UNPAID_ORDERS = 8;
+    /** 자릿세(명세서 밖, 파일럿 전용) — 1인당 금액. 인원수는 세션이 갖고 있고(파티사이즈), 곱해서 하나의 항목으로 붙인다 */
+    private static final int SEAT_FEE_PER_PERSON = 3000;
     private static final int MAX_LABEL_LENGTH = 6;
     private static final int MAX_RAW_LABEL_LENGTH = 20;   // table_label VARCHAR(20) — 원본 스냅샷 저장 한도
     private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 64;
@@ -74,8 +77,14 @@ public class OrderCreateService {
         this.orderWriter = orderWriter;
     }
 
+    /** partySize 없는 호출부(자릿세와 무관한 기존 테스트 등) 용 — 자릿세를 안 붙인다. 실제 C3 경로는 아래 6-인자 버전을 쓴다 */
     public OrderCreationResult create(Long boothId, Long sessionId, String tableLabel,
                                       String idempotencyKey, OrderCreateRequest request) {
+        return create(boothId, sessionId, tableLabel, idempotencyKey, request, null);
+    }
+
+    public OrderCreationResult create(Long boothId, Long sessionId, String tableLabel,
+                                      String idempotencyKey, OrderCreateRequest request, Integer partySize) {
         if (boothId == null || sessionId == null) {
             throw new UnauthorizedException("세션 정보가 없습니다");
         }
@@ -108,19 +117,27 @@ public class OrderCreateService {
         }
 
         Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request);
-        List<OrderItemEntity> items = request.items().stream()
+        List<OrderItemEntity> items = new ArrayList<>(request.items().stream()
                 .map(item -> {
                     MenuLookup.MenuInfo menu = menus.get(item.menuId());
                     // 이름·단가는 주문 순간 스냅샷 — 이후 메뉴가 바뀌어도 이 주문은 불변 (DB스키마 §3-4)
                     return new OrderItemEntity(menu.menuId(), menu.name(), menu.price(), item.qty());
                 })
-                .toList();
+                .toList());
+        int total = totalAmount(request, menus);
+
+        // 자릿세(명세서 밖, 파일럿 전용) — 이 세션의 첫 주문이고 인원수를 알 때만 붙인다. 수기 주문(createManual, O14)은
+        // 이 블록을 타지 않는다 — 세션 기반 파티사이즈 개념과 무관
+        if (partySize != null && partySize > 0 && !orderRepository.existsBySessionId(sessionId)) {
+            items.add(OrderItemEntity.seatFee(SEAT_FEE_PER_PERSON, partySize));
+            total += SEAT_FEE_PER_PERSON * partySize;
+        }
 
         OrderWriter.OrderSpec spec = new OrderWriter.OrderSpec(
                 boothId, sessionId, label, tableLabel.trim(), idempotencyKey,
                 // 컬럼이 timestamp(6)라 마이크로초로 잘라 넣는다 — 리눅스 now()는 나노초까지 나와서, 자르지 않으면
                 // 첫 응답(메모리 값)과 멱등 재요청 응답(DB 재조회 값)의 createdAt이 달라진다
-                totalAmount(request, menus), items, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), false);
+                total, items, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), false);
         return saveWithRetry(spec, booth.getBankAccount(), booth.getDepositorName());
     }
 
@@ -355,7 +372,7 @@ public class OrderCreateService {
         List<OrderCreateResponse.OrderItemResponse> items = order.getItems().stream()
                 .filter(item -> !item.isCanceled())
                 .map(item -> new OrderCreateResponse.OrderItemResponse(
-                        item.getMenuId(), item.getMenuName(), item.getUnitPrice(), item.getQty(), item.subtotal()))
+                        item.getMenuId(), item.getMenuName(), item.getUnitPrice(), item.getQty(), item.subtotal(), item.getItemType()))
                 .toList();
         return new OrderCreateResponse(
                 order.getId(),

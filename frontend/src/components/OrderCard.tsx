@@ -51,7 +51,7 @@ export default function OrderCard({ order, now, pending, onComplete, onCancel, o
       <ul className="mt-4 flex flex-1 flex-col gap-2">
         {order.items.map((item) => (
           <li
-            key={item.menuId}
+            key={item.itemId}
             className="flex items-center gap-3 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900"
           >
             <span>{item.menuName}</span>

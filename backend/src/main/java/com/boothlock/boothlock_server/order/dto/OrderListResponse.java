@@ -2,6 +2,7 @@ package com.boothlock.boothlock_server.order.dto;
 
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
+import com.boothlock.boothlock_server.order.domain.OrderItemType;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -22,7 +23,8 @@ public record OrderListResponse(List<OrderSummary> orders) {
             OffsetDateTime createdAt) {
     }
 
-    public record OrderItemSummary(Long menuId, String menuName, int unitPrice, int qty) {
+    /** itemType=SEAT_FEE(자릿세, 명세서 밖)면 menuId는 null — 실제 메뉴가 아니다 */
+    public record OrderItemSummary(Long menuId, String menuName, int unitPrice, int qty, OrderItemType itemType) {
     }
 
     /** 입금 안내 — bankAccount·depositorName은 부스 설정값 그대로, depositorNameRule은 응답 시점 조립 (명세서 C3·C4) */

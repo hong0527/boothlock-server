@@ -74,6 +74,7 @@ CREATE TABLE table_session (
   ended_at         DATETIME(6) NULL,                          -- NULL = 활성
   last_activity_at DATETIME(6) NOT NULL,
   ended_at_key     BIGINT      NOT NULL DEFAULT 0,            -- 활성 0, 종료 시 자기 id
+  party_size       INT         NULL,                          -- O22b 자매품, 자릿세 파일럿 — PartySizePage 제출값(1~20), NULL=미선택
   PRIMARY KEY (id),
   UNIQUE KEY uq_session_active (table_id, ended_at_key),      -- 테이블당 활성 세션 1개를 DB가 강제
   UNIQUE KEY uq_session_token (session_token),
@@ -135,11 +136,12 @@ CREATE TABLE orders (
 CREATE TABLE order_item (
   id         BIGINT      NOT NULL AUTO_INCREMENT,
   order_id   BIGINT      NOT NULL,
-  menu_id    BIGINT      NOT NULL,                          -- 참조용, FK 없음 (스냅샷이 본체)
+  menu_id    BIGINT      NULL,                              -- 참조용, FK 없음 (스냅샷이 본체). SEAT_FEE 행은 실제 메뉴가 없어 NULL
   menu_name  VARCHAR(50) NOT NULL,
   unit_price INT         NOT NULL,
   qty        INT         NOT NULL,
   canceled   BOOLEAN     NOT NULL DEFAULT FALSE,            -- 항목 개별 취소 (엔티티 columnDefinition, 문서 v1.3 미기재)
+  item_type  VARCHAR(20) NOT NULL DEFAULT 'MENU',           -- 자릿세 파일럿 — MENU/SEAT_FEE
   PRIMARY KEY (id),
   KEY idx_item_order (order_id),
   CONSTRAINT fk_item_order FOREIGN KEY (order_id) REFERENCES orders (id)

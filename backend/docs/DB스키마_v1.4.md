@@ -5,6 +5,7 @@
 > v1.2: 토큰·멱등키 `utf8mb4_bin`, ended_at_key를 자기 id 방식으로. v1.2.1: `orders.table_label`.
 > v1.3: `booth.category·map_x·map_y`, `booth_table.pos_x·pos_y`, `event_map` 신설, 좌석 현황을 세션으로 판정(원칙 14).
 > v1.4.1: `booth_table.grid_row·grid_col` 신설(파일럿 전용, 명세서 밖) — 운영자가 숫자로 직접 입력하는 행/열, pos_x·pos_y(픽셀 드래그)와 별개.
+> v1.4.2: `table_session.party_size`, `order_item.item_type` 신설(둘 다 파일럿 전용, 명세서 밖) — 자릿세. `order_item.menu_id`는 NULL 허용으로 완화(SEAT_FEE 행은 실제 메뉴가 없음).
 > **v1.4 변경 (2026-09-16, 통합 PR 반영 — 코드가 정본)**: ① **문서 미기재였던 컬럼 5개 편입** — `booth.next_table_seq`, `booth_table.active`, `menu.category`, `order_item.canceled`, 제약 `uk_menu_booth_name(booth_id, name)` (deploy-mysql §5 실측) ② `booth_table.status`는 **VARCHAR(20)** — 엔티티에 `@JdbcTypeCode(VARCHAR)`를 붙여 MySQL 네이티브 ENUM 생성을 막았다 ③ **`idx_orders_session(session_id)`** 인덱스 신설(엔티티 `@Index` + 운영 SQL) ④ **운영 스키마는 `schema-mysql8.sql`을 먼저 적용하고 `ddl-auto=validate`로 기동** — 토큰 3컬럼의 `utf8mb4_bin`은 Hibernate가 만들 수 없다(원칙 17·18) ⑤ 원칙 15 **잠금 뒤 읽기**, 원칙 16 **미결제 정의**, 원칙 13 정정(인증 전환 완료), 원칙 14 갱신(미결제 예외) ⑥ §4를 "실습 코드 차이"에서 **"문서 ↔ Hibernate 자동 DDL ↔ 운영 SQL 차이표"** 로 교체 ⑦ **`booth.depositor_name VARCHAR(50) NULL`**(예금주명, main #57 → 통합 PR #54 병합) 편입.
 > 규칙: 엔티티에는 반드시 `@Table(name = "...")`로 아래 테이블명을 명시한다. 담당은 파트로 적는다(부스·테이블·메뉴·주문·대시보드·정산·홈).
 
@@ -100,6 +101,7 @@ erDiagram
 | ended_at | DATETIME | NULL | **NULL = 열린 세션** — O6 퇴실·C1 유휴 재발급 시 기록 |
 | last_activity_at | DATETIME | NOT NULL | C1 복원·C2~C6 인증·C3 저장이 **조건부 UPDATE**(`touchIfActive`: `where ended_at is null and ended_at_key = 0`)로 갱신 — 0건이면 410 |
 | ended_at_key | BIGINT | NOT NULL DEFAULT 0 | 열린 세션 = 0, **종료 시 자기 id**. 종료는 항상 `ended_at`과 같은 UPDATE 문장에서 함께 쓴다 |
+| **party_size** | INT | NULL | **v1.4.2 편입(명세서 밖, 자릿세 파일럿)** — PartySizePage 제출값(1~20). NULL = 미선택(자릿세 미부과). `PATCH /table-sessions/party-size`가 조건부 UPDATE로 저장 |
 | _UNIQUE_ | | **uq_session_active (table_id, ended_at_key)** | 테이블당 열린 세션 1개를 DB가 강제 |
 
 - **"열린 세션" 조회·갱신에는 `ended_at IS NULL AND ended_at_key = 0`을 함께 건다.** 인덱스가 `uq_session_active` 하나라 `ended_at IS NULL`만으로는 그 테이블의 종료된 세션을 전부 읽는다(MySQL 8.4 실측: 5만 건에서 27ms → 1ms)
@@ -157,11 +159,12 @@ erDiagram
 |---|---|---|---|
 | id | BIGINT | PK, AUTO_INCREMENT | O10 `items[].itemId` — O23·O23b 경로 파라미터 |
 | order_id | BIGINT | FK→orders, NOT NULL | |
-| menu_id | BIGINT | NOT NULL | 참조용(FK 없음) — 본체는 스냅샷 |
-| menu_name | VARCHAR(50) | NOT NULL | 스냅샷 |
+| menu_id | BIGINT | **NULL 허용(v1.4.2 완화)** | 참조용(FK 없음) — 본체는 스냅샷. `item_type='SEAT_FEE'` 행은 실제 메뉴가 없어 NULL |
+| menu_name | VARCHAR(50) | NOT NULL | 스냅샷. SEAT_FEE 행은 항상 `"자릿세"` |
 | unit_price | INT | NOT NULL | 스냅샷 |
-| qty | INT | NOT NULL, 1~30(앱 검증) | O23으로 변경 가능(같은 상한) |
+| qty | INT | NOT NULL, 1~30(앱 검증) | O23으로 변경 가능(같은 상한). SEAT_FEE 행은 인원수(1~20) |
 | **canceled** | BOOLEAN | NOT NULL DEFAULT FALSE | **v1.4 편입** — O23b 개별 취소. **행을 지우지 않고 숨긴다**(감사·정산 보존). TRUE인 행은 O10·C4·C3 멱등 재응답의 items와 `total_amount` 합산에서 빠진다. 엔티티 `columnDefinition = "boolean default false"` |
+| **item_type** | VARCHAR(20) | NOT NULL DEFAULT 'MENU' | **v1.4.2 편입(명세서 밖, 자릿세 파일럿)** — `MENU` / `SEAT_FEE`. `OrderEntity.requireEditableItem`이 `MENU`만 골라 O23/O23b 대상으로 삼는다 — SEAT_FEE는 스태프가 수정·취소 못 한다(404). `@JdbcTypeCode(VARCHAR)`, 기존 컬럼들과 같은 이유로 네이티브 ENUM 금지 |
 
 ### daily_counter — 영업일 채번 카운터 (주문 파트)
 
@@ -275,6 +278,7 @@ CREATE TABLE table_session (
   ended_at         DATETIME(6) NULL,
   last_activity_at DATETIME(6) NOT NULL,
   ended_at_key     BIGINT      NOT NULL DEFAULT 0,
+  party_size       INT         NULL,
   CONSTRAINT fk_session_table FOREIGN KEY (table_id) REFERENCES booth_table(id),
   CONSTRAINT uq_session_active UNIQUE (table_id, ended_at_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -330,11 +334,12 @@ CREATE INDEX idx_orders_session ON orders (session_id);
 CREATE TABLE order_item (
   id         BIGINT AUTO_INCREMENT PRIMARY KEY,
   order_id   BIGINT      NOT NULL,
-  menu_id    BIGINT      NOT NULL,
+  menu_id    BIGINT      NULL,
   menu_name  VARCHAR(50) NOT NULL,
   unit_price INT         NOT NULL,
   qty        INT         NOT NULL,
   canceled   BOOLEAN     NOT NULL DEFAULT FALSE,
+  item_type  VARCHAR(20) NOT NULL DEFAULT 'MENU',
   CONSTRAINT fk_item_order FOREIGN KEY (order_id) REFERENCES orders(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -430,6 +435,7 @@ CREATE TABLE event_map (
 | `next_table_seq`·`active`·`menu.category`·`uk_menu_booth_name`·`canceled` | v1.4 편입 | 있음 | 있음 | v1.3 문서에만 없던 5개 |
 | `booth.depositor_name` | v1.4 편입(main #57) | 있음(통합 PR #54가 main 병합 후) | **확인 필요** — 운영 SQL은 #57 병합 전에 작성돼 이 컬럼이 없을 수 있다. 없으면 `ALTER TABLE booth ADD COLUMN depositor_name VARCHAR(50) NULL` 추가 후 validate | validate는 컬럼 누락을 잡으므로 빠져 있으면 기동 실패로 드러난다 |
 | DEFAULT 절 | 있음 | 없음(`columnDefinition` 있는 3컬럼 제외) | 있음 | 앱은 항상 값을 넣으므로 동작 차이 없음 |
+| **`order_item.menu_id` NOT NULL → NULL 완화(v1.4.2)** | NULL 허용 | **완화 안 됨** — 기존 H2 파일에 이미 만들어진 컬럼의 제약은 `ddl-auto=update`가 안 바꾼다(실측, 2026-09-24) | NULL 허용(CREATE TABLE 반영) | **이미 떠 있던 로컬/운영 H2 파일에는 `ALTER TABLE order_item ALTER COLUMN menu_id SET NULL`(또는 파일 재생성)을 먼저 해야 한다** — 안 하면 자릿세(SEAT_FEE, menu_id=NULL) 저장이 `Check constraint`/제약 위반 500으로 죽는다. 신규 생성 DB는 문제없음 |
 
-- 기존 H2 파일 DB(구 스키마) 위에 통합본을 `ddl-auto=update`로 띄우면 `menu.category`만 NULL 허용으로 추가되고 기동·회귀가 통과함을 실측(verify-int2 §6). `next_table_seq`·`active`·`canceled`는 기본값이 있어 기존 행이 채워진다
+- 기존 H2 파일 DB(구 스키마) 위에 통합본을 `ddl-auto=update`로 띄우면 `menu.category`만 NULL 허용으로 추가되고 기동·회귀가 통과함을 실측(verify-int2 §6). `next_table_seq`·`active`·`canceled`는 기본값이 있어 기존 행이 채워진다. **주의**: 이건 "새 컬럼 추가"라 되는 것이고, `order_item.menu_id`처럼 **기존 컬럼의 NOT NULL 제약을 완화**하는 변경은 `update`가 다루지 않는다(바로 위 행 참고) — 이 둘을 같은 사례로 착각하지 말 것
 - MySQL 전체 테스트: REPEATABLE READ 645/645, READ COMMITTED 645/645, 데드락·lock wait timeout 0 (port-fix2). RDS 8.0은 미실측 — 파라미터 그룹(격리수준·`binlog_format` ROW/MIXED·인증 플러그인)은 배포 문서 확인

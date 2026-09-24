@@ -2,6 +2,7 @@ package com.boothlock.boothlock_server.tableqr.service;
 
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
+import com.boothlock.boothlock_server.global.error.SessionExpiredException;
 import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
@@ -87,6 +88,21 @@ public class TableSessionService {
                         session.getId(), boothId, criteria.businessDate())))
                 .filter(session -> tableSessionRepository.touchIfActive(session.getId(), seatIdlePolicy.now()) == 1)
                 .orElse(null);
+    }
+
+    /**
+     * PartySizePage 제출(자릿세 파일럿 전용, 명세서 밖) — 인원수를 세션에 저장한다. 호출자(컨트롤러)가
+     * {@link TableSessionAuthService#authenticate}로 먼저 세션을 인증한 뒤 sessionId를 넘긴다.
+     * 자릿세는 서버가 첫 주문 생성 시점에 이 값을 읽어 계산한다(OrderCreateService) — 여기서는 저장만 한다.
+     */
+    public void setPartySize(Long sessionId, Integer partySize) {
+        if (partySize == null || partySize < 1 || partySize > 20) {
+            throw new InvalidRequestException("인원수는 1~20명 사이여야 합니다.");
+        }
+        // 인증(authenticate)과 이 저장 사이에 퇴실(O6)이 끼어들 수 있어 touchIfActive와 같은 조건부 UPDATE를 쓴다
+        if (tableSessionRepository.updatePartySizeIfActive(sessionId, partySize) == 0) {
+            throw new SessionExpiredException();
+        }
     }
 
     private TableSessionResponse toResponse(TableEntity table, TableSessionEntity session, boolean restored) {

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { customerApiFetch } from '../lib/customerApiFetch'
 import { setSessionPartySize } from '../lib/customerSession'
 
 /*
@@ -101,6 +102,33 @@ const PERSON_DECOR = [
 export default function PartySizePage() {
   const navigate = useNavigate()
   const [partySize, setPartySize] = useState(2)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // 인원수는 자릿세(1인당 3,000원, 첫 주문에만 부과) 계산에 쓰인다 — 서버 저장에 실패한 채로 넘어가면
+  // 자릿세가 0원으로 조용히 빠지므로, 실패하면 다음 화면으로 넘어가지 않고 다시 시도하게 한다
+  const handleSubmit = async () => {
+    if (submitting) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      const res = await customerApiFetch('/api/v1/table-sessions/party-size', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ partySize }),
+      })
+      if (!res.ok) {
+        setError('인원수를 저장하지 못했어요. 다시 시도해주세요.')
+        return
+      }
+      setSessionPartySize(partySize)
+      navigate('/order', { replace: true })
+    } catch {
+      setError('인원수를 저장하지 못했어요. 네트워크 상태를 확인해주세요.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   return (
     <div className="relative h-screen w-full overflow-clip bg-neutral-50">
@@ -179,16 +207,18 @@ export default function PartySizePage() {
         </button>
       </div>
 
+      {error && (
+        <p className="absolute inset-x-[18px] bottom-[70px] text-center text-sm text-red-600">{error}</p>
+      )}
+
       {/* 주문 시작하기 */}
       <button
         type="button"
-        onClick={() => {
-          setSessionPartySize(partySize)
-          navigate('/order', { replace: true })
-        }}
-        className="text-body-1 absolute inset-x-[18px] bottom-9 h-[50px] rounded-xl bg-primary-300 text-white"
+        onClick={handleSubmit}
+        disabled={submitting}
+        className="text-body-1 absolute inset-x-[18px] bottom-9 h-[50px] rounded-xl bg-primary-300 text-white disabled:opacity-60"
       >
-        주문 시작하기
+        {submitting ? '저장 중...' : '주문 시작하기'}
       </button>
     </div>
   )

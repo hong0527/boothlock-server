@@ -1,5 +1,7 @@
 package com.boothlock.boothlock_server.tableqr.controller;
 
+import com.boothlock.boothlock_server.tableqr.dto.AuthenticatedSession;
+import com.boothlock.boothlock_server.tableqr.dto.PartySizeRequest;
 import com.boothlock.boothlock_server.tableqr.dto.QrFile;
 import com.boothlock.boothlock_server.tableqr.dto.TableAdminResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
@@ -13,6 +15,7 @@ import com.boothlock.boothlock_server.tableqr.dto.TableStatusListResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusResponse;
 import com.boothlock.boothlock_server.tableqr.service.TableAdminService;
 import com.boothlock.boothlock_server.tableqr.service.TableQrService;
+import com.boothlock.boothlock_server.tableqr.service.TableSessionAuthService;
 import com.boothlock.boothlock_server.tableqr.service.TableSessionService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -36,14 +39,19 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1")
 public class TableController {
 
+    private static final String SESSION_HEADER = "X-Session-Token";
+
     private final TableSessionService tableSessionService;
+    private final TableSessionAuthService tableSessionAuthService;
     private final TableAdminService tableAdminService;
     private final TableQrService tableQrService;
 
     public TableController(TableSessionService tableSessionService,
+                            TableSessionAuthService tableSessionAuthService,
                             TableAdminService tableAdminService,
                             TableQrService tableQrService) {
         this.tableSessionService = tableSessionService;
+        this.tableSessionAuthService = tableSessionAuthService;
         this.tableAdminService = tableAdminService;
         this.tableQrService = tableQrService;
     }
@@ -53,6 +61,19 @@ public class TableController {
     @PostMapping("/table-sessions")
     public TableSessionResponse createSession(@Valid @RequestBody TableSessionCreateRequest request) {
         return tableSessionService.createOrRestore(request);
+    }
+
+    /**
+     * PartySizePage 제출 (명세서 밖, 자릿세 파일럿 전용) — 손님이 고른 인원수를 세션에 저장한다.
+     * 서버는 이 값을 첫 주문 생성 시점에 읽어 자릿세(1인당 3,000원)를 계산한다(OrderCreateService).
+     */
+    @Operation(summary = "인원수 저장 (자릿세 파일럿 전용)",
+            description = "PartySizePage에서 고른 인원수(1~20)를 세션에 저장한다. 자릿세는 이 값을 이용해 첫 주문에만 자동 부과된다.")
+    @PatchMapping("/table-sessions/party-size")
+    public void setPartySize(@RequestHeader(SESSION_HEADER) String sessionToken,
+                              @RequestBody PartySizeRequest request) {
+        AuthenticatedSession session = tableSessionAuthService.authenticate(sessionToken);
+        tableSessionService.setPartySize(session.sessionId(), request == null ? null : request.partySize());
     }
 
     /** O2 테이블 일괄 등록 (Must) — count≤300, 라벨 정규화 후 6자·단독 M 금지, 토큰 자동 발급 */

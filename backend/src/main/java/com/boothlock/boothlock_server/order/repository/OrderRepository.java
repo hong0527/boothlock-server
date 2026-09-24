@@ -82,6 +82,14 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     /** C3 미결제 상한 — 세션당 RECEIVED+UNPAID 8건 초과 시 429 (명세서 C3 4단계) */
     long countBySessionIdAndStatusAndPaymentStatus(Long sessionId, OrderStatus status, PaymentStatus paymentStatus);
 
+    /**
+     * 자릿세 판정(명세서 밖, 파일럿 전용) — 이 세션의 첫 주문인지 확인한다. 잠금 없이 확인한다: 같은 세션에서
+     * 진짜 동시에 서로 다른 첫 주문 두 개가 밀리초 단위로 겹치는 경우에만 자릿세가 중복 부과될 수 있는 좁은 창이 있으나,
+     * 이 코드베이스의 다른 동시성 처리 수준(멱등키는 "같은 요청 재시도"만 막지 다른 카트 두 개는 안 막음)과 같은
+     * 트레이드오프로 파일럿 규모에서 받아들인다 (OrderCreateService.create() 참고)
+     */
+    boolean existsBySessionId(Long sessionId);
+
     /** C4 내 주문 조회 — 최신순 (동시각 대비 id 보조 정렬). EntityGraph: 폴링 N+1 방지 — items를 조인으로 한 번에 */
     @EntityGraph(attributePaths = "items")
     List<OrderEntity> findBySessionIdOrderByCreatedAtDescIdDesc(Long sessionId);

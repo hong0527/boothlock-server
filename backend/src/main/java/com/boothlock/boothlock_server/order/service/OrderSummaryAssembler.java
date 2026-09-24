@@ -41,7 +41,7 @@ public class OrderSummaryAssembler {
 
     private OrderListResponse.OrderItemSummary toItemSummary(OrderItemEntity item) {
         return new OrderListResponse.OrderItemSummary(
-                item.getMenuId(), item.getMenuName(), item.getUnitPrice(), item.getQty());
+                item.getMenuId(), item.getMenuName(), item.getUnitPrice(), item.getQty(), item.getItemType());
     }
 
     private String depositorNameRule(String orderNo) {

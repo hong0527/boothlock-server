@@ -96,6 +96,9 @@ export default function OrderConfirmPage() {
       </div>
 
       <div className="px-6 pb-8">
+        <p className="mb-3 text-center text-body-3 text-neutral-400">
+          결제는 계좌이체로만 진행돼요. 신중하게 주문해주세요.
+        </p>
         <button
           type="button"
           onClick={handleSubmit}

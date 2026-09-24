@@ -7,7 +7,10 @@ import com.boothlock.boothlock_server.menu.domain.MenuEntity;
 import com.boothlock.boothlock_server.order.OrderRaceTestFixture;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
+import com.boothlock.boothlock_server.order.domain.OrderItemType;
+import com.boothlock.boothlock_server.order.dto.OrderCreateRequest;
 import com.boothlock.boothlock_server.order.dto.OrderCreateResponse;
+import com.boothlock.boothlock_server.order.service.OrderCreateService;
 import com.boothlock.boothlock_server.order.service.OrderNumberingService;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 
@@ -51,6 +54,7 @@ class OrderItemEditApiTests {
     @Autowired OrderRaceTestFixture fx;
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired OrderNumberingService numberingService;
+    @Autowired OrderCreateService orderCreateService;
 
     @BeforeEach
     void setUp() {
@@ -364,6 +368,32 @@ class OrderItemEditApiTests {
         assertEquals(34000, fx.reload(mine).getTotalAmount());
         assertEquals(10000, fx.reload(another).getTotalAmount());
         assertTrue(fx.reload(another).getItems().stream().noneMatch(OrderItemEntity::isCanceled));
+    }
+
+    /**
+     * 자릿세(SEAT_FEE, 명세서 밖) 항목은 접수+미결제 주문이어도 O23/O23b로 못 건드린다 —
+     * OrderEntity.requireEditableItem이 itemType==MENU만 골라 "존재하지 않는 항목"과 같은 404로 막는다(새 예외 없음).
+     */
+    @Test
+    void seatFeeItemCannotBeEditedOrCanceled() throws Exception {
+        Long sessionId = fx.activeSessionId();
+        Long orderId = orderCreateService.create(fx.booth.getId(), sessionId, fx.table.getLabel(),
+                UUID.randomUUID().toString(), new OrderCreateRequest(List.of(item(fx.kimchiId, 1))), 2)
+                .response().orderId();
+        Long seatFeeItemId = fx.reload(orderId).getItems().stream()
+                .filter(i -> i.getItemType() == OrderItemType.SEAT_FEE)
+                .findFirst().orElseThrow().getId();
+
+        mockMvc.perform(qty(fx.staffToken, orderId, seatFeeItemId, "{\"qty\":1}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+        mockMvc.perform(cancel(fx.staffToken, orderId, seatFeeItemId))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+
+        OrderEntity reloaded = fx.reload(orderId);
+        assertEquals(8000 + 3000 * 2, reloaded.getTotalAmount());
+        assertTrue(reloaded.getItems().stream().noneMatch(OrderItemEntity::isCanceled));
     }
 
     @Test

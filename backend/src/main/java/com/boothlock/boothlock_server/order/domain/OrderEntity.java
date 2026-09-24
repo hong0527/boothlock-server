@@ -237,10 +237,14 @@ public class OrderEntity {
         this.status = OrderStatus.RECEIVED;
     }
 
-    /** 수정 대상 항목 — 이 주문의 것이 아니거나 이미 취소된 항목은 404 (남의 주문 항목 id를 끼워 넣어도 같은 응답) */
+    /**
+     * 수정 대상 항목 — 이 주문의 것이 아니거나 이미 취소된 항목은 404 (남의 주문 항목 id를 끼워 넣어도 같은 응답).
+     * 자릿세(SEAT_FEE) 항목도 같은 404로 걸러진다 — 스태프가 O23/O23b로 자릿세를 고치거나 지울 수 없어야 하므로,
+     * 새 예외를 만들지 않고 "존재하지 않는 항목"과 같은 응답으로 자연스럽게 막는다.
+     */
     public OrderItemEntity requireEditableItem(Long itemId) {
         return items.stream()
-                .filter(item -> item.getId().equals(itemId) && !item.isCanceled())
+                .filter(item -> item.getId().equals(itemId) && !item.isCanceled() && item.getItemType() == OrderItemType.MENU)
                 .findFirst()
                 .orElseThrow(() -> new NotFoundException("주문 항목을 찾을 수 없습니다."));
     }
