@@ -9,6 +9,8 @@ type TableSessionResponse = {
   booth: { name: string; isOpen: boolean }
   table: { label: string }
   restored: boolean
+  /** 세션에 저장된 인원수(자릿세 파일럿) — 없으면 null */
+  partySize: number | null
 }
 
 export default function TableSessionPage() {
@@ -50,12 +52,14 @@ export default function TableSessionPage() {
           boothName: data.booth.name,
           boothIsOpen: data.booth.isOpen,
           tableLabel: data.table.label,
+          ...(data.partySize ? { partySize: data.partySize } : {}),
         })
         // 명세서 §1.2: 토큰 교환 직후 tableToken을 주소창에서 제거 — replace 네비게이션으로 히스토리에도 안 남긴다
         // 자릿세(1인당 3,000원, 첫 주문에만 부과)가 인원수를 필요로 해서 다시 인원 선택을 거친다(2026-09-23 피드백,
         // PR #62가 "결제 금액에 영향 없다"며 건너뛰게 했던 걸 되돌림) — 단, 이미 앉아있던 손님이 QR을 다시 찍은
-        // 경우(restored)는 인원수를 또 물어보지 않고 바로 메뉴로 간다
-        navigate(data.restored ? '/order' : '/party-size', { replace: true })
+        // 경우는 인원수를 또 물어보지 않고 바로 메뉴로 간다. 판단은 restored가 아니라 "세션에 인원수가 있나"로 한다 —
+        // 두 번째 폰·응답 유실 뒤 재스캔은 restored인데 아직 아무도 인원을 고르지 않았을 수 있고, 그대로 주문하면 자릿세가 0원이 됐다
+        navigate(data.partySize ? '/order' : '/party-size', { replace: true })
       })
       .catch((err) => {
         if (controller.signal.aborted) return // 클린업으로 취소된 요청 — 화면을 이미 떠났거나 StrictMode 재실행

@@ -7,6 +7,7 @@ import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.OrderClosedException;
 import com.boothlock.boothlock_server.global.error.OrderRateLimitedException;
+import com.boothlock.boothlock_server.global.error.PartySizeRequiredException;
 import com.boothlock.boothlock_server.global.error.SoldOutException;
 import com.boothlock.boothlock_server.global.error.UnauthorizedException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
@@ -252,16 +253,24 @@ class OrderCreateServiceTests {
     }
 
     @Test
-    void noPartySizeMeansNoSeatFee() {
-        OrderCreationResult result = create("idem-1", request(3L, 1), null);
-
-        assertEquals(1, result.response().items().size());
-        assertEquals(8000, result.response().totalAmount());
+    void customerOrderWithoutPartySizeIsRejectedSoSeatFeeIsNotSilentlyZero() {
+        // 두 번째 폰·재스캔(restored)이 인원 선택을 건너뛰고 먼저 주문하면 그 세션 자릿세가 영구히 0원이 됐다
+        assertThrows(PartySizeRequiredException.class, () -> create("idem-1", request(3L, 1), null));
+        assertThrows(PartySizeRequiredException.class, () -> create("idem-2", request(3L, 1), 0));
+        assertEquals(0, orderRepository.count(), "거절된 주문은 저장되지 않는다");
     }
 
     @Test
-    void zeroPartySizeMeansNoSeatFee() {
-        OrderCreationResult result = create("idem-1", request(3L, 1), 0);
+    void partySizeIsNotRequiredOnceSeatFeeWasCharged() {
+        create("idem-1", request(3L, 1), 2);   // 자릿세 청구됨
+
+        OrderCreationResult later = create("idem-2", request(3L, 1), null);
+        assertEquals(8000, later.response().totalAmount());
+    }
+
+    @Test
+    void nonCustomerPathDoesNotRequirePartySize() {
+        OrderCreationResult result = create("idem-1", request(3L, 1));   // 인원수 없는 내부 호출(기존 테스트 픽스처 등)
 
         assertEquals(1, result.response().items().size());
         assertEquals(8000, result.response().totalAmount());

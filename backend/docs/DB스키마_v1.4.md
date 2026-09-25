@@ -435,7 +435,19 @@ CREATE TABLE event_map (
 | `next_table_seq`·`active`·`menu.category`·`uk_menu_booth_name`·`canceled` | v1.4 편입 | 있음 | 있음 | v1.3 문서에만 없던 5개 |
 | `booth.depositor_name` | v1.4 편입(main #57) | 있음(통합 PR #54가 main 병합 후) | **확인 필요** — 운영 SQL은 #57 병합 전에 작성돼 이 컬럼이 없을 수 있다. 없으면 `ALTER TABLE booth ADD COLUMN depositor_name VARCHAR(50) NULL` 추가 후 validate | validate는 컬럼 누락을 잡으므로 빠져 있으면 기동 실패로 드러난다 |
 | DEFAULT 절 | 있음 | 없음(`columnDefinition` 있는 3컬럼 제외) | 있음 | 앱은 항상 값을 넣으므로 동작 차이 없음 |
-| **`order_item.menu_id` NOT NULL → NULL 완화(v1.4.2)** | NULL 허용 | **완화 안 됨** — 기존 H2 파일에 이미 만들어진 컬럼의 제약은 `ddl-auto=update`가 안 바꾼다(실측, 2026-09-24) | NULL 허용(CREATE TABLE 반영) | **이미 떠 있던 로컬/운영 H2 파일에는 `ALTER TABLE order_item ALTER COLUMN menu_id SET NULL`(또는 파일 재생성)을 먼저 해야 한다** — 안 하면 자릿세(SEAT_FEE, menu_id=NULL) 저장이 `Check constraint`/제약 위반 500으로 죽는다. 신규 생성 DB는 문제없음 |
+| **`order_item.menu_id` NOT NULL → NULL 완화(v1.4.2)** | NULL 허용 | **완화 안 됨** — 기존 H2 파일에 이미 만들어진 컬럼의 제약은 `ddl-auto=update`가 안 바꾼다(실측, 2026-09-24) | NULL 허용(CREATE TABLE 반영) | **이미 떠 있던 DB에는 배포 전에 직접 바꿔야 한다.** 로컬 H2 파일: `ALTER TABLE order_item ALTER COLUMN menu_id SET NULL`(또는 파일 재생성). **운영 RDS(MySQL 8.0)는 아래 "v1.4.2 운영 RDS 마이그레이션"을 새 코드 배포 전에 실행.** validate는 NULL 허용 여부를 검사하지 않아, 컬럼 두 개만 추가하고 이 완화를 빠뜨리면 서버는 정상 기동하는데 모든 첫 주문(자릿세 행)이 500으로 죽는다 |
+
+#### v1.4.2 운영 RDS 마이그레이션 (MySQL 8.0 — 새 코드 배포 **전에** 실행)
+
+현재 운영 코드와도 호환된다(새 컬럼은 NULL 허용/기본값 `'MENU'`라 옛 코드의 INSERT가 그대로 통과) — 그래서 "ALTER 먼저, 배포 나중" 순서가 안전하다.
+컬럼 두 개가 없으면 `ddl-auto=validate`가 `missing column [item_type]`으로 기동을 막는다(로컬 MySQL 8.0 실측).
+
+```sql
+ALTER TABLE table_session ADD COLUMN party_size INT NULL, ALGORITHM=INSTANT;
+ALTER TABLE order_item ADD COLUMN item_type VARCHAR(20) NOT NULL DEFAULT 'MENU', ALGORITHM=INSTANT;
+ALTER TABLE order_item MODIFY COLUMN menu_id BIGINT NULL, ALGORITHM=INPLACE, LOCK=NONE;  -- 따로 실행(재구성, 동시 DML 허용)
+-- 확인: SHOW CREATE TABLE order_item;  (menu_id가 NULL 허용, item_type 존재)  SHOW CREATE TABLE table_session; (party_size 존재)
+```
 
 - 기존 H2 파일 DB(구 스키마) 위에 통합본을 `ddl-auto=update`로 띄우면 `menu.category`만 NULL 허용으로 추가되고 기동·회귀가 통과함을 실측(verify-int2 §6). `next_table_seq`·`active`·`canceled`는 기본값이 있어 기존 행이 채워진다. **주의**: 이건 "새 컬럼 추가"라 되는 것이고, `order_item.menu_id`처럼 **기존 컬럼의 NOT NULL 제약을 완화**하는 변경은 `update`가 다루지 않는다(바로 위 행 참고) — 이 둘을 같은 사례로 착각하지 말 것
 - MySQL 전체 테스트: REPEATABLE READ 645/645, READ COMMITTED 645/645, 데드락·lock wait timeout 0 (port-fix2). RDS 8.0은 미실측 — 파라미터 그룹(격리수준·`binlog_format` ROW/MIXED·인증 플러그인)은 배포 문서 확인

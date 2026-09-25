@@ -229,6 +229,8 @@ class TableCheckoutConcurrencyTests {
         for (int round = 0; round < ROUNDS; round++) {
             TableEntity table = tableRepository.save(new TableEntity(booth, "O" + round, "tok-order-" + round));
             String token = tableSessionService.createOrRestore(new TableSessionCreateRequest(table.getTableToken())).sessionToken();
+            // 실제 화면처럼 인원 선택까지(자릿세 파일럿) — 인원 없는 세션의 C3는 409 PARTY_SIZE_REQUIRED
+            tableSessionService.setPartySize(tableSessionRepository.findBySessionToken(token).orElseThrow().getId(), 2);
             OrderCreateRequest order = new OrderCreateRequest(List.of(new OrderCreateRequest.OrderItemRequest(menu.getId(), 1)));
 
             List<Object> results = race(3, (i, checkoutDone) -> i == 0

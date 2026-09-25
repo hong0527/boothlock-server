@@ -151,14 +151,37 @@ class PartySizeApiTests {
     }
 
     @Test
-    void orderWithoutPartySizeHasNoSeatFee() throws Exception {
+    void orderWithoutPartySizeIsRejectedWithPartySizeRequired() throws Exception {
+        // 인원 선택을 건너뛴 채(두 번째 폰·재스캔) 주문이 들어가면 그 세션 자릿세가 영구히 0원이 됐다 — 인원 선택으로 돌려보낸다
         mockMvc.perform(post("/api/v1/orders")
                         .header(SESSION_HEADER, MY_TOKEN)
                         .header("Idempotency-Key", "idem-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"items\":[{\"menuId\":" + kimchiId + ",\"qty\":1}]}"))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.totalAmount").value(8000))
-                .andExpect(jsonPath("$.items.length()").value(1));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("PARTY_SIZE_REQUIRED"));
+    }
+
+    @Test
+    void qrRescanTellsWhetherPartySizeWasChosen() throws Exception {
+        // 두 번째 폰·재스캔은 restored:true지만 아직 아무도 인원을 고르지 않았을 수 있다 — 프론트는 partySize로 인원 선택 여부를 정한다
+        mockMvc.perform(post("/api/v1/table-sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tableToken\":\"party-size-table-token\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.restored").value(true))
+                .andExpect(jsonPath("$.partySize").doesNotExist());
+
+        mockMvc.perform(patch("/api/v1/table-sessions/party-size")
+                        .header(SESSION_HEADER, MY_TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"partySize\":3}"))
+                .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(post("/api/v1/table-sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tableToken\":\"party-size-table-token\"}"))
+                .andExpect(jsonPath("$.restored").value(true))
+                .andExpect(jsonPath("$.partySize").value(3));
     }
 }

@@ -70,6 +70,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class ManualOrderApiTests {
 
+    private static final int PARTY_SIZE = 2;
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     @Autowired MockMvc mockMvc;
@@ -181,7 +182,14 @@ class ManualOrderApiTests {
                         .content("{\"tableToken\":\"" + token + "\"}"))
                 .andExpect(status().isOk())
                 .andReturn();
-        return JsonPath.read(result.getResponse().getContentAsString(), "$.sessionToken");
+        String sessionToken = JsonPath.read(result.getResponse().getContentAsString(), "$.sessionToken");
+        // 실제 화면처럼 인원 선택(자릿세 파일럿)까지 — 인원 없는 세션의 C3는 409 PARTY_SIZE_REQUIRED
+        mockMvc.perform(patch("/api/v1/table-sessions/party-size")
+                        .header("X-Session-Token", sessionToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"partySize\":" + PARTY_SIZE + "}"))
+                .andExpect(status().is2xxSuccessful());
+        return sessionToken;
     }
 
     private Long orderIdOf(MvcResult result) throws Exception {
@@ -575,15 +583,18 @@ class ManualOrderApiTests {
                 .andExpect(status().isCreated()).andReturn();
 
         String c = customer.getResponse().getContentAsString();
+        // 손님 첫 주문에는 자릿세(SEAT_FEE)가 붙는다 — 수기 주문엔 없으므로 메뉴 항목과 자릿세를 뺀 금액을 비교한다
+        List<Map<String, Object>> customerMenuItems = ((List<Map<String, Object>>) JsonPath.read(c, "$.items")).stream()
+                .filter(item -> "MENU".equals(item.get("itemType"))).toList();
+        int customerMenuTotal = (Integer) JsonPath.read(c, "$.totalAmount") - 3000 * PARTY_SIZE;
         for (MvcResult m : List.of(manualTable, manualNoTable)) {
             String json = m.getResponse().getContentAsString();
-            assertEquals((Integer) JsonPath.read(c, "$.totalAmount"), (Integer) JsonPath.read(json, "$.totalAmount"));
-            assertEquals((List<Map<String, Object>>) JsonPath.read(c, "$.items"),
-                    (List<Map<String, Object>>) JsonPath.read(json, "$.items"));
+            assertEquals(customerMenuTotal, (Integer) JsonPath.read(json, "$.totalAmount"));
+            assertEquals(customerMenuItems, (List<Map<String, Object>>) JsonPath.read(json, "$.items"));
             assertEquals((String) JsonPath.read(c, "$.payment.bankAccount"), (String) JsonPath.read(json, "$.payment.bankAccount"));
             assertEquals((String) JsonPath.read(c, "$.payment.method"), (String) JsonPath.read(json, "$.payment.method"));
         }
-        assertEquals(31000, (Integer) JsonPath.read(c, "$.totalAmount"));
+        assertEquals(31000 + 3000 * PARTY_SIZE, (Integer) JsonPath.read(c, "$.totalAmount"));
 
         // 가격이 바뀌면 둘 다 새 가격으로 재계산한다 — 요청에 금액이 없으니 위변조할 자리도 없다
         MenuEntity kimchi = menuRepository.findById(kimchiId).orElseThrow();

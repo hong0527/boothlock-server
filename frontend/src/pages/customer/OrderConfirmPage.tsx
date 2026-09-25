@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
 import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
@@ -7,7 +7,9 @@ import { customerApiFetch } from '../../lib/customerApiFetch'
 import { getSessionInfo, getSessionToken } from '../../lib/customerSession'
 import { customerOrderFingerprint, customerOrderKeys } from '../../lib/idempotencyKey'
 import { TimeoutError } from '../../lib/fetchWithTimeout'
+import { pendingSeatFee, SEAT_FEE_PER_PERSON } from '../../lib/seatFee'
 import { displayTableLabel } from '../../lib/tableLabel'
+import type { OrderSummary } from '../../types/customer'
 
 type OrderErrorBody = { error: { code: string; message: string } }
 
@@ -17,6 +19,20 @@ export default function OrderConfirmPage() {
   const { items, totalAmount, clear } = useCart()
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  // 자릿세 미리보기용 — 이 세션에 이미 청구된 자릿세가 있는지 주문내역(C4)으로 확인한다. undefined = 확인 중(주문 버튼을 잠깐 막는다 —
+  // 자릿세가 빠진 합계를 보고 누르지 않게), null = 못 불러옴(안내 문구로 대신하고 주문은 막지 않는다)
+  const [myOrders, setMyOrders] = useState<OrderSummary[] | null | undefined>(undefined)
+  const partySize = sessionInfo?.partySize
+
+  useEffect(() => {
+    customerApiFetch('/api/v1/orders')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { orders: OrderSummary[] } | null) => setMyOrders(data?.orders ?? null))
+      .catch(() => setMyOrders(null))
+  }, [])
+
+  const previewLoading = myOrders === undefined
+  const seatFee = previewLoading ? 0 : pendingSeatFee(partySize, myOrders)
 
   const handleSubmit = async () => {
     if (loading || items.length === 0) return
@@ -40,6 +56,12 @@ export default function OrderConfirmPage() {
         if (code === 'SOLD_OUT') setError('품절된 메뉴가 포함되어 있어요. 장바구니를 다시 확인해주세요.')
         else if (code === 'ORDER_RATE_LIMITED') setError('미결제 주문이 많습니다. 입금 확인 후 추가 주문해주세요.')
         else if (code === 'ORDER_CLOSED') setError('지금은 주문 접수 시간이 아니에요.')
+        else if (code === 'PARTY_SIZE_REQUIRED') {
+          // 인원 선택을 건너뛰고 들어온 세션(두 번째 폰·재스캔) — 인원을 고르고 이 화면으로 돌아온다(장바구니는 그대로)
+          // replace — 돌아왔을 때 뒤로가기가 이 화면을 한 번 더 보여주지 않게
+          navigate('/party-size', { replace: true, state: { returnTo: '/order-confirm' } })
+          return
+        }
         else if (res.status === 400) {
           // 키가 다른 세션 주문과 겹친 경우 서버가 "키를 새로" 달라고 한다 — 버려야 다음 클릭이 통과한다
           customerOrderKeys.clear()
@@ -86,10 +108,23 @@ export default function OrderConfirmPage() {
               </div>
             ))}
           </div>
+          {seatFee !== null && seatFee > 0 && (
+            <div className="flex items-center justify-between border-t border-neutral-100 py-3 text-body-1 text-neutral-900">
+              <span>
+                자릿세 {partySize}명 × {SEAT_FEE_PER_PERSON.toLocaleString()}원
+              </span>
+              <span>{seatFee.toLocaleString()}원</span>
+            </div>
+          )}
           <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-body-2 text-neutral-900">
             <span>주문 금액</span>
-            <span>{totalAmount.toLocaleString()}원</span>
+            <span>{(totalAmount + (seatFee ?? 0)).toLocaleString()}원</span>
           </div>
+          {seatFee === null && (
+            <p className="pt-2 text-body-3 text-neutral-500">
+              첫 주문에는 자릿세(1인 {SEAT_FEE_PER_PERSON.toLocaleString()}원)가 함께 청구돼요.
+            </p>
+          )}
         </div>
 
         {error && <p className="mt-4 text-body-3 text-red-600">{error}</p>}
@@ -102,7 +137,7 @@ export default function OrderConfirmPage() {
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={loading || items.length === 0}
+          disabled={loading || previewLoading || items.length === 0}
           className={`${CUSTOMER_BUTTON_BASE} bg-primary-300 text-heading-3 text-white disabled:opacity-40`}
         >
           {loading ? '주문 중...' : '주문하기'}

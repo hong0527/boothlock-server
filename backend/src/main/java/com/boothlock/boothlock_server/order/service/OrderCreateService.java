@@ -10,6 +10,7 @@ import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.global.error.OrderClosedException;
 import com.boothlock.boothlock_server.global.error.OrderRateLimitedException;
+import com.boothlock.boothlock_server.global.error.PartySizeRequiredException;
 import com.boothlock.boothlock_server.global.error.SessionExpiredException;
 import com.boothlock.boothlock_server.global.error.SoldOutException;
 import com.boothlock.boothlock_server.global.error.UnauthorizedException;
@@ -50,8 +51,6 @@ public class OrderCreateService {
     private static final int MAX_ITEM_KINDS = 20;
     private static final int MAX_QTY = 30;
     private static final int MAX_UNPAID_ORDERS = 8;
-    /** 자릿세(명세서 밖, 파일럿 전용) — 1인당 금액. 인원수는 세션이 갖고 있고(파티사이즈), 곱해서 하나의 항목으로 붙인다 */
-    private static final int SEAT_FEE_PER_PERSON = 3000;
     private static final int MAX_LABEL_LENGTH = 6;
     private static final int MAX_RAW_LABEL_LENGTH = 20;   // table_label VARCHAR(20) — 원본 스냅샷 저장 한도
     private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 64;
@@ -77,14 +76,24 @@ public class OrderCreateService {
         this.orderWriter = orderWriter;
     }
 
-    /** partySize 없는 호출부(자릿세와 무관한 기존 테스트 등) 용 — 자릿세를 안 붙인다. 실제 C3 경로는 아래 6-인자 버전을 쓴다 */
+    /** partySize 없는 호출부(자릿세와 무관한 기존 테스트 등) 용 — 자릿세를 안 붙이고 인원수도 요구하지 않는다. 실제 C3 경로는 아래 6-인자 버전을 쓴다 */
     public OrderCreationResult create(Long boothId, Long sessionId, String tableLabel,
                                       String idempotencyKey, OrderCreateRequest request) {
-        return create(boothId, sessionId, tableLabel, idempotencyKey, request, null);
+        return create(boothId, sessionId, tableLabel, idempotencyKey, request, null, false);
     }
 
+    /**
+     * C3 손님 주문. 인원수가 없는 세션의 주문은 자릿세가 아직 청구되지 않았다면 409 PARTY_SIZE_REQUIRED로 거절한다 —
+     * 두 번째 폰(restored라 인원 선택을 건너뜀), 응답 유실 뒤 재스캔, 수기 주문이 먼저 연 세션 등에서 인원수 없이 주문이 들어가면
+     * 그 세션의 자릿세가 조용히 0원이 됐다. 프론트는 이 코드를 받으면 인원 선택 화면으로 보낸다
+     */
     public OrderCreationResult create(Long boothId, Long sessionId, String tableLabel,
                                       String idempotencyKey, OrderCreateRequest request, Integer partySize) {
+        return create(boothId, sessionId, tableLabel, idempotencyKey, request, partySize, true);
+    }
+
+    private OrderCreationResult create(Long boothId, Long sessionId, String tableLabel, String idempotencyKey,
+                                       OrderCreateRequest request, Integer partySize, boolean requirePartySize) {
         if (boothId == null || sessionId == null) {
             throw new UnauthorizedException("세션 정보가 없습니다");
         }
@@ -115,8 +124,12 @@ public class OrderCreateService {
                 sessionId, OrderStatus.RECEIVED, PaymentStatus.UNPAID) >= MAX_UNPAID_ORDERS) {
             throw new OrderRateLimitedException();
         }
-
         Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request);
+        // 인원 검사는 멱등 재요청(이미 접수된 주문은 인원수와 무관하게 그대로 돌려준다)과 메뉴 검증(없는 메뉴 400·품절 409) 뒤에 둔다 —
+        // 입력 자체가 틀린 주문에 "인원을 고르세요"를 먼저 보여주면, 인원을 고르고 돌아와서야 품절을 알게 된다
+        if (requirePartySize && (partySize == null || partySize <= 0) && !orderRepository.existsChargedSeatFee(sessionId)) {
+            throw new PartySizeRequiredException();
+        }
         List<OrderItemEntity> items = new ArrayList<>(request.items().stream()
                 .map(item -> {
                     MenuLookup.MenuInfo menu = menus.get(item.menuId());
@@ -126,18 +139,13 @@ public class OrderCreateService {
                 .toList());
         int total = totalAmount(request, menus);
 
-        // 자릿세(명세서 밖, 파일럿 전용) — 이 세션의 첫 주문이고 인원수를 알 때만 붙인다. 수기 주문(createManual, O14)은
-        // 이 블록을 타지 않는다 — 세션 기반 파티사이즈 개념과 무관
-        if (partySize != null && partySize > 0 && !orderRepository.existsBySessionId(sessionId)) {
-            items.add(OrderItemEntity.seatFee(SEAT_FEE_PER_PERSON, partySize));
-            total += SEAT_FEE_PER_PERSON * partySize;
-        }
-
+        // 자릿세(명세서 밖, 파일럿 전용)는 여기서 붙이지 않는다 — 인원수만 넘기고, 세션 행을 잠근 저장 트랜잭션(OrderWriter.save)이
+        // "이 세션에 청구된 자릿세가 없을 때" 붙인다. 수기 주문(createManual, O14)은 인원수를 넘기지 않아 붙지 않는다
         OrderWriter.OrderSpec spec = new OrderWriter.OrderSpec(
                 boothId, sessionId, label, tableLabel.trim(), idempotencyKey,
                 // 컬럼이 timestamp(6)라 마이크로초로 잘라 넣는다 — 리눅스 now()는 나노초까지 나와서, 자르지 않으면
                 // 첫 응답(메모리 값)과 멱등 재요청 응답(DB 재조회 값)의 createdAt이 달라진다
-                total, items, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), false);
+                total, items, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), false, partySize);
         return saveWithRetry(spec, booth.getBankAccount(), booth.getDepositorName());
     }
 

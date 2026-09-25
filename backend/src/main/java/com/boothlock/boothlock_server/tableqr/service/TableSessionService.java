@@ -110,6 +110,7 @@ public class TableSessionService {
                 session.getSessionToken(),
                 new TableSessionResponse.Booth(table.getBooth().getName(), table.getBooth().isOpen()),
                 new TableSessionResponse.Table(table.getLabel()),
-                restored);
+                restored,
+                session.getPartySize());
     }
 }
