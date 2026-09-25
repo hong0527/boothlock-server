@@ -1,12 +1,15 @@
 /** 백엔드 DashboardResponse (dashboard/dto/DashboardResponse.java)와 1:1로 맞춘 타입 */
 export type OrderStatus = 'RECEIVED' | 'DONE' | 'CANCELED'
 
+/** itemType이 'SEAT_FEE'(자릿세, 명세서 밖)면 menuId는 null — 실제 메뉴가 아니다. 서버가 이미 수정·취소를 막지만
+ * 프론트도 결제창 버튼을 미리 비활성화한다(PaymentModal) */
 export type OrderItemSummary = {
   itemId: number
-  menuId: number
+  menuId: number | null
   menuName: string
   unitPrice: number
   qty: number
+  itemType: 'MENU' | 'SEAT_FEE'
 }
 
 export type PaymentStatus = 'UNPAID' | 'PAID' | 'REFUND_NEEDED' | 'REFUNDED'

@@ -35,7 +35,7 @@ public class OrderSummaryMapper {
 
     private DashboardResponse.OrderItemSummary toItemSummary(OrderItemEntity item) {
         return new DashboardResponse.OrderItemSummary(
-                item.getId(), item.getMenuId(), item.getMenuName(), item.getUnitPrice(), item.getQty());
+                item.getId(), item.getMenuId(), item.getMenuName(), item.getUnitPrice(), item.getQty(), item.getItemType());
     }
 
     private OffsetDateTime atKst(LocalDateTime dt) {

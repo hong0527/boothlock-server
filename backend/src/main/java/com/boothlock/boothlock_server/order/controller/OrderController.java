@@ -60,7 +60,7 @@ public class OrderController {
             @RequestBody OrderCreateRequest request) {
         AuthenticatedSession session = sessionAuthService.authenticate(sessionToken);
         OrderCreationResult result = orderCreateService.create(
-                session.boothId(), session.sessionId(), session.tableLabel(), idempotencyKey, request);
+                session.boothId(), session.sessionId(), session.tableLabel(), idempotencyKey, request, session.partySize());
         return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK).body(result.response());
     }
 

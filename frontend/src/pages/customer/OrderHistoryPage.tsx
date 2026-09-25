@@ -66,9 +66,9 @@ export default function OrderHistoryPage() {
               </div>
 
               <div className="mt-3 divide-y divide-neutral-100 border-t border-neutral-100">
-                {order.items.map((item) => (
+                {order.items.map((item, idx) => (
                   <div
-                    key={item.menuId}
+                    key={item.menuId ?? `${item.itemType}-${idx}`}
                     className="flex items-center justify-between py-2 text-body-1 text-neutral-900"
                   >
                     <span>{item.menuName}</span>

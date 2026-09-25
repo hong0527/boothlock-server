@@ -135,6 +135,11 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.CONFLICT, "ORDER_CLOSED", e.getMessage(), null);
     }
 
+    @ExceptionHandler(PartySizeRequiredException.class)
+    public ResponseEntity<ErrorResponse> handlePartySizeRequired(PartySizeRequiredException e) {
+        return body(HttpStatus.CONFLICT, "PARTY_SIZE_REQUIRED", e.getMessage(), null);
+    }
+
     @ExceptionHandler(CheckoutUnpaidRemainsException.class)
     public ResponseEntity<ErrorResponse> handleCheckoutUnpaidRemains(CheckoutUnpaidRemainsException e) {
         return body(HttpStatus.CONFLICT, "CHECKOUT_UNPAID_REMAINS", e.getMessage(),

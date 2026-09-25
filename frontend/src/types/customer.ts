@@ -41,12 +41,13 @@ export type PaymentGuide = {
   depositorNameRule: string
 }
 
-/** C4 내 주문 조회 응답의 주문 항목 (subtotal 없음) */
+/** C4 내 주문 조회 응답의 주문 항목 (subtotal 없음). itemType이 'SEAT_FEE'(자릿세, 명세서 밖)면 menuId는 null */
 export type OrderSummaryItem = {
-  menuId: number
+  menuId: number | null
   menuName: string
   unitPrice: number
   qty: number
+  itemType: 'MENU' | 'SEAT_FEE'
 }
 
 /** C4 내 주문 조회 응답의 주문 1건 */

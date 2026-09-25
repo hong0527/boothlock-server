@@ -85,6 +85,15 @@ public interface TableSessionRepository extends JpaRepository<TableSessionEntity
     int touchIfActive(@Param("id") Long id, @Param("at") LocalDateTime at);
 
     /**
+     * PartySizePage 제출(자릿세 파일럿 전용, 명세서 밖) — 조건부 UPDATE, 세션 인증(TableSessionAuthService.authenticate)
+     * 통과 뒤에 부르지만 그 사이 퇴실(O6)이 끼어들 수 있어 touchIfActive와 같은 조건을 건다. 0건이면 410(SessionExpiredException)
+     */
+    @Transactional
+    @Modifying
+    @Query("update TableSessionEntity s set s.partySize = :partySize where s.id = :id and s.endedAtKey = 0 and s.endedAt is null")
+    int updatePartySizeIfActive(@Param("id") Long id, @Param("partySize") int partySize);
+
+    /**
      * O6 퇴실 — 테이블의 종료되지 않은 세션을 전부 종료한다. ended_at_key에는 스키마 규칙대로 자기 id를 넣는다
      * (TableSessionEntity#end와 같은 규칙, id는 유일해 같은 테이블의 여러 세션을 같은 순간 종료해도 충돌이 없다).
      * 조건부 UPDATE라 두 번 눌러도 두 번째는 0건으로 끝난다

@@ -34,12 +34,13 @@ const POLL_INTERVAL_MS = 5000
 type FlatItem = {
   orderId: number
   itemId: number
-  menuId: number
+  menuId: number | null
   menuName: string
   unitPrice: number
   qty: number
   status: OrderStatus
   paymentStatus: PaymentStatus
+  itemType: 'MENU' | 'SEAT_FEE'
 }
 
 // 주문내역은 "이 테이블이 지금 뭘 시켰나"를 보여주는 계산서라 같은 메뉴가 서로 다른 주문(수기 확인을 여러 번
@@ -48,13 +49,15 @@ type FlatItem = {
 // items(주문 최신순 배열)를 그대로 순서 보존해서 담는다 — +/- 는 그 최근 항목부터 조정한다.
 type GroupedItem = {
   key: string
-  menuId: number
+  menuId: number | null
   menuName: string
   unitPrice: number
   qty: number
   status: OrderStatus
   paymentStatus: PaymentStatus
   entries: { orderId: number; itemId: number; qty: number }[]
+  /** 'SEAT_FEE'(자릿세, 명세서 밖)면 스태프가 수정·취소할 수 없다 — 서버(OrderEntity.requireEditableItem)가 이미 막지만 여기서도 버튼을 비활성화한다 */
+  itemType: 'MENU' | 'SEAT_FEE'
 }
 
 // 수기 주문 담기(제출 전) — 클릭마다 바로 createManualOrder를 부르면 치킨·콜라·감튀를 연달아 눌렀을 때
@@ -181,7 +184,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // Figma는 "주문" 단위 그룹핑이 없다 — 주문들의 항목을 한 줄씩 평탄화해서 보여준다
   const rawItems: FlatItem[] = visibleOrders.flatMap((o) =>
     o.items.map((item) => ({ orderId: o.orderId, itemId: item.itemId, menuId: item.menuId, menuName: item.menuName,
-      unitPrice: item.unitPrice, qty: item.qty, status: o.status, paymentStatus: o.paymentStatus })),
+      unitPrice: item.unitPrice, qty: item.qty, status: o.status, paymentStatus: o.paymentStatus, itemType: item.itemType })),
   )
 
   // 아직 서버에 반영 안 된 로컬 변경(adjustments)을 화면 표시용으로만 얹는다 — 실제 서버 값(rawItems)은 안 바뀐다
@@ -199,7 +202,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   const groupedItems: GroupedItem[] = (() => {
     const groups = new Map<string, GroupedItem>()
     for (const item of items) {
-      const key = `${item.menuId}-${item.status}-${item.paymentStatus}`
+      const key = `${item.itemType}-${item.menuId}-${item.status}-${item.paymentStatus}`
       const group = groups.get(key)
       const entry = { orderId: item.orderId, itemId: item.itemId, qty: item.qty }
       if (group) {
@@ -215,13 +218,14 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
           status: item.status,
           paymentStatus: item.paymentStatus,
           entries: [entry],
+          itemType: item.itemType,
         })
       }
     }
-    // 주문내역은 메인·사이드·음료 순으로 — 메뉴 목록(menus)에서 분류를 찾아 정렬한다
+    // 주문내역은 메인·사이드·음료 순으로, 자릿세는 맨 뒤로 — 메뉴 목록(menus)에서 분류를 찾아 정렬한다
     return Array.from(groups.values()).sort((a, b) => {
-      const rank = (menuId: number) => {
-        const cat = menus.find((m) => m.id === menuId)?.category
+      const rank = (menuId: number | null) => {
+        const cat = menuId == null ? null : menus.find((m) => m.id === menuId)?.category
         return cat ? CATEGORY_ORDER[cat] : 99
       }
       return rank(a.menuId) - rank(b.menuId)
@@ -320,6 +324,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 보이고, 이미 등록된 주문은 건드리지 않아 카드가 하나로 뭉개지지 않는다(위 handleAddMenu와 같은 이유).
   // 품절됐으면 메뉴 버튼처럼 막는다.
   const incrementGroup = (group: GroupedItem) => {
+    if (group.menuId == null) return // 자릿세(SEAT_FEE) — 담을 "메뉴"가 없다. 버튼도 항상 비활성이지만 방어적으로 한 번 더 막는다
     const menu = menus.find((m) => m.id === group.menuId)
     if (menu?.soldOut) return
     addToDraft(group.menuId, group.menuName, group.unitPrice)
@@ -332,7 +337,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 최근 항목이 1개뿐이면 0개로 줄이는 게 아니라 그 항목 자체를 취소 대기 상태로 표시한다 —
   // updateItemQty는 qty 1 미만을 허용하지 않는다
   const decrementGroup = (group: GroupedItem) => {
-    if (draft.some((d) => d.menuId === group.menuId)) {
+    if (group.menuId != null && draft.some((d) => d.menuId === group.menuId)) {
       adjustDraftQty(group.menuId, -1)
       return
     }
@@ -349,7 +354,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 접수·미결제(editable)일 때만 취소 대기로 표시한다 — 완료·입금확인된 항목은 서버가 어차피 409로
   // 거부하므로, draft만 지우면 되는 상황에서 헛되이 에러를 띄우지 않는다.
   const cancelGroup = (group: GroupedItem) => {
-    removeDraftItem(group.menuId)
+    if (group.menuId != null) removeDraftItem(group.menuId)
     if (group.status !== 'RECEIVED' || group.paymentStatus !== 'UNPAID') return
     setAdjustments((prev) => {
       const next = { ...prev }
@@ -648,11 +653,14 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
 
             <div className="flex-1 overflow-y-auto">
               {groupedItems.map((group) => {
-                // 서버(OrderEntity.canEditItems)는 접수+미결제만 수정을 허용한다 — 완료·입금확인 항목은 버튼을 미리 막아 409 헛클릭을 없앤다
-                const editable = group.status === 'RECEIVED' && group.paymentStatus === 'UNPAID'
+                // 서버(OrderEntity.canEditItems)는 접수+미결제만 수정을 허용한다 — 완료·입금확인 항목은 버튼을 미리 막아 409 헛클릭을 없앤다.
+                // 자릿세(SEAT_FEE)는 상태와 무관하게 항상 수정 불가 — 서버(requireEditableItem)가 이미 404로 막지만
+                // 눌렀을 때 헷갈리는 에러가 뜨지 않도록 여기서도 막는다
+                const isSeatFee = group.itemType === 'SEAT_FEE'
+                const editable = !isSeatFee && group.status === 'RECEIVED' && group.paymentStatus === 'UNPAID'
                 // 완료·입금확인된 줄이어도 방금 "+"로 담아둔 draft가 있으면, 그 draft만큼은 되돌릴 수 있어야 한다 —
                 // 안 그러면 눌러놓고 취소할 방법이 담은 메뉴 칩밖에 없어서 헷갈린다
-                const hasDraftForMenu = draft.some((d) => d.menuId === group.menuId)
+                const hasDraftForMenu = !isSeatFee && draft.some((d) => d.menuId === group.menuId)
                 const canRemove = editable || hasDraftForMenu
                 return (
                   <div key={group.key} className="border-b border-neutral-200 px-6 py-5">
@@ -691,11 +699,11 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
                         </button>
                         <span className="w-6 text-center text-lg font-semibold text-neutral-900">{group.qty}</span>
                         {/* +는 기존 주문을 안 건드리고 draft에 담는 것뿐이라 editable(접수·미결제) 여부와 무관하다 —
-                            품절만 막는다(메뉴 버튼과 동일 기준) */}
+                            품절만 막는다(메뉴 버튼과 동일 기준). 자릿세는 담을 "메뉴"가 없으므로 항상 막는다 */}
                         <button
                           type="button"
                           onClick={() => incrementGroup(group)}
-                          disabled={busy || (menus.find((m) => m.id === group.menuId)?.soldOut ?? false)}
+                          disabled={busy || isSeatFee || (menus.find((m) => m.id === group.menuId)?.soldOut ?? false)}
                           className="h-8 w-8 rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
                         >
                           +

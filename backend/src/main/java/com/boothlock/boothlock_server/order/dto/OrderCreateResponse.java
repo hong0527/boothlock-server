@@ -2,6 +2,7 @@ package com.boothlock.boothlock_server.order.dto;
 
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
+import com.boothlock.boothlock_server.order.domain.OrderItemType;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 
 import java.time.OffsetDateTime;
@@ -21,8 +22,11 @@ public record OrderCreateResponse(
         PaymentGuide payment,
         OffsetDateTime createdAt) {
 
-    /** subtotal은 단가×수량 파생값 — 저장하지 않고 응답 시점에 계산한다 (명세서 C3) */
-    public record OrderItemResponse(Long menuId, String menuName, int unitPrice, int qty, int subtotal) {
+    /**
+     * subtotal은 단가×수량 파생값 — 저장하지 않고 응답 시점에 계산한다 (명세서 C3).
+     * itemType=SEAT_FEE(자릿세, 명세서 밖)면 menuId는 null — 실제 메뉴가 아니다.
+     */
+    public record OrderItemResponse(Long menuId, String menuName, int unitPrice, int qty, int subtotal, OrderItemType itemType) {
     }
 
     public record PaymentGuide(PaymentMethod method, String bankAccount, String depositorName, String depositorNameRule) {

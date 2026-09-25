@@ -42,6 +42,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class OrderControllerTests {
 
+    private static final int PARTY_SIZE = 2;
     private static final String SESSION_HEADER = "X-Session-Token";
     private static final String MY_TOKEN = "tok-my-session-000000000000000000000001";
     private static final String OTHER_TOKEN = "tok-other-session-00000000000000000002";
@@ -88,7 +89,10 @@ class OrderControllerTests {
 
     private Long openSession(String label, String tableToken, String sessionToken) {
         TableEntity table = tableRepository.save(new TableEntity(booth, label, tableToken));
-        return tableSessionRepository.save(new TableSessionEntity(table, sessionToken, NOW)).getId();
+        // 실제 화면처럼 인원 선택(자릿세 파일럿)을 마친 세션 — 인원 없는 세션의 C3는 409 PARTY_SIZE_REQUIRED
+        TableSessionEntity session = new TableSessionEntity(table, sessionToken, NOW);
+        session.updatePartySize(PARTY_SIZE);
+        return tableSessionRepository.save(session).getId();
     }
 
     private OrderEntity seedOrder(Long sessionId, int orderSeq) {
@@ -117,7 +121,8 @@ class OrderControllerTests {
                 .andExpect(jsonPath("$.orderNo").value("A3-1"))                      // 세션의 테이블 라벨(A-3) 정규화 + 영업일 1번
                 .andExpect(jsonPath("$.status").value("RECEIVED"))
                 .andExpect(jsonPath("$.paymentStatus").value("UNPAID"))
-                .andExpect(jsonPath("$.totalAmount").value(21000))                   // 8000×2 + 5000 — 서버 재계산
+                .andExpect(jsonPath("$.totalAmount").value(21000 + 3000 * PARTY_SIZE)) // 8000×2 + 5000 + 첫 주문 자릿세 — 서버 재계산
+                .andExpect(jsonPath("$.items[2].itemType").value("SEAT_FEE"))
                 .andExpect(jsonPath("$.items[0].menuName").value("김치전"))
                 .andExpect(jsonPath("$.items[0].subtotal").value(16000))
                 .andExpect(jsonPath("$.payment.method").value("BANK_TRANSFER"))

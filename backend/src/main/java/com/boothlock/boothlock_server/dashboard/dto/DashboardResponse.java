@@ -2,6 +2,7 @@ package com.boothlock.boothlock_server.dashboard.dto;
 
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
+import com.boothlock.boothlock_server.order.domain.OrderItemType;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 
 import java.time.OffsetDateTime;
@@ -32,7 +33,8 @@ public record DashboardResponse(List<OrderSummary> orders, List<CallSummary> cal
             Long sessionId) {
     }
 
-    public record OrderItemSummary(Long itemId, Long menuId, String menuName, int unitPrice, int qty) {
+    /** itemType=SEAT_FEE(자릿세, 명세서 밖)면 menuId는 null — 실제 메뉴가 아니라 스태프 화면(결제창)의 수정·취소 버튼을 막는 근거로 쓴다 */
+    public record OrderItemSummary(Long itemId, Long menuId, String menuName, int unitPrice, int qty, OrderItemType itemType) {
     }
 
     public record CallSummary(Long callId, String tableLabel, String reason, OffsetDateTime createdAt) {

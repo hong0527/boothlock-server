@@ -7,10 +7,12 @@ import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.OrderClosedException;
 import com.boothlock.boothlock_server.global.error.OrderRateLimitedException;
+import com.boothlock.boothlock_server.global.error.PartySizeRequiredException;
 import com.boothlock.boothlock_server.global.error.SoldOutException;
 import com.boothlock.boothlock_server.global.error.UnauthorizedException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
+import com.boothlock.boothlock_server.order.domain.OrderItemType;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.order.dto.OrderCreateRequest;
 import com.boothlock.boothlock_server.order.dto.OrderCreateResponse;
@@ -189,6 +191,10 @@ class OrderCreateServiceTests {
         return orderCreateService.create(boothId, mySession, TABLE_LABEL, idempotencyKey, request);
     }
 
+    private OrderCreationResult create(String idempotencyKey, OrderCreateRequest request, Integer partySize) {
+        return orderCreateService.create(boothId, mySession, TABLE_LABEL, idempotencyKey, request, partySize);
+    }
+
     @Test
     void createsOrderWithServerCalculatedAmount() {
         OrderCreateRequest request = new OrderCreateRequest(List.of(
@@ -213,6 +219,71 @@ class OrderCreateServiceTests {
         // 라벨 원본 스냅샷 — orderNo는 정규화본("A3")이지만 저장 라벨은 원본("A-3") (O10 표시·O19 CSV용)
         assertEquals("A-3", orderRepository.findById(response.orderId()).orElseThrow().getTableLabel());
         assertEquals(ZoneOffset.ofHours(9), response.createdAt().getOffset());
+    }
+
+    // ── 자릿세(명세서 밖, 파일럿 전용) ──────────────────────
+
+    @Test
+    void firstOrderWithPartySizeGetsSeatFeeItem() {
+        OrderCreationResult result = create("idem-1", request(3L, 2), 3);
+
+        OrderCreateResponse response = result.response();
+        assertEquals(2, response.items().size());   // 김치전 1 + 자릿세 1
+        assertEquals(16000 + 3000 * 3, response.totalAmount());
+
+        OrderCreateResponse.OrderItemResponse seatFee = response.items().stream()
+                .filter(item -> item.itemType() == OrderItemType.SEAT_FEE)
+                .findFirst().orElseThrow();
+        assertNull(seatFee.menuId());
+        assertEquals("자릿세", seatFee.menuName());
+        assertEquals(3000, seatFee.unitPrice());
+        assertEquals(3, seatFee.qty());
+        assertEquals(9000, seatFee.subtotal());
+    }
+
+    @Test
+    void secondOrderOfSameSessionDoesNotGetSeatFeeAgain() {
+        create("idem-1", request(3L, 1), 3);   // 첫 주문 — 자릿세 붙음
+
+        OrderCreationResult second = create("idem-2", request(5L, 1), 3);
+
+        OrderCreateResponse response = second.response();
+        assertEquals(1, response.items().size());   // 제로콜라만, 자릿세 없음
+        assertEquals(5000, response.totalAmount());
+    }
+
+    @Test
+    void customerOrderWithoutPartySizeIsRejectedSoSeatFeeIsNotSilentlyZero() {
+        // 두 번째 폰·재스캔(restored)이 인원 선택을 건너뛰고 먼저 주문하면 그 세션 자릿세가 영구히 0원이 됐다
+        assertThrows(PartySizeRequiredException.class, () -> create("idem-1", request(3L, 1), null));
+        assertThrows(PartySizeRequiredException.class, () -> create("idem-2", request(3L, 1), 0));
+        assertEquals(0, orderRepository.count(), "거절된 주문은 저장되지 않는다");
+    }
+
+    @Test
+    void partySizeIsNotRequiredOnceSeatFeeWasCharged() {
+        create("idem-1", request(3L, 1), 2);   // 자릿세 청구됨
+
+        OrderCreationResult later = create("idem-2", request(3L, 1), null);
+        assertEquals(8000, later.response().totalAmount());
+    }
+
+    @Test
+    void nonCustomerPathDoesNotRequirePartySize() {
+        OrderCreationResult result = create("idem-1", request(3L, 1));   // 인원수 없는 내부 호출(기존 테스트 픽스처 등)
+
+        assertEquals(1, result.response().items().size());
+        assertEquals(8000, result.response().totalAmount());
+    }
+
+    @Test
+    void idempotentReplayOfFirstOrderDoesNotDuplicateSeatFee() {
+        OrderCreationResult first = create("idem-1", request(3L, 1), 2);
+        OrderCreationResult replay = create("idem-1", request(3L, 1), 2);
+
+        assertFalse(replay.created());
+        assertEquals(first.response().orderId(), replay.response().orderId());
+        assertEquals(2, replay.response().items().size());   // 재조회라 다시 붙지 않는다(같은 주문 그대로)
     }
 
     @Test
