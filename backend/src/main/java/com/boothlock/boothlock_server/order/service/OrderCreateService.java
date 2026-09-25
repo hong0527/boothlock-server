@@ -10,6 +10,7 @@ import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.global.error.OrderClosedException;
 import com.boothlock.boothlock_server.global.error.OrderRateLimitedException;
+import com.boothlock.boothlock_server.global.error.PartySizeRequiredException;
 import com.boothlock.boothlock_server.global.error.SessionExpiredException;
 import com.boothlock.boothlock_server.global.error.SoldOutException;
 import com.boothlock.boothlock_server.global.error.UnauthorizedException;
@@ -75,14 +76,24 @@ public class OrderCreateService {
         this.orderWriter = orderWriter;
     }
 
-    /** partySize 없는 호출부(자릿세와 무관한 기존 테스트 등) 용 — 자릿세를 안 붙인다. 실제 C3 경로는 아래 6-인자 버전을 쓴다 */
+    /** partySize 없는 호출부(자릿세와 무관한 기존 테스트 등) 용 — 자릿세를 안 붙이고 인원수도 요구하지 않는다. 실제 C3 경로는 아래 6-인자 버전을 쓴다 */
     public OrderCreationResult create(Long boothId, Long sessionId, String tableLabel,
                                       String idempotencyKey, OrderCreateRequest request) {
-        return create(boothId, sessionId, tableLabel, idempotencyKey, request, null);
+        return create(boothId, sessionId, tableLabel, idempotencyKey, request, null, false);
     }
 
+    /**
+     * C3 손님 주문. 인원수가 없는 세션의 주문은 자릿세가 아직 청구되지 않았다면 409 PARTY_SIZE_REQUIRED로 거절한다 —
+     * 두 번째 폰(restored라 인원 선택을 건너뜀), 응답 유실 뒤 재스캔, 수기 주문이 먼저 연 세션 등에서 인원수 없이 주문이 들어가면
+     * 그 세션의 자릿세가 조용히 0원이 됐다. 프론트는 이 코드를 받으면 인원 선택 화면으로 보낸다
+     */
     public OrderCreationResult create(Long boothId, Long sessionId, String tableLabel,
                                       String idempotencyKey, OrderCreateRequest request, Integer partySize) {
+        return create(boothId, sessionId, tableLabel, idempotencyKey, request, partySize, true);
+    }
+
+    private OrderCreationResult create(Long boothId, Long sessionId, String tableLabel, String idempotencyKey,
+                                       OrderCreateRequest request, Integer partySize, boolean requirePartySize) {
         if (boothId == null || sessionId == null) {
             throw new UnauthorizedException("세션 정보가 없습니다");
         }
@@ -112,6 +123,10 @@ public class OrderCreateService {
         if (orderRepository.countBySessionIdAndStatusAndPaymentStatus(
                 sessionId, OrderStatus.RECEIVED, PaymentStatus.UNPAID) >= MAX_UNPAID_ORDERS) {
             throw new OrderRateLimitedException();
+        }
+        // 멱등 재요청 뒤에 둔다 — 이미 접수된 주문의 재전송은 인원수와 무관하게 그 주문을 돌려준다
+        if (requirePartySize && (partySize == null || partySize <= 0) && !orderRepository.existsChargedSeatFee(sessionId)) {
+            throw new PartySizeRequiredException();
         }
 
         Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request);

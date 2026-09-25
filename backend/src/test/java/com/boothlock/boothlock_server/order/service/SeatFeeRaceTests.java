@@ -1,5 +1,7 @@
 package com.boothlock.boothlock_server.order.service;
 
+import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
+import com.boothlock.boothlock_server.dashboard.service.DashboardOrderActionService;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.order.OrderRaceTestFixture;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
@@ -21,6 +23,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import static com.boothlock.boothlock_server.order.OrderRaceTestFixture.bearer;
 import static com.boothlock.boothlock_server.order.OrderRaceTestFixture.item;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -38,6 +41,7 @@ class SeatFeeRaceTests {
     @Autowired OrderRaceTestFixture fx;
     @Autowired OrderCreateService orderCreateService;
     @Autowired OrderCancelService orderCancelService;
+    @Autowired DashboardOrderActionService dashboardOrderActionService;
 
     private ExecutorService pool;
 
@@ -59,13 +63,13 @@ class SeatFeeRaceTests {
                 new OrderCreateRequest(List.of(item(fx.kimchiId, 1))), PARTY_SIZE).response();
     }
 
-    /** 세션에서 청구된(취소 안 된 주문의) 자릿세 항목 수 */
+    /** 세션에서 청구된(취소 안 된 주문의 취소 안 된) 자릿세 항목 수 */
     private long chargedSeatFees(Long sessionId) {
         return fx.tx.execute(status -> fx.orderRepository.findBySessionIdOrderByCreatedAtDescIdDesc(sessionId).stream()
                 .filter(o -> o.getStatus() != OrderStatus.CANCELED)
                 .map(OrderEntity::getItems)
                 .flatMap(List::stream)
-                .filter(i -> i.getItemType() == OrderItemType.SEAT_FEE)
+                .filter(i -> i.getItemType() == OrderItemType.SEAT_FEE && !i.isCanceled())
                 .count());
     }
 
@@ -96,5 +100,52 @@ class SeatFeeRaceTests {
         assertEquals(8000 + 3000 * PARTY_SIZE, next.totalAmount(), "취소된 주문의 자릿세는 청구된 것이 아니다 — 다음 주문에 붙어야 한다");
         assertEquals(1, chargedSeatFees(sessionId));
         assertEquals(8000, order(sessionId).totalAmount(), "그다음 주문엔 다시 붙지 않는다");
+    }
+
+    /** 주문의 메뉴(MENU) 항목 id */
+    private Long menuItemId(Long orderId) {
+        return fx.tx.execute(status -> fx.orderRepository.findById(orderId).orElseThrow().getItems().stream()
+                .filter(i -> i.getItemType() == OrderItemType.MENU)
+                .findFirst().orElseThrow().getId());
+    }
+
+    @Test
+    void cancelingLastMenuItemCancelsOrderWithSeatFeeAndNextOrderIsChargedAgain() {
+        Long sessionId = fx.openSession();
+        OrderCreateResponse first = order(sessionId);
+
+        // 결제 모달에서 첫 주문의 유일한 메뉴를 개별 취소 — 예전엔 자릿세만 남은 접수 주문이 주방 대기열에 남았다
+        DashboardResponse.OrderSummary after = dashboardOrderActionService.cancelItem(
+                bearer(fx.staffToken), first.orderId(), menuItemId(first.orderId()));
+
+        assertEquals(OrderStatus.CANCELED, after.status(), "메뉴가 다 취소되면 주문도 취소된다");
+        assertEquals(0, chargedSeatFees(sessionId));
+        assertEquals(8000 + 3000 * PARTY_SIZE, order(sessionId).totalAmount(), "다음 주문에 자릿세가 다시 붙는다");
+    }
+
+    @Test
+    void restoringCanceledSeatFeeOrderDoesNotDoubleCharge() {
+        Long sessionId = fx.openSession();
+        OrderCreateResponse first = order(sessionId);
+        orderCancelService.cancel(first.orderId(), sessionId);
+        order(sessionId);   // 자릿세가 여기 다시 붙었다
+
+        DashboardResponse.OrderSummary restored = dashboardOrderActionService.restore(bearer(fx.staffToken), first.orderId());
+
+        assertEquals(OrderStatus.RECEIVED, restored.status());
+        assertEquals(1, chargedSeatFees(sessionId), "되살린 주문의 자릿세는 빠져야 한다");
+        int restoredTotal = fx.tx.execute(st -> fx.orderRepository.findById(first.orderId()).orElseThrow().getTotalAmount());
+        assertEquals(8000, restoredTotal, "되살린 주문 합계에서 자릿세가 빠진다");
+    }
+
+    @Test
+    void restoringCanceledSeatFeeOrderKeepsFeeWhenNoOtherFeeCharged() {
+        Long sessionId = fx.openSession();
+        OrderCreateResponse first = order(sessionId);
+        orderCancelService.cancel(first.orderId(), sessionId);
+
+        dashboardOrderActionService.restore(bearer(fx.staffToken), first.orderId());
+
+        assertEquals(1, chargedSeatFees(sessionId), "다른 곳에 자릿세가 없으면 되살린 주문의 자릿세가 그대로 청구된다");
     }
 }

@@ -52,10 +52,15 @@ export default function OrderCard({ order, now, pending, onComplete, onCancel, o
         {order.items.map((item) => (
           <li
             key={item.itemId}
-            className="flex items-center gap-3 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900"
+            // 자릿세는 조리할 음식이 아니다 — 주방이 요리로 착각하지 않게 흐리고 작게, "N명"으로 표시한다
+            className={
+              item.itemType === 'SEAT_FEE'
+                ? 'flex items-center gap-3 text-sm leading-[1.2] font-medium tracking-[-0.04em] text-neutral-400'
+                : 'flex items-center gap-3 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900'
+            }
           >
             <span>{item.menuName}</span>
-            <span>{item.qty}</span>
+            <span>{item.itemType === 'SEAT_FEE' ? `${item.qty}명` : item.qty}</span>
           </li>
         ))}
       </ul>

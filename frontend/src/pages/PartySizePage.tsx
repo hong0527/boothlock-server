@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { customerApiFetch } from '../lib/customerApiFetch'
 import { setSessionPartySize } from '../lib/customerSession'
 
@@ -101,6 +101,8 @@ const PERSON_DECOR = [
 
 export default function PartySizePage() {
   const navigate = useNavigate()
+  // 주문 확인 화면에서 PARTY_SIZE_REQUIRED로 넘어온 경우 — 인원을 고른 뒤 장바구니를 그대로 들고 주문 확인으로 돌아간다
+  const returnTo = (useLocation().state as { returnTo?: string } | null)?.returnTo ?? '/order'
   const [partySize, setPartySize] = useState(2)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -122,7 +124,7 @@ export default function PartySizePage() {
         return
       }
       setSessionPartySize(partySize)
-      navigate('/order', { replace: true })
+      navigate(returnTo, { replace: true })
     } catch {
       setError('인원수를 저장하지 못했어요. 네트워크 상태를 확인해주세요.')
     } finally {

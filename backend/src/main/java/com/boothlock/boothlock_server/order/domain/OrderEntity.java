@@ -210,6 +210,11 @@ public class OrderEntity {
             throw new InvalidStateException("항목을 수정할 수 없는 주문 상태입니다.");
         }
         requireEditableItem(itemId).cancel();
+        // 메뉴가 하나도 안 남으면 자릿세도 함께 취소한다 — 음식 없는 "자릿세만 있는 접수 주문"이 주방 대기열에 남지 않게.
+        // 주문은 호출자가 CANCELED로 넘기고, 취소된 주문의 자릿세는 청구된 것으로 보지 않으므로 다음 주문에 다시 붙는다
+        if (!hasRemainingMenuItems()) {
+            items.stream().filter(item -> !item.isCanceled()).forEach(OrderItemEntity::cancel);
+        }
         recalculateTotal();
         return !hasRemainingItems();
     }
@@ -217,6 +222,27 @@ public class OrderEntity {
     /** 취소되지 않은 항목이 하나라도 남아 있나 */
     public boolean hasRemainingItems() {
         return items.stream().anyMatch(item -> !item.isCanceled());
+    }
+
+    /** 취소되지 않은 메뉴(MENU) 항목이 남아 있나 — 자릿세만 남은 주문은 실질적으로 빈 주문이다 */
+    public boolean hasRemainingMenuItems() {
+        return items.stream().anyMatch(item -> !item.isCanceled() && item.getItemType() == OrderItemType.MENU);
+    }
+
+    /** 취소되지 않은 자릿세 항목이 있나 */
+    public boolean hasLiveSeatFee() {
+        return items.stream().anyMatch(item -> !item.isCanceled() && item.getItemType() == OrderItemType.SEAT_FEE);
+    }
+
+    /**
+     * 자릿세 항목을 빼고 합계를 다시 계산한다 — 취소된 주문을 되돌릴 때, 그 사이 같은 세션의 다른 주문에 자릿세가
+     * 이미 다시 붙었으면(취소된 주문의 자릿세는 청구된 것으로 안 보므로) 되살린 주문의 자릿세까지 살아나 이중 청구가 된다
+     */
+    public void dropSeatFee() {
+        items.stream()
+                .filter(item -> !item.isCanceled() && item.getItemType() == OrderItemType.SEAT_FEE)
+                .forEach(OrderItemEntity::cancel);
+        recalculateTotal();
     }
 
     /**
@@ -231,7 +257,7 @@ public class OrderEntity {
         if (status != OrderStatus.CANCELED && status != OrderStatus.DONE) {
             throw new InvalidStateException("취소되거나 완료된 주문만 되돌릴 수 있습니다.");
         }
-        if (!hasRemainingItems()) {
+        if (!hasRemainingMenuItems()) {
             throw new InvalidStateException("모든 항목이 취소된 주문은 복구할 수 없습니다.");
         }
         this.status = OrderStatus.RECEIVED;

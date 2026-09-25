@@ -171,6 +171,12 @@ public class DashboardOrderActionService {
         StaffAccountEntity staff = authenticate(authorization);
         Long boothId = staff.getBooth().getId();
         OrderEntity order = requireExistingForUpdate(orderId, boothId);
+        // 취소된 자릿세 주문을 되살리는데 그 사이 다음 주문에 자릿세가 다시 붙었다면, 되살린 쪽 자릿세는 뺀다(이중 청구 방지).
+        // 되살리기 전에 본다 — 이 주문은 아직 CANCELED라 조회에서 빠지므로 "다른 주문의 자릿세"만 센다
+        if (order.getStatus() == OrderStatus.CANCELED && order.getSessionId() != null && order.hasLiveSeatFee()
+                && orderRepository.existsChargedSeatFee(order.getSessionId())) {
+            order.dropSeatFee();
+        }
         order.restore();
         return mapper.toOrderSummary(order);
     }

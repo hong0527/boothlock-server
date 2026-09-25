@@ -85,12 +85,12 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
 
     /**
      * 자릿세 판정(명세서 밖, 파일럿 전용) — 이 세션에 이미 청구된 자릿세가 있는지. 취소(CANCELED)된 주문에 붙은 자릿세는
-     * 청구된 것으로 보지 않는다 — 손님이 자릿세가 붙은 첫 주문을 취소하면 다음 주문에 다시 붙어야 한다.
+     * 청구된 것으로 보지 않는다(개별 취소된 자릿세 항목도 마찬가지) — 손님이 자릿세가 붙은 첫 주문을 취소하면 다음 주문에 다시 붙어야 한다.
      * 반드시 OrderWriter.save 안, 세션 행 잠금(touchIfSessionActive) 뒤에 부른다. 잠금 없이 보면 같은 테이블 폰 두 대가
      * 동시에 첫 주문을 넣을 때 둘 다 "없음"을 보고 자릿세가 두 번 붙는다(로컬 MySQL 8.0에서 10회 중 10회 재현).
      */
     @Query("select count(o) > 0 from OrderEntity o join o.items i "
-            + "where o.sessionId = :sessionId and o.status <> :canceled and i.itemType = :seatFee")
+            + "where o.sessionId = :sessionId and o.status <> :canceled and i.itemType = :seatFee and i.canceled = false")
     boolean existsChargedSeatFee(@Param("sessionId") Long sessionId,
                                  @Param("canceled") OrderStatus canceled,
                                  @Param("seatFee") OrderItemType seatFee);
