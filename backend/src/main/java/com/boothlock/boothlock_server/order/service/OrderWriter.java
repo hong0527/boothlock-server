@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -20,6 +21,9 @@ import java.util.List;
  */
 @Component
 public class OrderWriter {
+
+    /** 자릿세(명세서 밖, 파일럿 전용) — 1인당 금액. 인원수를 곱해 하나의 항목으로 붙인다 */
+    public static final int SEAT_FEE_PER_PERSON = 3000;
 
     private final OrderRepository orderRepository;
     private  final OrderNumberingService numberingService;
@@ -41,22 +45,42 @@ public class OrderWriter {
                 && orderRepository.touchIfSessionActive(spec.sessionId(), spec.createdAt()) == 0) {
             throw new SessionExpiredException();
         }
+        // 자릿세는 세션 행을 잠근 뒤에 판정한다 — 같은 세션의 다른 주문 저장은 위 조건부 UPDATE에서 줄을 서므로,
+        // 앞 주문이 커밋된 뒤에 여기를 지나 그 주문의 자릿세를 본다(READ COMMITTED). 판정을 잠금 밖에서 하면 이중 부과된다
+        List<OrderItemEntity> items = new ArrayList<>(spec.items());
+        int totalAmount = spec.totalAmount();
+        Integer partySize = spec.seatFeePartySize();
+        if (partySize != null && partySize > 0 && spec.sessionId() != null
+                && !orderRepository.existsChargedSeatFee(spec.sessionId())) {
+            items.add(OrderItemEntity.seatFee(SEAT_FEE_PER_PERSON, partySize));
+            totalAmount += SEAT_FEE_PER_PERSON * partySize;
+        }
         LocalDate businessDate = numberingService.businessDateOf(spec.createdAt());
         int orderSeq = numberingService.nextSeq(spec.boothId(), businessDate);
         OrderEntity order = new OrderEntity(
                 spec.boothId(), spec.sessionId(), spec.label() + "-" + orderSeq, businessDate,
-                orderSeq, spec.idempotencyKey(), spec.totalAmount(), spec.manual(),
+                orderSeq, spec.idempotencyKey(), totalAmount, spec.manual(),
                 spec.tableLabel(), spec.createdAt());
-        spec.items().forEach(order::addItem);
+        items.forEach(order::addItem);
         return orderRepository.saveAndFlush(order);
 
     }
 
 
-    /** 저장에 필요한 값 묶음 — label은 정규화본(orderNo용), tableLabel은 원본 스냅샷(O10 표시용). manual: O14 수기 주문이면 true */
+    /**
+     * 저장에 필요한 값 묶음 — label은 정규화본(orderNo용), tableLabel은 원본 스냅샷(O10 표시용). manual: O14 수기 주문이면 true.
+     * seatFeePartySize: 손님 주문(C3)의 세션 인원수 — 이 세션에 청구된 자릿세가 없으면 save가 자릿세 항목을 붙인다. null이면 안 붙인다
+     */
     public record OrderSpec(Long boothId, Long sessionId, String label, String tableLabel,
                             String idempotencyKey, int totalAmount, List<OrderItemEntity> items,
-                            LocalDateTime createdAt, boolean manual) {
+                            LocalDateTime createdAt, boolean manual, Integer seatFeePartySize) {
+
+        /** 자릿세와 무관한 주문(수기 주문 O14 등) */
+        public OrderSpec(Long boothId, Long sessionId, String label, String tableLabel,
+                         String idempotencyKey, int totalAmount, List<OrderItemEntity> items,
+                         LocalDateTime createdAt, boolean manual) {
+            this(boothId, sessionId, label, tableLabel, idempotencyKey, totalAmount, items, createdAt, manual, null);
+        }
     }
 
 }

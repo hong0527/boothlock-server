@@ -4,6 +4,7 @@ import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
+import com.boothlock.boothlock_server.order.domain.OrderItemType;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 
 import jakarta.persistence.LockModeType;
@@ -83,12 +84,20 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     long countBySessionIdAndStatusAndPaymentStatus(Long sessionId, OrderStatus status, PaymentStatus paymentStatus);
 
     /**
-     * 자릿세 판정(명세서 밖, 파일럿 전용) — 이 세션의 첫 주문인지 확인한다. 잠금 없이 확인한다: 같은 세션에서
-     * 진짜 동시에 서로 다른 첫 주문 두 개가 밀리초 단위로 겹치는 경우에만 자릿세가 중복 부과될 수 있는 좁은 창이 있으나,
-     * 이 코드베이스의 다른 동시성 처리 수준(멱등키는 "같은 요청 재시도"만 막지 다른 카트 두 개는 안 막음)과 같은
-     * 트레이드오프로 파일럿 규모에서 받아들인다 (OrderCreateService.create() 참고)
+     * 자릿세 판정(명세서 밖, 파일럿 전용) — 이 세션에 이미 청구된 자릿세가 있는지. 취소(CANCELED)된 주문에 붙은 자릿세는
+     * 청구된 것으로 보지 않는다 — 손님이 자릿세가 붙은 첫 주문을 취소하면 다음 주문에 다시 붙어야 한다.
+     * 반드시 OrderWriter.save 안, 세션 행 잠금(touchIfSessionActive) 뒤에 부른다. 잠금 없이 보면 같은 테이블 폰 두 대가
+     * 동시에 첫 주문을 넣을 때 둘 다 "없음"을 보고 자릿세가 두 번 붙는다(로컬 MySQL 8.0에서 10회 중 10회 재현).
      */
-    boolean existsBySessionId(Long sessionId);
+    @Query("select count(o) > 0 from OrderEntity o join o.items i "
+            + "where o.sessionId = :sessionId and o.status <> :canceled and i.itemType = :seatFee")
+    boolean existsChargedSeatFee(@Param("sessionId") Long sessionId,
+                                 @Param("canceled") OrderStatus canceled,
+                                 @Param("seatFee") OrderItemType seatFee);
+
+    default boolean existsChargedSeatFee(Long sessionId) {
+        return existsChargedSeatFee(sessionId, OrderStatus.CANCELED, OrderItemType.SEAT_FEE);
+    }
 
     /** C4 내 주문 조회 — 최신순 (동시각 대비 id 보조 정렬). EntityGraph: 폴링 N+1 방지 — items를 조인으로 한 번에 */
     @EntityGraph(attributePaths = "items")
