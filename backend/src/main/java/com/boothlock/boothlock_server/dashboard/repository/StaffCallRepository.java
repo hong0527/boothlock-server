@@ -1,5 +1,6 @@
 package com.boothlock.boothlock_server.dashboard.repository;
 
+import com.boothlock.boothlock_server.dashboard.domain.CallReason;
 import com.boothlock.boothlock_server.dashboard.domain.StaffCallEntity;
 
 import org.springframework.data.jpa.repository.EntityGraph;
@@ -28,6 +29,10 @@ public interface StaffCallRepository extends JpaRepository<StaffCallEntity, Long
             """)
     Optional<StaffCallEntity> findByIdAndBoothId(@Param("callId") Long callId, @Param("boothId") Long boothId);
 
-    /** C6 30초 재호출 제한 — 같은 세션의 가장 최근 호출 1건 (사유 무관) */
-    Optional<StaffCallEntity> findFirstBySession_IdOrderByCreatedAtDesc(Long sessionId);
+    /**
+     * C6 30초 재호출 제한 — 같은 세션·같은 사유의 가장 최근 호출 1건 (v0.6.11부터 사유별 독립).
+     * PAYMENT를 일반 호출(HELP·WATER·ETC)과 분리하려고 사유를 조건에 넣었다 — 그 결과 일반 호출끼리도
+     * 서로 독립된 쿨다운을 갖게 됐다(예: HELP 직후 WATER 호출도 막히지 않는다). 명세서 C6도 이 규칙으로 갱신했다
+     */
+    Optional<StaffCallEntity> findFirstBySession_IdAndReasonOrderByCreatedAtDesc(Long sessionId, CallReason reason);
 }

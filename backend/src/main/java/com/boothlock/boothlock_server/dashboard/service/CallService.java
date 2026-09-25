@@ -54,7 +54,7 @@ public class CallService {
         }
 
         LocalDateTime now = LocalDateTime.now(KST);
-        staffCallRepository.findFirstBySession_IdOrderByCreatedAtDesc(sessionId)
+        staffCallRepository.findFirstBySession_IdAndReasonOrderByCreatedAtDesc(sessionId, request.reason())
                 .ifPresent(last -> {
                     Duration elapsed = Duration.between(last.getCreatedAt(), now);
                     if (elapsed.compareTo(COOLDOWN) < 0) {

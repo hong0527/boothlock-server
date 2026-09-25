@@ -30,6 +30,7 @@
 | v0.6.7 | 2026-09-23 | **O22b 신설(명세서 밖, 파일럿 전용)** — 2026-09-23 실제 부스 운영자 시연 피드백. 35~40개 테이블 파일럿 규모에서 드래그앤드롭 대신 운영자가 행/열 숫자를 직접 입력하는 그리드 좌표(`gridRow`/`gridCol`, 1~50, 중복 배치 거부)를 먼저 도입 — O22(`posX`/`posY`, px 드래그)는 그대로 두고 별개 필드/엔드포인트로 추가(드래그앤드롭은 파일럿 이후 과제). `TableStatusResponse`에 `gridRow`/`gridCol` 필드 추가(O3·O22·O22b 공통) |
 | v0.6.9 | 2026-09-24 | **인원 선택·자릿세 확정·구현(명세서 밖, 파일럿 전용)** — 2026-09-24 운영자 시연 피드백, §확정 필요 항목 3번(보류) 반전. `TableSessionEntity.partySize` 신설, 신규 `PATCH /api/v1/table-sessions/party-size`(1~20). 서버가 세션의 첫 주문에만 1인당 3,000원(`itemType: "SEAT_FEE"`, `menuId: null`)을 items에 자동 추가하고 totalAmount에 더한다. `OrderItemEntity.itemType`(MENU/SEAT_FEE) 신설, `menuId` nullable로 완화. O23/O23b는 SEAT_FEE 항목을 404로 거부(`OrderEntity.requireEditableItem`). 환불(O13·O21)·정산(O19)은 항목/주문 단위로 이미 동작해 코드 변경 없이 자동 반영됨. 손님 플로우: C1 직후(재스캔 복원 제외) `/party-size`를 다시 거치도록 되돌림(PR #62의 skip 반전) |
 | v0.6.8 | 2026-09-24 | **축제 대비 백엔드 방어 5건.** ① §1.2 유휴 세션 토큰을 인증 단계에서 `410` — 단 현재 영업일 미결제가 있으면 v0.6대로 통과(폴링이 유휴 세션을 되살려 다음 손님에게 넘어가던 문제) ② O14 `Idempotency-Key` 헤더(선택) ③ O6 `requireSettled` 쿼리 + `409 CHECKOUT_UNPAID_REMAINS` ④ O9 디코딩 서브샘플링·업로드 직렬화 + `503 UPLOAD_BUSY` ⑤ O10 `activeSessionOnly=true`는 `businessDate` 생략 시 영업일로 거르지 않음(O24 대상과 같은 범위) |
+| v0.6.11 | 2026-09-26 | **C6 직원호출에 `PAYMENT` 사유 신설(명세서 밖, 파일럿 전용) — 결제확인 전용 호출 분리.** 2026-09-23 운영자 시연 피드백 "직원호출 버튼 분리" 항목 선반영(백엔드만, 프론트 버튼 연동은 별도 PR). 쿨다운 판정을 세션 단독 키에서 `(세션, 사유)` 키로 바꿔 **사유별 독립 쿨다운**으로 전환 — `PAYMENT`를 일반 호출과 분리하려는 목적이었지만 HELP·WATER·ETC 서로도 독립된 쿨다운을 갖게 됐다(기존 "사유가 달라도 같은 쿨다운" 규칙 폐기). DB `chk_call_reason` CHECK 제약에 `PAYMENT` 추가(`schema-mysql8.sql`은 참고 자료, 실배포는 H2 `ddl-auto=update`라 마이그레이션 불요) |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -541,14 +542,15 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 
 | 필드 | 타입 | 필수 | 값 |
 |---|---|---|---|
-| reason | string | ✅ | `HELP` / `WATER` / `ETC`. 누락·모르는 값 `400` |
+| reason | string | ✅ | `HELP` / `WATER` / `ETC` / `PAYMENT`(v0.6.11). 누락·모르는 값 `400` |
 
 **Response 201**: `{ "callId": 7, "reason": "HELP", "createdAt": "2026-09-15T18:31:00+09:00" }`
 
 **규칙**
 - 호출도 세션 활동으로 기록된다(인증 계층 `touchIfActive`)
 - 세션 행을 `FOR UPDATE`로 잠근 뒤 `refresh`로 최신 상태를 다시 읽어 종료 여부를 판정한다 — 같은 요청에서 먼저 올라온 옛 사본이 방금 커밋된 퇴실을 가리지 않게 (§7-24)
-- 같은 세션 30초 내 재호출 → `429 CALL_COOLDOWN`, `details.retryAfterSeconds`(남은 초). 사유가 달라도 같은 쿨다운
+- 같은 세션·같은 사유 30초 내 재호출 → `429 CALL_COOLDOWN`, `details.retryAfterSeconds`(남은 초). **v0.6.11부터 사유별 독립 쿨다운** — 예: `HELP` 직후 `PAYMENT`로 다시 호출해도 막히지 않는다(결제 확인을 일반 호출 쿨다운에 묶어두면 안 됨)
+- `PAYMENT`(v0.6.11 신설) — 손님이 계좌이체 후 입금을 알리는 전용 호출. 프론트 연동(버튼 분리)은 이 PR 밖 — 이번엔 백엔드(enum·쿨다운·DB 제약)만
 
 **Errors**: `400` / `401` / `410` / `429`
 

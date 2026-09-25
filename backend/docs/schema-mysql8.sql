@@ -164,7 +164,7 @@ CREATE TABLE staff_call (
   PRIMARY KEY (id),
   KEY idx_call_session (session_id),
   CONSTRAINT fk_call_session FOREIGN KEY (session_id) REFERENCES table_session (id),
-  CONSTRAINT chk_call_reason CHECK (reason IN ('HELP','WATER','ETC'))
+  CONSTRAINT chk_call_reason CHECK (reason IN ('HELP','WATER','ETC','PAYMENT'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE feedback (

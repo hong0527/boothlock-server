@@ -222,15 +222,35 @@ class CallApiTests {
                         .content("{\"reason\":\"HELP\"}"))
                 .andExpect(status().isCreated());
 
+        // 같은 사유(HELP)로 재호출 — v0.6.11부터 쿨다운은 사유별이라 "같은 사유"로 고정해야 이 테스트가 의미가 있다
         mockMvc.perform(post("/api/v1/calls")
                         .header("X-Session-Token", SESSION_TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"reason\":\"WATER\"}"))
+                        .content("{\"reason\":\"HELP\"}"))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.error.code").value("CALL_COOLDOWN"))
                 .andExpect(jsonPath("$.error.details.retryAfterSeconds").exists());
 
         assertEquals(1, staffCallRepository.count());
+    }
+
+    @Test
+    void cooldownIsPerReasonNotJustPerSession() throws Exception {
+        // v0.6.11 — HELP 쿨다운 중이어도 PAYMENT(결제확인)는 막히면 안 된다. 방금 입금을 알렸는데 다른 이유로
+        // 최근 호출했다고 눌러도 반응이 없으면, 승인 대기 중인 손님이 계속 기다리게 된다
+        mockMvc.perform(post("/api/v1/calls")
+                        .header("X-Session-Token", SESSION_TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"HELP\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/v1/calls")
+                        .header("X-Session-Token", SESSION_TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"PAYMENT\"}"))
+                .andExpect(status().isCreated());
+
+        assertEquals(2, staffCallRepository.count());
     }
 
     @Test
