@@ -248,7 +248,7 @@ class OrderItemEditApiTests {
     void cancelingOneItemHidesItEverywhereAndKeepsTotalsConsistent() throws Exception {
         String idemKey = UUID.randomUUID().toString();
         Long sessionId = fx.activeSessionId();
-        OrderCreateResponse created = fx.customerOrder(sessionId, List.of(item(fx.kimchiId, 2), item(fx.colaId, 1)), idemKey);
+        OrderCreateResponse created = fx.approvedCustomerOrder(sessionId, List.of(item(fx.kimchiId, 2), item(fx.colaId, 1)), idemKey);
         Long orderId = created.orderId();
         Long kimchiItem = fx.itemIdOf(orderId, fx.kimchiId);
 
@@ -380,6 +380,7 @@ class OrderItemEditApiTests {
         Long orderId = orderCreateService.create(fx.booth.getId(), sessionId, fx.table.getLabel(),
                 UUID.randomUUID().toString(), new OrderCreateRequest(List.of(item(fx.kimchiId, 1))), 2)
                 .response().orderId();
+        fx.orderRepository.approve(orderId, fx.booth.getId());   // 항목 수정 409가 승인대기 때문이 아니라 자릿세 항목이라 나오게(404)
         Long seatFeeItemId = fx.reload(orderId).getItems().stream()
                 .filter(i -> i.getItemType() == OrderItemType.SEAT_FEE)
                 .findFirst().orElseThrow().getId();

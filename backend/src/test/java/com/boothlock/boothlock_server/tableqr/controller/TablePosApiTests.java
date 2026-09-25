@@ -146,6 +146,15 @@ class TablePosApiTests {
                 orderSeq, "idem-pos-" + orderSeq, 8000, false, now()));
     }
 
+    /** O28 승인대기(v0.6.10) 주문 — 손님 주문(C3)이 아직 운영자 승인을 못 받은 상태를 직접 만든다 */
+    private OrderEntity pendingApprovalOrder(BoothEntity owner, Long sessionId) {
+        orderSeq++;
+        OrderEntity order = new OrderEntity(owner.getId(), sessionId, "X" + orderSeq, LocalDate.of(2020, 1, 1),
+                orderSeq, "idem-pos-" + orderSeq, 8000, false, now());
+        order.startPendingApproval();
+        return orderRepository.save(order);
+    }
+
     private void canceledUnpaidOrder(BoothEntity owner, Long sessionId) {
         OrderEntity order = unpaidOrder(owner, sessionId);
         assertEquals(1, orderRepository.cancelByStaff(order.getId(), owner.getId(), "테스트", "admin", now()));
@@ -482,6 +491,37 @@ class TablePosApiTests {
         assertEquals(OrderStatus.RECEIVED, orderRepository.findById(foreignReceived.getId()).orElseThrow().getStatus());
         assertEquals(1, orderRepository.findAll().stream().filter(o -> o.getStatus() == OrderStatus.CANCELED).count());
         assertEquals(TableStatus.EMPTY, reloadTable(table.getId()).getStatus());
+    }
+
+    /**
+     * 퇴실하면 그 손님의 남은 승인대기(O28) 주문은 자동 거절(CANCELED)된다 — 승인대기는 UnpaidOrderRule에서 빠져
+     * completedOrderCount(RECEIVED만 대상)로도 안 잡히므로, 그대로 두면 손님은 떠났는데 "승인 대기" 탭에 영영 남는다.
+     * 앞 손님(이미 종료된 세션)·다른 부스의 승인대기는 건드리지 않는다
+     */
+    @Test
+    void o6AutoRejectsPendingApprovalOrdersOfTheEndingSessionOnly() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity past = endedSession(table, "sess-past");
+        OrderEntity pastPending = pendingApprovalOrder(booth, past.getId());
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity pending = pendingApprovalOrder(booth, session.getId());
+        TableEntity foreign = table(otherBooth, "B-1", true);
+        TableSessionEntity foreignSession = openSession(foreign, "sess-b1", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity foreignPending = pendingApprovalOrder(otherBooth, foreignSession.getId());
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unpaidWarning").value(false))       // 승인대기는 미결제 정의에서 빠진다
+                .andExpect(jsonPath("$.warning").doesNotExist())
+                .andExpect(jsonPath("$.completedOrderCount").value(0));    // RECEIVED가 아니라 자동완료 대상도 아니다
+
+        OrderEntity reloadedPending = orderRepository.findById(pending.getId()).orElseThrow();
+        assertEquals(OrderStatus.CANCELED, reloadedPending.getStatus());
+        assertEquals("테이블 퇴실로 자동 거절", reloadedPending.getCancelReason());
+        assertEquals("SYSTEM", reloadedPending.getCanceledBy());
+        assertEquals(OrderStatus.PENDING_APPROVAL, orderRepository.findById(pastPending.getId()).orElseThrow().getStatus());
+        assertEquals(OrderStatus.PENDING_APPROVAL, orderRepository.findById(foreignPending.getId()).orElseThrow().getStatus());
     }
 
     /** 유휴로 만료된("정리 필요") 세션도 퇴실이 종료하므로 그 접수 주문도 완료로 넘어간다. 멱등 재호출은 0건 */

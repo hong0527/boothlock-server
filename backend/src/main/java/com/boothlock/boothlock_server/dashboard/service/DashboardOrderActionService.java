@@ -67,6 +67,24 @@ public class DashboardOrderActionService {
         return mapper.toOrderSummary(requireExistingForUpdate(orderId, boothId));
     }
 
+    /**
+     * O28 주문 승인(v0.6.10) — PENDING_APPROVAL→RECEIVED. 거절은 별도 엔드포인트 없이 기존 O13(cancelByStaff)을
+     * 그대로 쓴다 — cancelByStaff의 조건부 UPDATE가 이미 "CANCELED가 아닌 모든 상태"를 대상으로 하므로
+     * PENDING_APPROVAL도 그대로 취소된다(Figma "주문현황-승인대기" 641:1362의 거절 버튼).
+     */
+    @Transactional
+    public DashboardResponse.OrderSummary approve(String authorization, Long orderId) {
+        StaffAccountEntity staff = authenticate(authorization);
+        Long boothId = staff.getBooth().getId();
+
+        int updated = orderRepository.approve(orderId, boothId);
+        if (updated == 0) {
+            requireExistingForUpdate(orderId, boothId);   // 없으면 여기서 404, 있으면 승인대기가 아닌 상태라 409
+            throw new InvalidStateException("승인할 수 없는 주문 상태입니다.");
+        }
+        return mapper.toOrderSummary(requireExistingForUpdate(orderId, boothId));
+    }
+
     /** O12 완료 처리 — RECEIVED→DONE. 결제 여부는 상관하지 않는다 (명세서 O12) */
     @Transactional
     public DashboardResponse.OrderSummary complete(String authorization, Long orderId) {

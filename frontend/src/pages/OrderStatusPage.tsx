@@ -7,6 +7,7 @@ import { orderedForTab } from '../lib/dashboardOrders'
 import { createPollGuard } from '../lib/pollGuard'
 import {
   ackCall,
+  approveOrder as approveOrderRequest,
   cancelOrder as cancelOrderRequest,
   completeOrder as completeOrderRequest,
   refundDone as refundDoneRequest,
@@ -23,7 +24,9 @@ import {
 } from '../types/dashboard'
 import { onResume } from '../lib/onResume'
 
+// O28(v0.6.10) — 승인대기를 맨 앞에 둔다(Figma "주문현황-승인대기" 641:1362 탭 순서)
 const TABS: { status: OrderStatus; label: string }[] = [
+  { status: 'PENDING_APPROVAL', label: '승인 대기' },
   { status: 'RECEIVED', label: '진행' },
   { status: 'DONE', label: '완료' },
   { status: 'CANCELED', label: '취소' },
@@ -44,9 +47,12 @@ async function fetchDashboard(status: OrderStatus): Promise<DashboardResponse> {
 export default function OrderStatusPage() {
   // 환불 완료는 ADMIN 전용(백엔드 403) — STAFF에게는 눌러도 안 되는 버튼을 보여주지 않는다
   const isAdmin = getStaff()?.role === 'ADMIN'
-  const [ordersByStatus, setOrdersByStatus] = useState<OrdersByStatus>({ RECEIVED: [], DONE: [], CANCELED: [] })
+  const [ordersByStatus, setOrdersByStatus] = useState<OrdersByStatus>({
+    PENDING_APPROVAL: [], RECEIVED: [], DONE: [], CANCELED: [],
+  })
   const [calls, setCalls] = useState<CallSummary[]>([])
-  const [activeStatus, setActiveStatus] = useState<OrderStatus>('RECEIVED')
+  // 기본 진입 탭은 승인대기 — 새로 들어온 주문 중 운영자가 지금 당장 반응해야 할 것부터 보여준다 (Figma 641:1362)
+  const [activeStatus, setActiveStatus] = useState<OrderStatus>('PENDING_APPROVAL')
   const [error, setError] = useState<string | null>(null)
   // 버튼 작업(완료·취소·복구·호출확인) 오류는 따로 둔다 — error는 폴링이 성공할 때마다 지워서, 한데 두면
   // "이미 다른 상태로 바뀌었어요" 같은 안내가 5초 안에 사라져 바쁜 운영자가 못 본다. 다음 작업이 성공하면 지운다
@@ -69,10 +75,14 @@ export default function OrderStatusPage() {
     const runId = pollGuard.current.begin(skipIfBusy)
     if (runId === null) return
     try {
-      const [received, done, canceled] = await Promise.all(TABS.map((tab) => fetchDashboard(tab.status)))
+      const results = await Promise.all(TABS.map((tab) => fetchDashboard(tab.status)))
       if (!pollGuard.current.isLatest(runId)) return
-      setOrdersByStatus({ RECEIVED: received.orders, DONE: done.orders, CANCELED: canceled.orders })
-      setCalls(received.calls ?? [])
+      setOrdersByStatus(
+        Object.fromEntries(TABS.map((tab, i) => [tab.status, results[i].orders])) as OrdersByStatus,
+      )
+      // calls(미확인 호출)는 상태 필터와 무관하게 부스 전체가 실려 온다 — 어느 응답에서 읽어도 같다. 승인대기가
+      // 첫 탭이라 그 응답에서 읽는다(예전엔 RECEIVED 응답 기준이었다)
+      setCalls(results[0].calls ?? [])
       setError(null)
     } catch (err) {
       if (!pollGuard.current.isLatest(runId)) return
@@ -93,15 +103,11 @@ export default function OrderStatusPage() {
   }, [refetchAll])
 
   const counts = useMemo(
-    () => ({
-      RECEIVED: ordersByStatus.RECEIVED.length,
-      DONE: ordersByStatus.DONE.length,
-      CANCELED: ordersByStatus.CANCELED.length,
-    }),
+    () => Object.fromEntries(TABS.map((tab) => [tab.status, ordersByStatus[tab.status].length])) as Record<OrderStatus, number>,
     [ordersByStatus],
   )
 
-  // 탭별 표시 순서 — 진행 탭만 먼저 들어온 주문이 위로 온다. 근거는 orderedForTab 주석 참고
+  // 탭별 표시 순서 — 승인대기·진행 탭만 먼저 들어온 주문이 위로 온다. 근거는 orderedForTab 주석 참고
   const visibleOrders = useMemo(
     () => orderedForTab(activeStatus, ordersByStatus[activeStatus]),
     [ordersByStatus, activeStatus],
@@ -159,6 +165,17 @@ export default function OrderStatusPage() {
       pendingRef.current.delete(orderId)
       setPendingOrderIds(new Set(pendingRef.current))
     }
+  }
+
+  // O28 승인 — 완료 처리와 마찬가지로 되돌릴 방법(주문 자체를 취소)이 있으니 확인을 묻지 않는다
+  const approveOrder = (orderId: number) =>
+    runOrderAction(orderId, () => approveOrderRequest(orderId), '주문을 승인 처리하지 못했어요')
+
+  // 거절은 손님에게 바로 영향이 가는 취소와 같은 무게라 취소와 같은 방식으로 한 번 더 묻는다.
+  // 별도 API 없이 기존 취소(O13)를 사유만 다르게 재사용한다(백엔드 DashboardOrderActionService.approve 주석 참조)
+  const rejectOrder = (orderId: number) => {
+    if (!window.confirm('이 주문을 거절할까요?')) return
+    return runOrderAction(orderId, () => cancelOrderRequest(orderId, '주문 거절'), '주문을 거절 처리하지 못했어요')
   }
 
   const completeOrder = (orderId: number) =>
@@ -247,6 +264,8 @@ export default function OrderStatusPage() {
             order={order}
             now={now}
             pending={pendingOrderIds.has(order.orderId)}
+            onApprove={approveOrder}
+            onReject={rejectOrder}
             onComplete={completeOrder}
             onCancel={cancelOrder}
             onRestore={restoreOrder}

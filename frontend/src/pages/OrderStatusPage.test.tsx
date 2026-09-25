@@ -1,7 +1,7 @@
 import { Children, isValidElement, type ReactNode } from 'react'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFetch } from '../lib/apiFetch'
-import { cancelOrder, completeOrder, refundDone, restoreOrder } from '../lib/orderActions'
+import { approveOrder, cancelOrder, completeOrder, refundDone, restoreOrder } from '../lib/orderActions'
 import OrderStatusPage from './OrderStatusPage'
 import type { OrderStatus, OrderSummary } from '../types/dashboard'
 
@@ -32,6 +32,7 @@ vi.mock('react', async () => ({
 vi.mock('../lib/apiFetch', () => ({ apiFetch: vi.fn() }))
 vi.mock('../lib/orderActions', () => ({
   ackCall: vi.fn(),
+  approveOrder: vi.fn(),
   cancelOrder: vi.fn(),
   completeOrder: vi.fn(),
   refundDone: vi.fn(),
@@ -41,6 +42,8 @@ vi.mock('../lib/orderActions', () => ({
 type Props = {
   children?: ReactNode
   onClick?: () => void
+  onApprove?: (orderId: number) => void
+  onReject?: (orderId: number) => void
   onCancel?: (orderId: number) => void
   onComplete?: (orderId: number) => void
   onRestore?: (orderId: number) => void
@@ -88,6 +91,10 @@ function order(orderNo: string, createdAt: string, status: OrderStatus): OrderSu
 }
 
 // 서버(O10)가 주는 순서: 접수 시각 최신 먼저
+const PENDING_APPROVAL = [
+  order('P-2', '2026-09-21T18:50:00', 'PENDING_APPROVAL'),
+  order('P-1', '2026-09-21T18:40:00', 'PENDING_APPROVAL'),
+]
 const RECEIVED = [
   order('R-3', '2026-09-21T18:30:00', 'RECEIVED'),
   order('R-2', '2026-09-21T18:20:00', 'RECEIVED'),
@@ -105,12 +112,17 @@ const CANCELED = [
 let confirmAnswer = true
 let confirmMessages: string[]
 
+function ordersForStatus(status: string) {
+  if (status === 'PENDING_APPROVAL') return PENDING_APPROVAL
+  if (status === 'DONE') return DONE
+  if (status === 'CANCELED') return CANCELED
+  return RECEIVED
+}
+
 async function load() {
   vi.mocked(apiFetch).mockImplementation(async (path) => {
-    const status = String(path).includes('status=DONE') ? 'DONE'
-      : String(path).includes('status=CANCELED') ? 'CANCELED' : 'RECEIVED'
-    const orders = status === 'DONE' ? DONE : status === 'CANCELED' ? CANCELED : RECEIVED
-    return new Response(JSON.stringify({ orders, calls: [] }), { status: 200 })
+    const match = String(path).match(/status=([A-Z_]+)/)
+    return new Response(JSON.stringify({ orders: ordersForStatus(match?.[1] ?? ''), calls: [] }), { status: 200 })
   })
   render()
   await vi.waitFor(() => expect(cards().length).toBeGreaterThan(0))
@@ -142,14 +154,20 @@ beforeEach(() => {
   store.clear()
   vi.clearAllMocks()
   // 액션 목은 기본으로 성공을 돌려준다 — 안 주면 runOrderAction이 undefined.ok를 읽고 터진다
-  for (const action of [cancelOrder, completeOrder, refundDone, restoreOrder]) {
+  for (const action of [approveOrder, cancelOrder, completeOrder, refundDone, restoreOrder]) {
     vi.mocked(action).mockResolvedValue(new Response(null, { status: 200 }))
   }
 })
 
 describe('주문현황 탭 정렬', () => {
-  it('진행 탭은 먼저 들어온 주문을 맨 위에 그린다', async () => {
+  it('기본 진입 탭은 승인대기이고, 먼저 들어온 주문을 맨 위에 그린다 (O28)', async () => {
     await load()
+    expect(renderedOrderNos()).toEqual(['P-1', 'P-2'])
+  })
+
+  it('진행 탭도 먼저 들어온 주문을 맨 위에 그린다', async () => {
+    await load()
+    clickTab('진행')
     expect(renderedOrderNos()).toEqual(['R-1', 'R-2', 'R-3'])
   })
 
@@ -174,6 +192,7 @@ describe('주문현황 탭 정렬', () => {
 
   it('폴링으로 목록이 바뀌면 바뀐 목록을 다시 정렬해 그린다', async () => {
     await load()
+    clickTab('진행')
     const added = [order('R-4', '2026-09-21T18:40:00', 'RECEIVED'), ...RECEIVED]
     vi.mocked(apiFetch).mockImplementation(async (path) => {
       const orders = String(path).includes('status=RECEIVED') ? added : []
@@ -219,6 +238,34 @@ describe('주문 취소 확인 단계', () => {
     await cards()[0].onRestore!(2)
     expect(confirmMessages).toEqual(['이 주문을 진행 상태로 복구할까요?'])
     expect(vi.mocked(restoreOrder)).toHaveBeenCalledWith(2)
+  })
+})
+
+describe('주문 승인·거절 (O28)', () => {
+  it('승인에는 확인을 묻지 않는다', async () => {
+    await load()
+    await cards()[0].onApprove!(1)
+    expect(confirmMessages).toEqual([])
+    expect(vi.mocked(approveOrder)).toHaveBeenCalledWith(1)
+  })
+
+  it('거절을 누르면 먼저 확인을 묻는다', async () => {
+    await load()
+    await cards()[0].onReject!(1)
+    expect(confirmMessages).toEqual(['이 주문을 거절할까요?'])
+  })
+
+  it('거절 확인에서 아니오를 누르면 요청을 보내지 않는다', async () => {
+    await load()
+    confirmAnswer = false
+    cards()[0].onReject!(1)
+    expect(vi.mocked(cancelOrder)).not.toHaveBeenCalled()
+  })
+
+  it('거절을 확인하면 사유를 "주문 거절"로 취소 요청을 보낸다 — 별도 API 없이 O13을 재사용한다', async () => {
+    await load()
+    await cards()[0].onReject!(1)
+    expect(vi.mocked(cancelOrder)).toHaveBeenCalledWith(1, '주문 거절')
   })
 })
 

@@ -61,6 +61,11 @@ public class OrderWriter {
                 spec.boothId(), spec.sessionId(), spec.label() + "-" + orderSeq, businessDate,
                 orderSeq, spec.idempotencyKey(), totalAmount, spec.manual(),
                 spec.tableLabel(), spec.createdAt());
+        // O28 승인대기(v0.6.10) — 손님 주문(C3)만 승인 전까지 대기시킨다. 수기 주문(O14, spec.manual()=true)은
+        // 운영자가 직접 입력한 것이라 스스로 승인한 것과 같아 기본값 RECEIVED를 그대로 둔다
+        if (!spec.manual()) {
+            order.startPendingApproval();
+        }
         items.forEach(order::addItem);
         return orderRepository.saveAndFlush(order);
 

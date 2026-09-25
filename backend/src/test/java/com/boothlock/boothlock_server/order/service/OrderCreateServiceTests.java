@@ -207,7 +207,7 @@ class OrderCreateServiceTests {
         OrderCreateResponse response = result.response();
         assertNotNull(response.orderId());
         assertEquals("A3-1", response.orderNo());                      // 라벨 + 영업일 통산 1번
-        assertEquals(OrderStatus.RECEIVED, response.status());
+        assertEquals(OrderStatus.PENDING_APPROVAL, response.status());  // O28(v0.6.10) — 손님 주문은 승인 전까지 대기
         assertEquals(PaymentStatus.UNPAID, response.paymentStatus());
         assertEquals(21000, response.totalAmount());                   // 8000×2 + 5000×1 — 서버 계산
         assertEquals(2, response.items().size());
@@ -334,7 +334,22 @@ class OrderCreateServiceTests {
             create("idem-" + i, request(3L, 1));
         }
 
-        // 미결제 8건까지 허용 — 9번째는 429 (명세서 C3 4단계)
+        // 미결제 8건까지 허용 — 9번째는 429 (명세서 C3 4단계). 지금 만든 8건은 전부 PENDING_APPROVAL(O28)이다
+        assertThrows(OrderRateLimitedException.class, () -> create("idem-9", request(3L, 1)));
+    }
+
+    @Test
+    void rejectsWhenUnpaidLimitIsReachedAcrossPendingApprovalAndReceivedTogether() {
+        // v0.6.10 회귀 방지 — RECEIVED만 셌다면 운영자가 승인하기 전까지 손님이 상한 없이 계속 주문을 넣을 수 있었다.
+        // 4건을 승인(RECEIVED)해도 나머지 4건(PENDING_APPROVAL)과 합쳐 여전히 8건이라 9번째는 여전히 429여야 한다
+        for (int i = 1; i <= 8; i++) {
+            create("idem-" + i, request(3L, 1));
+        }
+        List<OrderEntity> orders = orderRepository.findAll();
+        for (int i = 0; i < 4; i++) {
+            assertEquals(1, orderRepository.approve(orders.get(i).getId(), boothId));
+        }
+
         assertThrows(OrderRateLimitedException.class, () -> create("idem-9", request(3L, 1)));
     }
 
@@ -568,6 +583,16 @@ class OrderCreateServiceTests {
 
         assertEquals("M-1", response.orderNo());
         assertEquals(16000, response.totalAmount());
+    }
+
+    @Test
+    void manualOrderStartsReceivedNotPendingApproval() {
+        // O28(v0.6.10) — 운영자가 직접 입력한 수기 주문은 이미 스스로 승인한 것과 같아 승인대기를 거치지 않는다.
+        // 손님 주문(C3)만 PENDING_APPROVAL로 시작한다(createsOrderWithServerCalculatedAmount 참조)
+        OrderCreateResponse response = orderCreateService.createManual(
+                boothId, mySession, "A3", TABLE_LABEL, null, List.of(new OrderCreateRequest.OrderItemRequest(3L, 1))).response();
+
+        assertEquals(OrderStatus.RECEIVED, response.status());
     }
 
     // ── 수기 주문 채번 충돌 재시도 (gap "null 키 재조회") ─────────────────

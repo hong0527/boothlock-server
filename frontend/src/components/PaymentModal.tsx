@@ -171,9 +171,11 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       .catch((err) => setMenusError(err instanceof Error ? err.message : '메뉴 목록을 불러오지 못했어요.'))
   }, [])
 
-  // 취소된 주문만 뺀다 — 완료(DONE) 주문도 보인다. 미결제 합계(O24 대상)에 DONE·UNPAID가 들어가므로 목록에도 있어야 합계와 항목이 맞는다.
-  // 미결제 정의는 백엔드 UnpaidOrderRule(RECEIVED·DONE && UNPAID)과 같다 — 완료 처리만 되고 입금 안 된 주문도 미수금
-  const visibleOrders = orders.filter((o) => o.status !== 'CANCELED')
+  // 취소된 주문과 승인대기(O28, v0.6.10)는 뺀다. 완료(DONE) 주문은 보인다 — 미결제 합계(O24 대상)에 DONE·UNPAID가
+  // 들어가므로 목록에도 있어야 합계와 항목이 맞는다(미결제 정의는 백엔드 UnpaidOrderRule과 같다: RECEIVED·DONE && UNPAID).
+  // 승인대기는 운영자가 아직 받아들이지 않은 주문이라 이 테이블의 확정된 주문이 아니다 — 여기 섞이면 운영자가
+  // 승인도 안 한 항목을 결제 대상으로 착각한다. 승인/거절은 주문현황 "승인 대기" 탭에서 한다
+  const visibleOrders = orders.filter((o) => o.status !== 'CANCELED' && o.status !== 'PENDING_APPROVAL')
   // 전체 취소는 접수(RECEIVED) 주문만 — 완료된 주문은 운영자가 주문 현황에서 개별 취소(O13)한다
   const receivedOrders = visibleOrders.filter((o) => o.status === 'RECEIVED')
   const unpaidOrders = visibleOrders.filter(isUnpaid)

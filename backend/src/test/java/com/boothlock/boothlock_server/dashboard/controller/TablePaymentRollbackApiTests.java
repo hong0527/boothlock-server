@@ -52,7 +52,7 @@ class TablePaymentRollbackApiTests {
     @Test
     void failureOnSecondOrderRollsBackFirstOrder() throws Exception {
         Long first = fx.manualOrder(fx.table, fx.kimchiId, 1).orderId();
-        Long second = fx.customerOrder(fx.colaId, 1).orderId();
+        Long second = fx.approvedCustomerOrder(fx.colaId, 1).orderId();
 
         AtomicInteger calls = new AtomicInteger();
         // 리포지토리 스파이는 인터페이스 프록시라 실제 메서드를 부를 수 없다 — 첫 호출은 markPaid와 같은 조건부 UPDATE를

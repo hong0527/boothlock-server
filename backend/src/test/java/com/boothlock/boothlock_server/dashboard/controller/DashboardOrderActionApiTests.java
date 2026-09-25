@@ -46,7 +46,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** O11 입금 확인·O12 완료 처리·O13 운영자 취소 API 테스트 (명세서 O11·O12·O13) */
+/** O11 입금 확인·O12 완료 처리·O13 운영자 취소·O28 주문 승인 API 테스트 (명세서 O11·O12·O13·O28) */
 @SpringBootTest
 @AutoConfigureMockMvc
 class DashboardOrderActionApiTests {
@@ -332,6 +332,70 @@ class DashboardOrderActionApiTests {
                 .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
 
+    // ── O28 주문 승인(v0.6.10) ────────────────────────────────
+
+    @Test
+    void approvesPendingOrder() throws Exception {
+        Long orderId = newOrder(boothId, 40);
+        setOrderStatus(orderId, OrderStatus.PENDING_APPROVAL);
+
+        mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/approve", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RECEIVED"));
+
+        assertEquals(OrderStatus.RECEIVED, orderRepository.findById(orderId).orElseThrow().getStatus());
+    }
+
+    @Test
+    void rejectsApproveOnAlreadyReceivedOrder() throws Exception {
+        Long orderId = newOrder(boothId, 41);   // RECEIVED 그대로(수기 주문처럼 승인대기를 거치지 않은 경우와 동치)
+
+        mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/approve", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+    }
+
+    @Test
+    void rejectsApproveOnCanceledOrder() throws Exception {
+        Long orderId = newOrder(boothId, 42);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/approve", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+    }
+
+    @Test
+    void rejectsApproveForUnknownOrder() throws Exception {
+        mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/approve", 999999L)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void hidesOtherBoothOrderAsNotFoundOnApprove() throws Exception {
+        BoothEntity otherBooth = boothRepository.save(new BoothEntity("다른 부스", "국민은행 5678", null));
+        Long otherOrderId = newOrder(otherBooth.getId(), 1);
+        setOrderStatus(otherOrderId, OrderStatus.PENDING_APPROVAL);
+
+        mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/approve", otherOrderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void rejectsApproveWithoutAuthorization() throws Exception {
+        Long orderId = newOrder(boothId, 43);
+        setOrderStatus(orderId, OrderStatus.PENDING_APPROVAL);
+
+        mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/approve", orderId))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
     // ── O13 운영자 취소 ──────────────────────────────────────
 
     @Test
@@ -378,6 +442,22 @@ class DashboardOrderActionApiTests {
                         .content("{\"reason\":\"손님 요청\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentStatus").value("UNPAID"));
+    }
+
+    @Test
+    void staffCanRejectPendingApprovalOrder() throws Exception {
+        // 거절(v0.6.10)은 별도 엔드포인트 없이 O13을 그대로 쓴다 — cancelByStaff가 이미 "CANCELED가 아닌 모든
+        // 상태"를 대상으로 하므로 PENDING_APPROVAL도 그대로 취소된다(Figma "주문현황-승인대기" 641:1362의 거절 버튼)
+        Long orderId = newOrder(boothId, 44);
+        setOrderStatus(orderId, OrderStatus.PENDING_APPROVAL);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/cancel", orderId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"주문 거절\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELED"))
+                .andExpect(jsonPath("$.cancelReason").value("주문 거절"));
     }
 
     @Test

@@ -73,7 +73,7 @@ class TablePaymentApiTests {
         fx.tableSessionRepository.save(old);
 
         Long manual = fx.manualOrder(fx.table, fx.kimchiId, 2).orderId();      // 16000, 새 세션
-        Long customer = fx.customerOrder(fx.colaId, 1).orderId();              // 5000, 같은 세션
+        Long customer = fx.approvedCustomerOrder(fx.colaId, 1).orderId();      // 5000, 같은 세션
         Long alreadyPaid = fx.customerOrder(fx.kimchiId, 1).orderId();
         jdbcTemplate.update("update orders set payment_status = 'PAID', payment_method = 'CASH', approved_by = 'earlier' where id = ?", alreadyPaid);
         Long canceled = fx.customerOrder(fx.kimchiId, 3).orderId();
@@ -118,7 +118,7 @@ class TablePaymentApiTests {
     @Test
     void rejectsWhenExpectedTotalDiffersAndChangesNothing() throws Exception {
         Long first = fx.manualOrder(fx.table, fx.kimchiId, 2).orderId();   // 16000
-        Long late = fx.customerOrder(fx.colaId, 1).orderId();              // 화면 갱신 전에 들어온 5000
+        Long late = fx.approvedCustomerOrder(fx.colaId, 1).orderId();      // 화면 갱신 전에 들어와 승인까지 끝난 5000
 
         mockMvc.perform(pay(fx.staffToken, fx.table.getId(), 16000, "CASH"))
                 .andExpect(status().isConflict())
