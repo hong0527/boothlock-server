@@ -19,8 +19,9 @@ export default function OrderConfirmPage() {
   const { items, totalAmount, clear } = useCart()
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  // 자릿세 미리보기용 — 이 세션에 이미 청구된 자릿세가 있는지 주문내역(C4)으로 확인한다. 못 불러오면 null(안내 문구로 대신)
-  const [myOrders, setMyOrders] = useState<OrderSummary[] | null>(null)
+  // 자릿세 미리보기용 — 이 세션에 이미 청구된 자릿세가 있는지 주문내역(C4)으로 확인한다. undefined = 확인 중(주문 버튼을 잠깐 막는다 —
+  // 자릿세가 빠진 합계를 보고 누르지 않게), null = 못 불러옴(안내 문구로 대신하고 주문은 막지 않는다)
+  const [myOrders, setMyOrders] = useState<OrderSummary[] | null | undefined>(undefined)
   const partySize = sessionInfo?.partySize
 
   useEffect(() => {
@@ -30,7 +31,8 @@ export default function OrderConfirmPage() {
       .catch(() => setMyOrders(null))
   }, [])
 
-  const seatFee = pendingSeatFee(partySize, myOrders)
+  const previewLoading = myOrders === undefined
+  const seatFee = previewLoading ? 0 : pendingSeatFee(partySize, myOrders)
 
   const handleSubmit = async () => {
     if (loading || items.length === 0) return
@@ -56,7 +58,8 @@ export default function OrderConfirmPage() {
         else if (code === 'ORDER_CLOSED') setError('지금은 주문 접수 시간이 아니에요.')
         else if (code === 'PARTY_SIZE_REQUIRED') {
           // 인원 선택을 건너뛰고 들어온 세션(두 번째 폰·재스캔) — 인원을 고르고 이 화면으로 돌아온다(장바구니는 그대로)
-          navigate('/party-size', { state: { returnTo: '/order-confirm' } })
+          // replace — 돌아왔을 때 뒤로가기가 이 화면을 한 번 더 보여주지 않게
+          navigate('/party-size', { replace: true, state: { returnTo: '/order-confirm' } })
           return
         }
         else if (res.status === 400) {
@@ -134,7 +137,7 @@ export default function OrderConfirmPage() {
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={loading || items.length === 0}
+          disabled={loading || previewLoading || items.length === 0}
           className={`${CUSTOMER_BUTTON_BASE} bg-primary-300 text-heading-3 text-white disabled:opacity-40`}
         >
           {loading ? '주문 중...' : '주문하기'}

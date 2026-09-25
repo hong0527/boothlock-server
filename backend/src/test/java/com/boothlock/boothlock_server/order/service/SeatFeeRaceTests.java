@@ -6,6 +6,7 @@ import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.order.OrderRaceTestFixture;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.OrderItemType;
+import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.order.dto.OrderCreateRequest;
 import com.boothlock.boothlock_server.order.dto.OrderCreateResponse;
 
@@ -147,5 +148,20 @@ class SeatFeeRaceTests {
         dashboardOrderActionService.restore(bearer(fx.staffToken), first.orderId());
 
         assertEquals(1, chargedSeatFees(sessionId), "다른 곳에 자릿세가 없으면 되살린 주문의 자릿세가 그대로 청구된다");
+    }
+
+    @Test
+    void restoringPaidThenCanceledOrderNeverChangesItsAmount() {
+        Long sessionId = fx.openSession();
+        OrderCreateResponse first = order(sessionId);
+        String staff = bearer(fx.staffToken);
+        dashboardOrderActionService.confirmPayment(staff, first.orderId(), PaymentMethod.BANK_TRANSFER);   // 돈을 받았다
+        dashboardOrderActionService.cancelByStaff(staff, first.orderId(), "실수로 취소");                    // REFUND_NEEDED
+        order(sessionId);   // 다음 주문에 자릿세가 다시 붙었다
+
+        dashboardOrderActionService.restore(staff, first.orderId());
+
+        int restoredTotal = fx.tx.execute(st -> fx.orderRepository.findById(first.orderId()).orElseThrow().getTotalAmount());
+        assertEquals(8000 + 3000 * PARTY_SIZE, restoredTotal, "이미 받은 돈이 걸린 주문의 금액은 되돌리기로 바뀌면 안 된다");
     }
 }

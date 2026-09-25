@@ -124,12 +124,12 @@ public class OrderCreateService {
                 sessionId, OrderStatus.RECEIVED, PaymentStatus.UNPAID) >= MAX_UNPAID_ORDERS) {
             throw new OrderRateLimitedException();
         }
-        // 멱등 재요청 뒤에 둔다 — 이미 접수된 주문의 재전송은 인원수와 무관하게 그 주문을 돌려준다
+        Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request);
+        // 인원 검사는 멱등 재요청(이미 접수된 주문은 인원수와 무관하게 그대로 돌려준다)과 메뉴 검증(없는 메뉴 400·품절 409) 뒤에 둔다 —
+        // 입력 자체가 틀린 주문에 "인원을 고르세요"를 먼저 보여주면, 인원을 고르고 돌아와서야 품절을 알게 된다
         if (requirePartySize && (partySize == null || partySize <= 0) && !orderRepository.existsChargedSeatFee(sessionId)) {
             throw new PartySizeRequiredException();
         }
-
-        Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request);
         List<OrderItemEntity> items = new ArrayList<>(request.items().stream()
                 .map(item -> {
                     MenuLookup.MenuInfo menu = menus.get(item.menuId());
