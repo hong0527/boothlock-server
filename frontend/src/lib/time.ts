@@ -12,6 +12,15 @@ export function formatClockTime(createdAt: string): string {
   return `${hours}:${minutes}`
 }
 
+/** 테이블-홈 카드의 경과시간 표시 — "0:35"/"2:35"(시:분, Figma 672:1247). formatElapsed의 "35분 전" 문구와 달리
+ * 카드가 좁아 숫자만 쓴다. 시간은 자리수를 안 채운다(0~9시간대는 "0:35"처럼 한 자리) */
+export function formatElapsedClock(createdAt: string, now: number): string {
+  const totalMinutes = Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / 60000))
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = String(totalMinutes % 60).padStart(2, '0')
+  return `${hours}:${minutes}`
+}
+
 /** 영업일 경계 — 백엔드 OrderNumberingService.businessDateOf와 같은 06:00 KST (명세 §1.1) */
 export const BUSINESS_DAY_START_HOUR = 6
 

@@ -1,5 +1,31 @@
 import { describe, expect, it } from 'vitest'
-import { businessDateKst } from './time'
+import { businessDateKst, formatElapsedClock } from './time'
+
+describe('formatElapsedClock — 테이블 카드 경과시간(시:분) 표시', () => {
+  it('35분 경과는 "0:35"', () => {
+    const created = '2026-09-16T18:00:00+09:00'
+    const now = new Date('2026-09-16T18:35:00+09:00').getTime()
+    expect(formatElapsedClock(created, now)).toBe('0:35')
+  })
+
+  it('2시간 35분 경과는 "2:35"', () => {
+    const created = '2026-09-16T18:00:00+09:00'
+    const now = new Date('2026-09-16T20:35:00+09:00').getTime()
+    expect(formatElapsedClock(created, now)).toBe('2:35')
+  })
+
+  it('분은 항상 두 자리로 채운다', () => {
+    const created = '2026-09-16T18:00:00+09:00'
+    const now = new Date('2026-09-16T18:05:00+09:00').getTime()
+    expect(formatElapsedClock(created, now)).toBe('0:05')
+  })
+
+  it('음수 경과(시계 오차 등)는 0으로 바닥 처리한다', () => {
+    const created = '2026-09-16T18:00:00+09:00'
+    const now = new Date('2026-09-16T17:59:00+09:00').getTime()
+    expect(formatElapsedClock(created, now)).toBe('0:00')
+  })
+})
 
 describe('businessDateKst — 06:00 KST 영업일 경계 (백엔드 businessDateOf와 동일)', () => {
   it('05:59:59 KST는 전날 영업일', () => {

@@ -8,6 +8,13 @@ export function displayTableLabel(label: string): string {
   return m ? `테이블-${m[1]}` : label
 }
 
+/** 테이블-홈 그리드 카드 전용 표시 — "T-1" → "1" (Figma 672:1247, "테이블" 글자 없이 숫자만).
+ * "T-N" 형태가 아니면(수동 등록 등) displayTableLabel과 같은 fallback으로 원래 값을 그대로 보여준다 */
+export function tableNumberLabel(label: string): string {
+  const m = /^T-(\d+)$/.exec(label)
+  return m ? m[1] : label
+}
+
 /** 백엔드 TableLabelComparator와 같은 자연 정렬 기준 비교 — "A-2" < "A-10" (사전순이 아닌 숫자순) */
 export function compareTableLabels(a: string, b: string): number {
   const aChunks = a.match(/\d+|\D+/g) ?? []
