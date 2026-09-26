@@ -31,6 +31,7 @@
 | v0.6.9 | 2026-09-24 | **인원 선택·자릿세 확정·구현(명세서 밖, 파일럿 전용)** — 2026-09-24 운영자 시연 피드백, §확정 필요 항목 3번(보류) 반전. `TableSessionEntity.partySize` 신설, 신규 `PATCH /api/v1/table-sessions/party-size`(1~20). 서버가 세션의 첫 주문에만 1인당 3,000원(`itemType: "SEAT_FEE"`, `menuId: null`)을 items에 자동 추가하고 totalAmount에 더한다. `OrderItemEntity.itemType`(MENU/SEAT_FEE) 신설, `menuId` nullable로 완화. O23/O23b는 SEAT_FEE 항목을 404로 거부(`OrderEntity.requireEditableItem`). 환불(O13·O21)·정산(O19)은 항목/주문 단위로 이미 동작해 코드 변경 없이 자동 반영됨. 손님 플로우: C1 직후(재스캔 복원 제외) `/party-size`를 다시 거치도록 되돌림(PR #62의 skip 반전) |
 | v0.6.8 | 2026-09-24 | **축제 대비 백엔드 방어 5건.** ① §1.2 유휴 세션 토큰을 인증 단계에서 `410` — 단 현재 영업일 미결제가 있으면 v0.6대로 통과(폴링이 유휴 세션을 되살려 다음 손님에게 넘어가던 문제) ② O14 `Idempotency-Key` 헤더(선택) ③ O6 `requireSettled` 쿼리 + `409 CHECKOUT_UNPAID_REMAINS` ④ O9 디코딩 서브샘플링·업로드 직렬화 + `503 UPLOAD_BUSY` ⑤ O10 `activeSessionOnly=true`는 `businessDate` 생략 시 영업일로 거르지 않음(O24 대상과 같은 범위) |
 | v0.6.10 | 2026-09-25 | **주문 승인/거절 워크플로우 신설(명세서 밖, 파일럿 전용) — O28.** Figma 디자인 갱신("주문현황-승인대기" 641:1362) 반영. 상태 모델에 `PENDING_APPROVAL`을 `RECEIVED` 앞에 추가 — 손님 주문(C3)은 이제 접수 전에 운영자 승인을 거친다. 수기 주문(O14)은 운영자가 직접 입력한 것이라 승인대기 없이 바로 `RECEIVED`로 시작한다(변경 없음). 신규 `PATCH /admin/orders/{orderId}/approve`(O28, PENDING_APPROVAL→RECEIVED). 거절은 별도 엔드포인트 없이 기존 O13(운영자 취소)을 그대로 쓴다 — cancelByStaff가 이미 "CANCELED가 아닌 모든 상태"를 대상으로 하기 때문. C3 미결제 상한(429, §1.4)의 판정 대상을 `RECEIVED`에서 `PENDING_APPROVAL·RECEIVED` 합계로 확장 — RECEIVED만 셌다면 승인 전까지 상한을 무시하고 계속 주문을 넣을 수 있었다. §2 "미결제"(UnpaidOrderRule) 정의에는 `PENDING_APPROVAL`을 **의도적으로 포함하지 않는다** — 아직 운영자가 받아들이지 않은 주문은 확정된 채무가 아니라서, O3·O6·O24 대상에 안 잡힌다. O6 퇴실 시 종료되는 세션의 남은 `PENDING_APPROVAL` 주문은 (RECEIVED가 자동 완료되는 것과 별개로) 자동 거절(CANCELED, 사유 "테이블 퇴실로 자동 거절", `canceledBy="SYSTEM"`)된다 — 안 그러면 손님은 떠났는데 승인대기 탭에 영영 안 사라지는 주문이 남는다. **DB**: `orders.status` 컬럼은 Hibernate 매핑상 VARCHAR(20)이라(§DB스키마) 신규 값 추가에 컬럼 타입 변경이 필요 없다. `schema-mysql8.sql`의 `chk_orders_status` CHECK 제약에 `PENDING_APPROVAL`을 추가했다 — 단 이 파일은 2026-09-17 결정으로 RDS를 안 쓰기로 하면서 현재는 참고 자료일 뿐이고, 실제 배포(EC2+H2, `ddl-auto=update`)는 이 값 추가에 별도 마이그레이션이 필요 없다(배포_운영절차.md §3 안내와 동일). |
+| v0.6.11 | 2026-09-26 | **C6 직원호출에 `PAYMENT` 사유 신설(명세서 밖, 파일럿 전용) — 결제확인 전용 호출 분리.** 2026-09-23 운영자 시연 피드백 "직원호출 버튼 분리" 항목 선반영(백엔드만, 프론트 버튼 연동은 별도 PR). 쿨다운 판정을 세션 단독 키에서 `(세션, 사유)` 키로 바꿔 **사유별 독립 쿨다운**으로 전환 — `PAYMENT`를 일반 호출과 분리하려는 목적이었지만 HELP·WATER·ETC 서로도 독립된 쿨다운을 갖게 됐다(기존 "사유가 달라도 같은 쿨다운" 규칙 폐기). DB `chk_call_reason` CHECK 제약에 `PAYMENT` 추가(`schema-mysql8.sql`은 참고 자료, 실배포는 H2 `ddl-auto=update`라 마이그레이션 불요) |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -551,14 +552,15 @@ RECEIVED ├─ 운영자 [완료] O12 ──► DONE (종결)
 
 | 필드 | 타입 | 필수 | 값 |
 |---|---|---|---|
-| reason | string | ✅ | `HELP` / `WATER` / `ETC`. 누락·모르는 값 `400` |
+| reason | string | ✅ | `HELP` / `WATER` / `ETC` / `PAYMENT`(v0.6.11). 누락·모르는 값 `400` |
 
 **Response 201**: `{ "callId": 7, "reason": "HELP", "createdAt": "2026-09-15T18:31:00+09:00" }`
 
 **규칙**
 - 호출도 세션 활동으로 기록된다(인증 계층 `touchIfActive`)
 - 세션 행을 `FOR UPDATE`로 잠근 뒤 `refresh`로 최신 상태를 다시 읽어 종료 여부를 판정한다 — 같은 요청에서 먼저 올라온 옛 사본이 방금 커밋된 퇴실을 가리지 않게 (§7-24)
-- 같은 세션 30초 내 재호출 → `429 CALL_COOLDOWN`, `details.retryAfterSeconds`(남은 초). 사유가 달라도 같은 쿨다운
+- 같은 세션·같은 사유 30초 내 재호출 → `429 CALL_COOLDOWN`, `details.retryAfterSeconds`(남은 초). **v0.6.11부터 사유별 독립 쿨다운** — 예: `HELP` 직후 `PAYMENT`로 다시 호출해도 막히지 않는다(결제 확인을 일반 호출 쿨다운에 묶어두면 안 됨)
+- `PAYMENT`(v0.6.11 신설) — 손님이 계좌이체 후 입금을 알리는 전용 호출. 프론트 연동(버튼 분리)은 이 PR 밖 — 이번엔 백엔드(enum·쿨다운·DB 제약)만
 
 **Errors**: `400` / `401` / `410` / `429`
 
