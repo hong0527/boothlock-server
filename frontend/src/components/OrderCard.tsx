@@ -23,6 +23,9 @@ type OrderCardProps = {
   onRestore: (orderId: number) => void
   /** ADMIN이 아니면 넘기지 않는다 — 환불 완료는 ADMIN 전용(백엔드 403) */
   onRefundDone?: (orderId: number) => void
+  /** O11 결제확인(개별) — 승인대기 카드 전용. 손님은 승인 전에도 입금·결제확인 호출을 보낼 수 있어서
+   * (백엔드가 PENDING_APPROVAL도 허용) 승인/거절과 별개로 여기서 바로 처리할 수 있어야 한다 */
+  onConfirmPayment?: (orderId: number) => void
 }
 
 export default function OrderCard({
@@ -35,6 +38,7 @@ export default function OrderCard({
   onCancel,
   onRestore,
   onRefundDone,
+  onConfirmPayment,
 }: OrderCardProps) {
   return (
     <div className="flex min-h-[321px] w-full flex-col rounded-xl border border-neutral-200 bg-neutral-50 p-4">
@@ -79,13 +83,27 @@ export default function OrderCard({
       </ul>
 
       {order.status === 'PENDING_APPROVAL' && onApprove && onReject && (
-        <div className="mt-4 flex gap-4">
-          <button type="button" onClick={() => onReject(order.orderId)} disabled={pending} className={CANCEL_BUTTON_CLASS}>
-            거절
-          </button>
-          <button type="button" onClick={() => onApprove(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
-            승인
-          </button>
+        <div className="mt-4 flex flex-col gap-2">
+          {/* 결제확인 호출(직원호출 PAYMENT 사유, v0.6.11)을 받았을 때 여기서 바로 입금 확인한다.
+              PAID면 이미 확인된 거라 다시 보여줄 이유가 없다 */}
+          {order.paymentStatus === 'UNPAID' && onConfirmPayment && (
+            <button
+              type="button"
+              onClick={() => onConfirmPayment(order.orderId)}
+              disabled={pending}
+              className={`${ACTION_BUTTON_BASE} bg-neutral-900`}
+            >
+              결제 확인
+            </button>
+          )}
+          <div className="flex gap-4">
+            <button type="button" onClick={() => onReject(order.orderId)} disabled={pending} className={CANCEL_BUTTON_CLASS}>
+              거절
+            </button>
+            <button type="button" onClick={() => onApprove(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
+              승인
+            </button>
+          </div>
         </div>
       )}
 
