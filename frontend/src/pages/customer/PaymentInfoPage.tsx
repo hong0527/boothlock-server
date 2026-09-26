@@ -42,10 +42,14 @@ export default function PaymentInfoPage() {
     )
   }
 
-  // 미결제 = 서빙 여부와 무관하게 입금이 안 된 주문 — 취소된 주문(CANCELED+UNPAID)은 받을 돈이 없어 제외
-  // (lib/sessionOrders.ts의 isUnpaid와 같은 정의 — 백엔드 UnpaidOrderRule 기준)
+  // 미결제 = 서빙 여부와 무관하게 입금이 안 된 주문 — 취소된 주문(CANCELED+UNPAID)은 받을 돈이 없어 제외.
+  // PENDING_APPROVAL도 포함한다 — 손님은 승인 전에 입금하고 결제확인 호출을 보내는 게 정상 플로우라
+  // (O11이 PENDING_APPROVAL도 결제확인 허용) 여기서 빼면 방금 주문한 손님이 계좌 안내 자체를 못 본다.
+  // (staff 쪽 lib/sessionOrders.ts의 isUnpaid는 PaymentModal 전용이라 PENDING_APPROVAL을 일부러 뺀다 — 여기와는 다른 정의)
   const unpaidOrders = orders.filter(
-    (order) => (order.status === 'RECEIVED' || order.status === 'DONE') && order.paymentStatus === 'UNPAID',
+    (order) =>
+      (order.status === 'PENDING_APPROVAL' || order.status === 'RECEIVED' || order.status === 'DONE') &&
+      order.paymentStatus === 'UNPAID',
   )
   const totalAmount = unpaidOrders.reduce((sum, order) => sum + order.totalAmount, 0)
   const bankAccount = unpaidOrders[0]?.payment.bankAccount ?? orders[0]?.payment.bankAccount ?? ''

@@ -10,6 +10,7 @@ import {
   approveOrder as approveOrderRequest,
   cancelOrder as cancelOrderRequest,
   completeOrder as completeOrderRequest,
+  confirmOrderPayment,
   refundDone as refundDoneRequest,
   restoreOrder as restoreOrderRequest,
 } from '../lib/orderActions'
@@ -181,6 +182,10 @@ export default function OrderStatusPage() {
   const completeOrder = (orderId: number) =>
     runOrderAction(orderId, () => completeOrderRequest(orderId), '주문을 완료 처리하지 못했어요')
 
+  // O11 결제확인 — 승인대기 카드 전용. 되돌릴 방법(주문 취소)이 있으니 승인처럼 확인을 묻지 않는다
+  const confirmPayment = (orderId: number) =>
+    runOrderAction(orderId, () => confirmOrderPayment(orderId), '결제 확인을 처리하지 못했어요')
+
   // 취소는 손님에게 바로 영향이 가고 되돌리려면 한 단계를 더 거쳐야 한다 — 한 번 더 묻는다(되돌리기와 같은 방식)
   const cancelOrder = (orderId: number) => {
     if (!window.confirm('이 주문을 취소할까요?')) return
@@ -270,6 +275,7 @@ export default function OrderStatusPage() {
             onCancel={cancelOrder}
             onRestore={restoreOrder}
             onRefundDone={isAdmin ? refundDone : undefined}
+            onConfirmPayment={confirmPayment}
           />
         ))}
         {visibleOrders.length === 0 && !error && (
