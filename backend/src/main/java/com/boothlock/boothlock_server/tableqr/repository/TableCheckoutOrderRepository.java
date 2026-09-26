@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -29,4 +30,29 @@ public interface TableCheckoutOrderRepository extends Repository<OrderEntity, Lo
                and o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.RECEIVED
             """)
     int completeReceivedOrdersOfSessions(@Param("sessionIds") List<Long> sessionIds, @Param("boothId") Long boothId);
+
+    /**
+     * O6 퇴실 때 그 손님의 남은 승인대기(O28) 주문을 자동 거절한다(v0.6.10) — 승인대기는 UnpaidOrderRule에서
+     * 일부러 뺐기 때문에(주문 도메인 주석 참조) 위 completeReceivedOrdersOfSessions처럼 자동 완료 대상이 아니고,
+     * requireSettled 판정에도 안 잡힌다. 그대로 두면 테이블이 비워진 뒤에도 "승인 대기" 탭에 남의 손님 없는
+     * 주문이 영영 남는다(손님 세션은 이미 종료돼 토큰도 410이라 본인은 알 방법이 없다) — O13(cancelByStaff)과
+     * 같은 조건부 UPDATE를 여기서도 쓴다(별도 엔티티 메서드 없이 markDone류 패턴을 따른다)
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("""
+            update OrderEntity o
+               set o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.CANCELED,
+                   o.cancelReason = :reason,
+                   o.canceledBy = :canceledBy,
+                   o.canceledAt = :canceledAt
+             where o.boothId = :boothId
+               and o.sessionId in :sessionIds
+               and o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.PENDING_APPROVAL
+            """)
+    int rejectPendingApprovalOrdersOfSessions(
+            @Param("sessionIds") List<Long> sessionIds,
+            @Param("boothId") Long boothId,
+            @Param("reason") String reason,
+            @Param("canceledBy") String canceledBy,
+            @Param("canceledAt") LocalDateTime canceledAt);
 }

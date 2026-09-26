@@ -51,6 +51,8 @@ public class OrderCreateService {
     private static final int MAX_ITEM_KINDS = 20;
     private static final int MAX_QTY = 30;
     private static final int MAX_UNPAID_ORDERS = 8;
+    /** C3 미결제 상한 판정 대상 상태(v0.6.10) — 승인대기+접수. CANCELED·DONE은 이미 손님이 더 못 늘리는 상태라 제외 */
+    private static final List<OrderStatus> RATE_LIMIT_STATUSES = List.of(OrderStatus.PENDING_APPROVAL, OrderStatus.RECEIVED);
     private static final int MAX_LABEL_LENGTH = 6;
     private static final int MAX_RAW_LABEL_LENGTH = 20;   // table_label VARCHAR(20) — 원본 스냅샷 저장 한도
     private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 64;
@@ -120,8 +122,10 @@ public class OrderCreateService {
         if (!booth.isOpen()) {
             throw new OrderClosedException();
         }
-        if (orderRepository.countBySessionIdAndStatusAndPaymentStatus(
-                sessionId, OrderStatus.RECEIVED, PaymentStatus.UNPAID) >= MAX_UNPAID_ORDERS) {
+        // v0.6.10: 승인대기(PENDING_APPROVAL)도 함께 센다 — RECEIVED만 세면 운영자가 승인하기 전까지
+        // 이 상한을 무시하고 계속 새 주문을 넣을 수 있다(승인대기 주문은 아직 RECEIVED가 아니므로)
+        if (orderRepository.countBySessionIdAndStatusInAndPaymentStatus(
+                sessionId, RATE_LIMIT_STATUSES, PaymentStatus.UNPAID) >= MAX_UNPAID_ORDERS) {
             throw new OrderRateLimitedException();
         }
         Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request);

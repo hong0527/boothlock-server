@@ -31,6 +31,10 @@ describe('orderedForTab', () => {
     expect(orderedForTab('RECEIVED', newestFirst).map((o) => o.orderNo)).toEqual(['A-1', 'A-2', 'A-3'])
   })
 
+  it('승인대기 탭도 진행 탭과 같이 먼저 들어온 주문을 앞에 둔다 (O28)', () => {
+    expect(orderedForTab('PENDING_APPROVAL', newestFirst).map((o) => o.orderNo)).toEqual(['A-1', 'A-2', 'A-3'])
+  })
+
   it('완료 탭은 서버 순서(최신 먼저)를 그대로 쓴다', () => {
     expect(orderedForTab('DONE', newestFirst).map((o) => o.orderNo)).toEqual(['A-3', 'A-2', 'A-1'])
   })

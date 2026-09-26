@@ -120,7 +120,7 @@ class PosPaymentConcurrencyTests {
         // 잠금이 실제로 걸리는지 결정적으로 본다 — 다른 트랜잭션이 대상 주문을 FOR UPDATE로 잡고 있는 동안 O24는 끝나면 안 된다.
         // (조건부 UPDATE만으로도 중복 승인은 막히므로 경합 테스트는 @Lock을 지워도 통과한다 — 이 테스트가 그 뮤테이션을 잡는다)
         fx.manualOrder(fx.table, fx.kimchiId, 1);
-        fx.customerOrder(fx.colaId, 1);
+        fx.approvedCustomerOrder(fx.colaId, 1);
         CountDownLatch locked = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         Future<?> holder = pool.submit(() -> transactionTemplate.executeWithoutResult(status -> {
@@ -153,7 +153,7 @@ class PosPaymentConcurrencyTests {
         for (int round = 0; round < ROUNDS; round++) {
             freshSession();
             Long a = fx.manualOrder(fx.table, fx.kimchiId, 1).orderId();
-            Long b = fx.customerOrder(fx.colaId, 2).orderId();
+            Long b = fx.approvedCustomerOrder(fx.colaId, 2).orderId();
             CountDownLatch start = new CountDownLatch(1);
 
             List<String> results = race(
@@ -183,7 +183,7 @@ class PosPaymentConcurrencyTests {
         for (int round = 0; round < ROUNDS; round++) {
             freshSession();
             Long a = fx.manualOrder(fx.table, fx.kimchiId, 1).orderId();   // 8000
-            Long b = fx.customerOrder(fx.colaId, 1).orderId();             // 5000 — 완료 처리 대상
+            Long b = fx.approvedCustomerOrder(fx.colaId, 1).orderId();             // 5000 — 완료 처리 대상
             CountDownLatch start = new CountDownLatch(1);
 
             List<String> results = race(
@@ -214,7 +214,7 @@ class PosPaymentConcurrencyTests {
         for (int round = 0; round < ROUNDS; round++) {
             freshSession();
             Long a = fx.manualOrder(fx.table, fx.kimchiId, 1).orderId();   // 8000
-            Long b = fx.customerOrder(fx.colaId, 1).orderId();             // 5000
+            Long b = fx.approvedCustomerOrder(fx.colaId, 1).orderId();             // 5000
             CountDownLatch start = new CountDownLatch(1);
 
             List<String> results = race(
@@ -288,7 +288,7 @@ class PosPaymentConcurrencyTests {
         for (int round = 0; round < ROUNDS; round++) {
             freshSession();
             Long a = fx.manualOrder(fx.table, fx.kimchiId, 1).orderId();   // 8000
-            Long b = fx.customerOrder(fx.colaId, 1).orderId();             // 5000
+            Long b = fx.approvedCustomerOrder(fx.colaId, 1).orderId();             // 5000
             TableSessionEntity session = fx.activeSession();
             CountDownLatch start = new CountDownLatch(1);
 

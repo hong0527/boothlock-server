@@ -119,7 +119,7 @@ class OrderControllerTests {
                         .content("{\"items\":[{\"menuId\":" + kimchiId + ",\"qty\":2},{\"menuId\":" + colaId + ",\"qty\":1}]}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.orderNo").value("A3-1"))                      // 세션의 테이블 라벨(A-3) 정규화 + 영업일 1번
-                .andExpect(jsonPath("$.status").value("RECEIVED"))
+                .andExpect(jsonPath("$.status").value("PENDING_APPROVAL"))   // O28(v0.6.10) — 손님 주문은 승인 전까지 대기
                 .andExpect(jsonPath("$.paymentStatus").value("UNPAID"))
                 .andExpect(jsonPath("$.totalAmount").value(21000 + 3000 * PARTY_SIZE)) // 8000×2 + 5000 + 첫 주문 자릿세 — 서버 재계산
                 .andExpect(jsonPath("$.items[2].itemType").value("SEAT_FEE"))

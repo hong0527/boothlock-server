@@ -103,6 +103,16 @@ public class DashboardController {
         return orderActionService.confirmPayment(authorization, orderId, request.method());
     }
 
+    /** O28 주문 승인 (v0.6.10 신설) — PENDING_APPROVAL→RECEIVED. 거절은 O13(운영자 취소)을 그대로 쓴다 */
+    @Operation(summary = "O28 주문 승인", description = "손님 주문(C3)의 승인대기를 접수(RECEIVED)로 전환한다. "
+            + "승인대기 상태가 아니면(이미 승인됐거나 취소·거절됨) 409. 수기 주문(O14)은 대상이 아니다(이미 RECEIVED로 시작).")
+    @PatchMapping("/admin/orders/{orderId}/approve")
+    public DashboardResponse.OrderSummary approve(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId) {
+        return orderActionService.approve(authorization, orderId);
+    }
+
     /** O12 완료 처리 (Must) — RECEIVED→DONE. 미결제여도 가능하나 '미결제 완료' 뱃지 */
     @Operation(summary = "O12 완료 처리", description = "조리·전달이 끝난 주문을 완료 처리한다. 결제 여부와 무관하게 가능.")
     @PatchMapping("/admin/orders/{orderId}/complete")

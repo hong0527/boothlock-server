@@ -84,6 +84,13 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     long countBySessionIdAndStatusAndPaymentStatus(Long sessionId, OrderStatus status, PaymentStatus paymentStatus);
 
     /**
+     * C3 미결제 상한(v0.6.10) — PENDING_APPROVAL을 뺀 RECEIVED만 세면, 운영자가 승인하기 전까지 손님이 8건 제한을
+     * 무시하고 계속 새로 주문을 넣을 수 있다(승인대기 주문은 아직 RECEIVED가 아니라 예전 카운트에 안 잡힌다).
+     * 승인대기+접수를 함께 세어 상한을 그대로 유지한다
+     */
+    long countBySessionIdAndStatusInAndPaymentStatus(Long sessionId, List<OrderStatus> statuses, PaymentStatus paymentStatus);
+
+    /**
      * 자릿세 판정(명세서 밖, 파일럿 전용) — 이 세션에 이미 청구된 자릿세가 있는지. 취소(CANCELED)된 주문에 붙은 자릿세는
      * 청구된 것으로 보지 않는다(개별 취소된 자릿세 항목도 마찬가지) — 손님이 자릿세가 붙은 첫 주문을 취소하면 다음 주문에 다시 붙어야 한다.
      * 반드시 OrderWriter.save 안, 세션 행 잠금(touchIfSessionActive) 뒤에 부른다. 잠금 없이 보면 같은 테이블 폰 두 대가
@@ -210,6 +217,18 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
                and o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.RECEIVED
             """)
     int markDone(@Param("orderId") Long orderId, @Param("boothId") Long boothId);
+
+    /** O28 주문 승인(v0.6.10) — 조건부 UPDATE(WHERE status='PENDING_APPROVAL'), O12와 같은 패턴. 거절은 O13(cancelByStaff) 재사용 */
+    @Transactional
+    @Modifying(clearAutomatically = true)
+    @Query("""
+            update OrderEntity o
+               set o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.RECEIVED
+             where o.id = :orderId
+               and o.boothId = :boothId
+               and o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.PENDING_APPROVAL
+            """)
+    int approve(@Param("orderId") Long orderId, @Param("boothId") Long boothId);
 
     /**
      * O13 운영자 취소 — 소비자 취소(C5)와 달리 DONE도 취소할 수 있다 (명세서 O13).

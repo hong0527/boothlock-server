@@ -40,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -74,6 +75,10 @@ public class TableAdminService {
     private static final int MAX_GRID_INDEX = 50;
 
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
+
+    /** O6 퇴실 시 남은 승인대기(O28) 주문 자동 거절 — cancel_reason VARCHAR(100)·canceled_by VARCHAR(50) 한도 안 (v0.6.10) */
+    private static final String CHECKOUT_AUTO_REJECT_REASON = "테이블 퇴실로 자동 거절";
+    private static final String CHECKOUT_AUTO_REJECT_BY = "SYSTEM";
 
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
@@ -474,7 +479,8 @@ public class TableAdminService {
         List<Long> endingSessionIds = tableSessionRepository.findOpenByTableIdForUpdate(table.getId()).stream()
                 .map(TableSessionEntity::getId)
                 .toList();
-        tableSessionRepository.endOpenSessions(table.getId(), seatIdlePolicy.now());
+        LocalDateTime now = seatIdlePolicy.now();
+        tableSessionRepository.endOpenSessions(table.getId(), now);
         long unpaidOrderCount = endingSessionIds.isEmpty() ? 0
                 : tableUnpaidOrderRepository.findUnpaidOrdersOfSessionsForUpdate(endingSessionIds, staffBooth.getId()).size();
         if (requireSettled && unpaidOrderCount > 0) {
@@ -483,6 +489,12 @@ public class TableAdminService {
         table.vacate();
         int completedOrderCount = endingSessionIds.isEmpty() ? 0
                 : tableCheckoutOrderRepository.completeReceivedOrdersOfSessions(endingSessionIds, staffBooth.getId());
+        // v0.6.10: 승인대기(O28)는 미결제 정의에서 빠져 있어(UnpaidOrderRule) 위 completedOrderCount·unpaidOrderCount
+        // 어느 쪽에도 안 잡힌다 — 그대로 두면 손님은 떠났는데 "승인 대기" 탭에 영영 안 사라지는 주문이 남는다
+        if (!endingSessionIds.isEmpty()) {
+            tableCheckoutOrderRepository.rejectPendingApprovalOrdersOfSessions(
+                    endingSessionIds, staffBooth.getId(), CHECKOUT_AUTO_REJECT_REASON, CHECKOUT_AUTO_REJECT_BY, now);
+        }
 
         String warning = unpaidOrderCount > 0 ? "미결제 주문 " + unpaidOrderCount + "건 있음" : null;
         return new TableCheckoutResponse(unpaidOrderCount > 0, table.getId(), table.getLabel(), table.getStatus(),

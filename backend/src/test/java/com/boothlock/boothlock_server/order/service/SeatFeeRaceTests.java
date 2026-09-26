@@ -64,6 +64,16 @@ class SeatFeeRaceTests {
                 new OrderCreateRequest(List.of(item(fx.kimchiId, 1))), PARTY_SIZE).response();
     }
 
+    /**
+     * 승인(O28)까지 마친 주문 — 취소(C5)·항목취소·복원처럼 RECEIVED를 전제로 하는 액션 대상에만 쓴다
+     * (Figma "주문현황-승인대기" 641:1362는 승인/거절만 허용, 취소·복원 대상이 아니다)
+     */
+    private OrderCreateResponse approvedOrder(Long sessionId) {
+        OrderCreateResponse response = order(sessionId);
+        fx.orderRepository.approve(response.orderId(), fx.booth.getId());
+        return response;
+    }
+
     /** 세션에서 청구된(취소 안 된 주문의 취소 안 된) 자릿세 항목 수 */
     private long chargedSeatFees(Long sessionId) {
         return fx.tx.execute(status -> fx.orderRepository.findBySessionIdOrderByCreatedAtDescIdDesc(sessionId).stream()
@@ -92,7 +102,7 @@ class SeatFeeRaceTests {
     @Test
     void canceledFirstOrderDoesNotSwallowSeatFee() {
         Long sessionId = fx.openSession();
-        OrderCreateResponse first = order(sessionId);
+        OrderCreateResponse first = approvedOrder(sessionId);
         assertEquals(8000 + 3000 * PARTY_SIZE, first.totalAmount());
 
         orderCancelService.cancel(first.orderId(), sessionId);   // 손님이 첫 주문을 취소(C5)
@@ -113,7 +123,7 @@ class SeatFeeRaceTests {
     @Test
     void cancelingLastMenuItemCancelsOrderWithSeatFeeAndNextOrderIsChargedAgain() {
         Long sessionId = fx.openSession();
-        OrderCreateResponse first = order(sessionId);
+        OrderCreateResponse first = approvedOrder(sessionId);
 
         // 결제 모달에서 첫 주문의 유일한 메뉴를 개별 취소 — 예전엔 자릿세만 남은 접수 주문이 주방 대기열에 남았다
         DashboardResponse.OrderSummary after = dashboardOrderActionService.cancelItem(
@@ -127,7 +137,7 @@ class SeatFeeRaceTests {
     @Test
     void restoringCanceledSeatFeeOrderDoesNotDoubleCharge() {
         Long sessionId = fx.openSession();
-        OrderCreateResponse first = order(sessionId);
+        OrderCreateResponse first = approvedOrder(sessionId);
         orderCancelService.cancel(first.orderId(), sessionId);
         order(sessionId);   // 자릿세가 여기 다시 붙었다
 
@@ -142,7 +152,7 @@ class SeatFeeRaceTests {
     @Test
     void restoringCanceledSeatFeeOrderKeepsFeeWhenNoOtherFeeCharged() {
         Long sessionId = fx.openSession();
-        OrderCreateResponse first = order(sessionId);
+        OrderCreateResponse first = approvedOrder(sessionId);
         orderCancelService.cancel(first.orderId(), sessionId);
 
         dashboardOrderActionService.restore(bearer(fx.staffToken), first.orderId());

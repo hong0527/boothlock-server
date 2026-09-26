@@ -70,9 +70,17 @@ class OrderWriterSessionRaceTests {
         });
     }
 
+    /**
+     * 주문 저장 + 승인(O28)을 한 트랜잭션으로 묶는다 — 따로 커밋하면 checkout()이 잠금을 얻은 뒤 세는 시점과
+     * 승인 커밋 시점 사이에 창이 생겨 "1:1"이어야 할 라운드가 간헐적으로 "1:0"이 되는 플레이키 실패가 난다
+     */
     private String order(Long sessionId) {
         try {
-            OrderCreateResponse response = fx.customerOrder(sessionId, List.of(item(fx.kimchiId, 1)), UUID.randomUUID().toString());
+            OrderCreateResponse response = fx.tx.execute(status -> {
+                OrderCreateResponse created = fx.customerOrder(sessionId, List.of(item(fx.kimchiId, 1)), UUID.randomUUID().toString());
+                fx.orderRepository.approve(created.orderId(), fx.booth.getId());
+                return created;
+            });
             return "201:" + response.orderNo();
         } catch (SessionExpiredException e) {
             return "410";
@@ -158,12 +166,14 @@ class OrderWriterSessionRaceTests {
         Thread checkingOut = new Thread(() -> result.set(checkout(sessionId)));
 
         fx.tx.executeWithoutResult(status -> {
-            // OrderWriter.save가 하는 일을 같은 순서로 — 세션 확인(잠금)·채번·INSERT를 한 트랜잭션에서
+            // OrderWriter.save가 하는 일을 같은 순서로 — 세션 확인(잠금)·채번·INSERT·승인(O28)까지 한 트랜잭션에서
+            // (승인을 트랜잭션 밖으로 빼면 checkout()이 잠금을 얻은 뒤 세는 시점과 승인 커밋 사이에 창이 생긴다)
             LocalDateTime now = LocalDateTime.now(KST);
-            orderWriter.save(new OrderWriter.OrderSpec(fx.booth.getId(), sessionId, "A3", "A-3",
+            var saved = orderWriter.save(new OrderWriter.OrderSpec(fx.booth.getId(), sessionId, "A3", "A-3",
                     UUID.randomUUID().toString(), 8000,
                     List.of(new com.boothlock.boothlock_server.order.domain.OrderItemEntity(fx.kimchiId, "김치전", 8000, 1)),
                     now, false));
+            fx.orderRepository.approve(saved.getId(), fx.booth.getId());
             checkingOut.start();
             try {
                 checkingOut.join(300);
