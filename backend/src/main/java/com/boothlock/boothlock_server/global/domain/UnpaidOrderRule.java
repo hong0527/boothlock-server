@@ -21,8 +21,11 @@ import java.util.Set;
  *   <li>같은 예외의 E1 사본 — BoothSeatRepository.findSeatSummaries</li>
  * </ol>
  *
- * <p><b>이 정의가 아닌 것</b>: C3 미결제 상한(세션당 RECEIVED+UNPAID 8건, 주문 폭주 방지)·C5 손님 취소·결제 모달 항목 수정
+ * <p><b>이 정의가 아닌 것</b>: C3 미결제 상한(세션당 PENDING_APPROVAL+RECEIVED+UNPAID 8건, 주문 폭주 방지)·C5 손님 취소·결제 모달 항목 수정
  * 가능 판정(OrderEntity.canCancel/canEditItems)은 "접수 중이면서 미입금"이라는 다른 목적의 조건이라 일부러 여기 두지 않는다.
+ *
+ * <p><b>PENDING_APPROVAL(O28, v0.6.10)은 의도적으로 제외</b>다 — 운영자가 아직 승인하지 않은 주문은 확정된 채무가
+ * 아니라서, 여기 포함시키면 O3 미결제 건수·O24 일괄 입금 대상에 아직 받아들이지도 않은 주문이 잡힌다.
  */
 public final class UnpaidOrderRule {
 

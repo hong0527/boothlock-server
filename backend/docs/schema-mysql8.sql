@@ -128,7 +128,7 @@ CREATE TABLE orders (
                                                                    --   idx_orders_search는 두 번째가 business_date라 booth_id 프리픽스까지만 탄다
   CONSTRAINT fk_orders_booth   FOREIGN KEY (booth_id)   REFERENCES booth (id),
   CONSTRAINT fk_orders_session FOREIGN KEY (session_id) REFERENCES table_session (id),
-  CONSTRAINT chk_orders_status         CHECK (status IN ('RECEIVED','DONE','CANCELED')),
+  CONSTRAINT chk_orders_status         CHECK (status IN ('PENDING_APPROVAL','RECEIVED','DONE','CANCELED')),  -- O28(v0.6.9) 추가
   CONSTRAINT chk_orders_payment_status CHECK (payment_status IN ('UNPAID','PAID','REFUND_NEEDED','REFUNDED')),
   CONSTRAINT chk_orders_payment_method CHECK (payment_method IN ('BANK_TRANSFER','CASH'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

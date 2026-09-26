@@ -251,7 +251,7 @@ class OrderEditConcurrencyTests {
         int paidFirst = 0;
         for (int round = 0; round < ROUNDS; round++) {
             Long sessionId = fx.openSession();
-            Long orderId = fx.customerOrder(fx.colaId, 1).orderId();
+            Long orderId = fx.approvedCustomerOrder(fx.colaId, 1).orderId();
             CountDownLatch start = new CountDownLatch(1);
 
             List<String> results = race(
@@ -290,7 +290,7 @@ class OrderEditConcurrencyTests {
         int staffWon = 0;
         for (int round = 0; round < ROUNDS; round++) {
             Long sessionId = fx.openSession();
-            Long orderId = fx.customerOrder(fx.colaId, 1).orderId();
+            Long orderId = fx.approvedCustomerOrder(fx.colaId, 1).orderId();
             Long itemId = fx.itemIdOf(orderId, fx.colaId);
             CountDownLatch start = new CountDownLatch(1);
 
@@ -390,7 +390,7 @@ class OrderEditConcurrencyTests {
     @Test
     void customerCancelWaitsForOpenPaymentThenSeesPaid() throws Exception {
         Long sessionId = fx.openSession();
-        Long orderId = fx.customerOrder(fx.colaId, 1).orderId();
+        Long orderId = fx.approvedCustomerOrder(fx.colaId, 1).orderId();
 
         String result = runWhilePaymentIsOpen(orderId, () -> orderCancelService.cancel(orderId, sessionId).status());
 

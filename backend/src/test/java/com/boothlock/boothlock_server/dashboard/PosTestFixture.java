@@ -143,6 +143,16 @@ public class PosTestFixture {
                 new OrderCreateRequest(List.of(new OrderCreateRequest.OrderItemRequest(menuId, qty)))).response();
     }
 
+    /**
+     * 손님 주문(C3) + 즉시 승인(O28) — O24 일괄 결제·O12 완료·C5 취소 등 RECEIVED를 전제로 하는 경합 대상 주문용
+     * (Figma "주문현황-승인대기" 641:1362는 승인/거절만 허용, 결제·완료·취소 대상이 아니다)
+     */
+    public OrderCreateResponse approvedCustomerOrder(Long menuId, int qty) {
+        OrderCreateResponse response = customerOrder(menuId, qty);
+        orderRepository.approve(response.orderId(), booth.getId());
+        return response;
+    }
+
     public TableSessionEntity activeSession() {
         return tableSessionRepository.findByTableIdAndEndedAtIsNull(table.getId()).orElseThrow();
     }

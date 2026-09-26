@@ -6,7 +6,7 @@ import type { OrderStatus, OrderSummary } from '../types/dashboard'
  * 서버(O10)는 언제나 **접수 시각** 최신순(`createdAt desc, id desc`)으로 준다.
  * 완료·취소한 시각으로는 정렬할 수 없다 — 서버가 그 시각을 응답에 내려주지 않는다.
  *
- * - 진행(RECEIVED): 뒤집어서 **먼저 들어온 주문이 위로.** 만드는 순서대로 처리해야 해서다.
+ * - 승인대기(PENDING_APPROVAL, O28)·진행(RECEIVED): 뒤집어서 **먼저 들어온 주문이 위로.** 만드는 순서대로 처리해야 해서다.
  * - 완료·취소: 서버 순서 그대로(접수 시각 최신 먼저).
  *
  * 완료 탭을 왜 안 뒤집나 — 진행 탭을 오래된 것부터 처리하면 완료되는 순서가 접수 순서와
@@ -21,5 +21,5 @@ import type { OrderStatus, OrderSummary } from '../types/dashboard'
  */
 export function orderedForTab(status: OrderStatus, orders: OrderSummary[]): readonly OrderSummary[] {
   // reverse()는 제자리 뒤집기라 복사본에 쓴다 — 원본(state)을 건드리지 않는다
-  return status === 'RECEIVED' ? [...orders].reverse() : orders
+  return status === 'PENDING_APPROVAL' || status === 'RECEIVED' ? [...orders].reverse() : orders
 }

@@ -5,7 +5,7 @@ import { formatClockTime, formatElapsed } from '../lib/time'
 const ACTION_BUTTON_BASE =
   'h-[54px] flex-1 rounded-xl text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50 disabled:opacity-40'
 
-/** 완료·되돌리기 등 카드의 주 동작 (Figma 240:404 / 274:874) */
+/** 승인·완료·되돌리기 등 카드의 주 동작 (Figma 240:404 / 274:874 / 641:1362) */
 const ACTION_BUTTON_CLASS = `${ACTION_BUTTON_BASE} bg-primary-300`
 
 /** 취소만 회색으로 남는다 — Figma 240:404에서 완료(초록) 옆에 눌리지 말아야 할 쪽으로 구분해 둔 색 */
@@ -15,6 +15,9 @@ type OrderCardProps = {
   order: OrderSummary
   now: number
   pending: boolean
+  /** O28(v0.6.10) 승인대기 탭 전용 — 승인대기가 아닌 카드에는 안 넘겨도 된다(버튼 자체가 안 그려진다) */
+  onApprove?: (orderId: number) => void
+  onReject?: (orderId: number) => void
   onComplete: (orderId: number) => void
   onCancel: (orderId: number) => void
   onRestore: (orderId: number) => void
@@ -22,7 +25,17 @@ type OrderCardProps = {
   onRefundDone?: (orderId: number) => void
 }
 
-export default function OrderCard({ order, now, pending, onComplete, onCancel, onRestore, onRefundDone }: OrderCardProps) {
+export default function OrderCard({
+  order,
+  now,
+  pending,
+  onApprove,
+  onReject,
+  onComplete,
+  onCancel,
+  onRestore,
+  onRefundDone,
+}: OrderCardProps) {
   return (
     <div className="flex min-h-[321px] w-full flex-col rounded-xl border border-neutral-200 bg-neutral-50 p-4">
       <div className="flex items-start justify-between">
@@ -64,6 +77,17 @@ export default function OrderCard({ order, now, pending, onComplete, onCancel, o
           </li>
         ))}
       </ul>
+
+      {order.status === 'PENDING_APPROVAL' && onApprove && onReject && (
+        <div className="mt-4 flex gap-4">
+          <button type="button" onClick={() => onReject(order.orderId)} disabled={pending} className={CANCEL_BUTTON_CLASS}>
+            거절
+          </button>
+          <button type="button" onClick={() => onApprove(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
+            승인
+          </button>
+        </div>
+      )}
 
       {order.status === 'RECEIVED' && (
         <div className="mt-4 flex gap-4">

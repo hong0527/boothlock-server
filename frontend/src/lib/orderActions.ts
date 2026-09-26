@@ -23,12 +23,17 @@ export function confirmTablePayment(tableId: number, expectedTotal: number, meth
   })
 }
 
+/** O28 주문 승인(v0.6.10) — PENDING_APPROVAL→RECEIVED. 거절은 별도 API 없이 아래 cancelOrder를 사유만 바꿔 쓴다 */
+export function approveOrder(orderId: number) {
+  return apiFetch(`/api/v1/admin/orders/${orderId}/approve`, { method: 'PATCH' })
+}
+
 /** O12 완료 처리 — RECEIVED→DONE */
 export function completeOrder(orderId: number) {
   return apiFetch(`/api/v1/admin/orders/${orderId}/complete`, { method: 'PATCH' })
 }
 
-/** O13 운영자 취소 — 사유 입력 UI가 없어서 비워 보내면 서버가 기본 사유로 채운다 */
+/** O13 운영자 취소 — 사유 입력 UI가 없어서 비워 보내면 서버가 기본 사유로 채운다. 승인대기(O28) 거절도 이걸 그대로 쓴다 */
 export function cancelOrder(orderId: number, reason?: string) {
   return apiFetch(`/api/v1/admin/orders/${orderId}/cancel`, {
     method: 'POST',

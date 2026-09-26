@@ -1,5 +1,8 @@
-/** 백엔드 DashboardResponse (dashboard/dto/DashboardResponse.java)와 1:1로 맞춘 타입 */
-export type OrderStatus = 'RECEIVED' | 'DONE' | 'CANCELED'
+/**
+ * 백엔드 DashboardResponse (dashboard/dto/DashboardResponse.java)와 1:1로 맞춘 타입.
+ * PENDING_APPROVAL(O28, v0.6.10) — 손님 주문(C3)이 운영자 승인을 기다리는 상태. 수기 주문(O14)은 거치지 않는다
+ */
+export type OrderStatus = 'PENDING_APPROVAL' | 'RECEIVED' | 'DONE' | 'CANCELED'
 
 /** itemType이 'SEAT_FEE'(자릿세, 명세서 밖)면 menuId는 null — 실제 메뉴가 아니다. 서버가 이미 수정·취소를 막지만
  * 프론트도 결제창 버튼을 미리 비활성화한다(PaymentModal) */

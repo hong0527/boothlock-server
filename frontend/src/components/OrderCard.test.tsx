@@ -25,6 +25,7 @@ function order(status: OrderStatus, paymentStatus: PaymentStatus): OrderSummary 
 function buttonsOf(o: OrderSummary, withRefund: boolean) {
   const tree = OrderCard({
     order: o, now: Date.parse('2026-09-21T18:10:00'), pending: false,
+    onApprove: vi.fn(), onReject: vi.fn(),
     onComplete: vi.fn(), onCancel: vi.fn(), onRestore: vi.fn(),
     ...(withRefund ? { onRefundDone: vi.fn() } : {}),
   })
@@ -32,11 +33,28 @@ function buttonsOf(o: OrderSummary, withRefund: boolean) {
 }
 
 describe('주문 카드 버튼', () => {
+  it('승인대기면 거절과 승인 (O28)', () => {
+    const l = buttonsOf(order('PENDING_APPROVAL', 'UNPAID'), true)
+    expect(l).toContain('거절')
+    expect(l).toContain('승인')
+    expect(l).not.toContain('취소')
+    expect(l).not.toContain('완료')
+  })
+
+  it('onApprove·onReject가 없으면(승인대기 전용 콜백 미전달) 버튼을 그리지 않는다', () => {
+    const tree = OrderCard({
+      order: order('PENDING_APPROVAL', 'UNPAID'), now: Date.parse('2026-09-21T18:10:00'), pending: false,
+      onComplete: vi.fn(), onCancel: vi.fn(), onRestore: vi.fn(),
+    })
+    expect(labels(tree)).not.toContain('승인')
+  })
+
   it('진행 중이면 취소와 완료', () => {
     const l = buttonsOf(order('RECEIVED', 'UNPAID'), true)
     expect(l).toContain('취소')
     expect(l).toContain('완료')
     expect(l).not.toContain('환불 완료')
+    expect(l).not.toContain('승인')
   })
 
   it('취소됐고 환불이 필요하면 환불 완료가 보인다', () => {

@@ -167,6 +167,17 @@ public class OrderEntity {
         items.add(item);
     }
 
+    /**
+     * O28 승인대기 시작(v0.6.10) — 생성 직후, 아직 저장 전에만 쓴다(가드 없음, 다른 전이 메서드와 달리
+     * InvalidStateException을 던지지 않는다). 기본값 RECEIVED(필드 초기값)를 손님 주문(C3)에서만 덮어쓴다 —
+     * 운영자가 직접 입력한 수기 주문(O14)은 이미 스스로 승인한 것과 같아 그대로 RECEIVED로 둔다.
+     * OrderWriter.save만 부른다 — 기존 생성자를 그대로 두는 이유는 이 파일 밖 수십 개 테스트가 이미
+     * "manual=false → RECEIVED"를 전제로 직접 OrderEntity를 생성하고 있어서다(Figma "주문현황-승인대기" 641:1362)
+     */
+    public void startPendingApproval() {
+        this.status = OrderStatus.PENDING_APPROVAL;
+    }
+
     /** 취소 가능 판정 — C4 응답의 canCancel과 C5 실행 조건이 같은 곳에서 나오게 한다 (명세서 C4·C5) */
     public boolean canCancel() {
         return status == OrderStatus.RECEIVED && paymentStatus == PaymentStatus.UNPAID;

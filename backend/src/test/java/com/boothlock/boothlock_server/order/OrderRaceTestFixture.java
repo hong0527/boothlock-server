@@ -153,6 +153,22 @@ public class OrderRaceTestFixture {
                 new OrderCreateRequest(items)).response();
     }
 
+    /**
+     * 손님 주문(C3) + 즉시 승인(O28) — 결제 확인/수정/취소 등 RECEIVED를 전제로 하는 경합만 다루는 테스트용.
+     * 승인대기(PENDING_APPROVAL) 자체를 다루는 경합은 이 헬퍼를 쓰지 않는다(Figma "주문현황-승인대기" 641:1362 —
+     * 승인 전 주문은 승인/거절만 가능하고 결제·수정·손님취소 대상이 아니다)
+     */
+    public OrderCreateResponse approvedCustomerOrder(Long menuId, int qty) {
+        return approvedCustomerOrder(activeSessionId(), List.of(item(menuId, qty)), UUID.randomUUID().toString());
+    }
+
+    public OrderCreateResponse approvedCustomerOrder(Long sessionId, List<OrderCreateRequest.OrderItemRequest> items,
+                                                      String idempotencyKey) {
+        OrderCreateResponse response = customerOrder(sessionId, items, idempotencyKey);
+        orderRepository.approve(response.orderId(), booth.getId());
+        return response;
+    }
+
     /** 테이블의 활성 세션 id — 없으면 C1이 하듯 새로 만든다 */
     public Long activeSessionId() {
         Long found = tx.execute(s -> entityManager.createQuery(
