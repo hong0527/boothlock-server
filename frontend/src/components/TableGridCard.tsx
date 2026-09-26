@@ -1,5 +1,6 @@
-import { formatElapsedClock, isLongWait } from '../lib/time'
+import { formatElapsedClock } from '../lib/time'
 import { tableNumberLabel } from '../lib/tableLabel'
+import { tableTierOf, type TableTier } from '../lib/tableTier'
 import type { TableStatusInfo } from '../types/table'
 
 /** 그립 아이콘(6점) — Figma 686:2223, 편집 모드에서 카드를 드래그로 옮기는 손잡이 */
@@ -27,14 +28,19 @@ type TableGridCardProps = {
   dragging?: boolean
 }
 
+const TIER_CARD_CLASS: Record<TableTier, string> = {
+  empty: 'border-neutral-200 bg-neutral-50 text-neutral-900',
+  seated: 'border-primary-100 bg-neutral-50 text-neutral-900',
+  longWait: 'border-transparent bg-primary-100 text-white',
+}
+
 /**
  * 테이블-홈 카드 (Figma 672:1247) — 정사각형, "테이블" 글자 없이 번호+경과시간만.
- * 손님이 있으면(OCCUPIED) 초록으로 채운다. 자릿세 등 항목 상세는 카드가 아니라 눌렀을 때 여는
- * 결제 모달(PaymentModal)에서 본다 — 카드는 한눈에 보는 상태 표시 전용(9/23 피드백 "2단계 구조").
+ * 자릿세 등 항목 상세는 카드가 아니라 눌렀을 때 여는 결제 모달(PaymentModal)에서 본다 — 카드는
+ * 한눈에 보는 상태 표시 전용(9/23 피드백 "2단계 구조").
  */
 export default function TableGridCard({ table, editMode, onClick, now, onDragStart, dragging }: TableGridCardProps) {
-  const longWait = isLongWait(table.firstOrderAt, now)
-  const occupied = table.status === 'OCCUPIED'
+  const tier = tableTierOf(table, now)
 
   return (
     // 바깥 상자는 항상 96×96(lib/gridDrag.ts GRID_CARD_SIZE) — 그립은 이 상자 밖 위로 겹쳐 그려서
@@ -54,22 +60,12 @@ export default function TableGridCard({ table, editMode, onClick, now, onDragSta
         type="button"
         onClick={onClick}
         disabled={editMode}
-        className={`flex h-24 w-24 flex-col items-center justify-center gap-0.5 rounded-2xl border text-center ${
-          occupied
-            ? 'border-transparent bg-primary-100 text-white'
-            : 'border-neutral-200 bg-neutral-50 text-neutral-900'
-        }`}
+        className={`flex h-24 w-24 flex-col items-center justify-center gap-0.5 rounded-2xl border-2 text-center ${TIER_CARD_CLASS[tier]}`}
       >
         <span className="text-2xl leading-none font-semibold tracking-[-0.04em]">{tableNumberLabel(table.label)}</span>
         {/* 주문 전에는 표시하지 않는다 — 손님이 앉기만 하고 아직 주문이 없으면 숫자만 보인다 */}
         {table.firstOrderAt && (
-          <span
-            className={`text-xs leading-none tracking-[-0.04em] ${
-              longWait ? 'text-red-500' : occupied ? 'text-white' : 'text-neutral-500'
-            }`}
-          >
-            {formatElapsedClock(table.firstOrderAt, now)}
-          </span>
+          <span className="text-xs leading-none tracking-[-0.04em]">{formatElapsedClock(table.firstOrderAt, now)}</span>
         )}
       </button>
     </div>
