@@ -18,7 +18,7 @@ function LiveClock() {
   const ss = String(time.getSeconds()).padStart(2, '0')
   const weekday = WEEKDAY_LABEL[time.getDay()]
   return (
-    <span className="absolute right-8 text-xl leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-400">
+    <span className="absolute right-8 text-3xl leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
       ({weekday}) {hh}:{mm}:{ss}
     </span>
   )
