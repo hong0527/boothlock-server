@@ -106,26 +106,20 @@ export default function TableHomePage() {
     })
   }
 
-  // 서버는 "가장 큰 번호(마지막) 테이블"만 삭제를 허용한다 — 선택한 것들을 번호 큰 순으로 지운다.
-  // 선택 안 한 더 큰 번호 테이블이 남아있으면 거기서 409로 막힌다 — 성공한 만큼만 선택에서 지우고
-  // 삭제 모드는 그대로 둔다(막힌 테이블을 추가로 선택해서 바로 다시 시도할 수 있게)
-  const handleConfirmDelete = async () => {
-    if (tableActionBusy || selectedForDelete.size === 0) return
-    if (!window.confirm(`선택한 테이블 ${selectedForDelete.size}개를 삭제할까요?`)) return
-    const targets = [...selectedForDelete]
-      .map((id) => tables.find((t) => t.id === id))
-      .filter((t): t is TableStatusInfo => t != null)
-      .sort((a, b) => compareTableLabels(b.label, a.label))
-
+  // 서버는 "가장 큰 번호(마지막) 테이블"만 삭제를 허용한다 — 큰 순으로 지우다 막히면(사용 중이거나
+  // 대상 밖의 더 큰 번호가 남아있으면) 그 밑으로는 전부 같은 이유로 또 막히므로 거기서 멈춘다.
+  // "삭제하기"(선택분)/"전체 삭제"가 이 함수 하나를 공유한다.
+  const deleteTablesDescending = async (targets: TableStatusInfo[]) => {
+    const sorted = [...targets].sort((a, b) => compareTableLabels(b.label, a.label))
     setTableActionBusy(true)
     setTableError(null)
     const succeededIds = new Set<number>()
     try {
-      for (const table of targets) {
+      for (const table of sorted) {
         const ok = await deleteTable(table.id)
         if (!ok) {
           setTableError(
-            `${displayTableLabel(table.label)}을(를) 삭제하지 못했어요 — 더 큰 번호의 테이블도 함께 선택해야 할 수 있어요.`,
+            `${displayTableLabel(table.label)}을(를) 삭제하지 못했어요 — 사용 중이거나, 더 큰 번호의 테이블을 먼저 지워야 할 수 있어요.`,
           )
           break
         }
@@ -136,9 +130,34 @@ export default function TableHomePage() {
     } finally {
       setTableActionBusy(false)
     }
-    const allSucceeded = succeededIds.size === targets.length
+    return succeededIds
+  }
+
+  // 선택 안 한 더 큰 번호 테이블이 남아있으면 막힌다 — 성공한 만큼만 선택에서 지우고 삭제 모드는
+  // 그대로 둔다(막힌 테이블을 추가로 선택해서 바로 다시 시도할 수 있게)
+  const handleConfirmDelete = async () => {
+    if (tableActionBusy || selectedForDelete.size === 0) return
+    if (!window.confirm(`선택한 테이블 ${selectedForDelete.size}개를 삭제할까요?`)) return
+    const targets = [...selectedForDelete]
+      .map((id) => tables.find((t) => t.id === id))
+      .filter((t): t is TableStatusInfo => t != null)
+    const succeededIds = await deleteTablesDescending(targets)
     setSelectedForDelete((prev) => new Set([...prev].filter((id) => !succeededIds.has(id))))
-    if (allSucceeded) setDeleteMode(false) // 전부 지웠을 때만 선택 모드를 닫는다
+    if (succeededIds.size === targets.length) setDeleteMode(false) // 전부 지웠을 때만 선택 모드를 닫는다
+  }
+
+  // 전체 삭제 — 큰 번호부터 순서대로 지우니 "사용 중"인 테이블에서만 막힌다(선택 누락으로 막힐 일은 없다).
+  // 막히면 그 테이블과 그 아래 번호들이 선택 상태로 남아 바로 개별 삭제를 이어갈 수 있다
+  const handleDeleteAllTables = async () => {
+    if (tableActionBusy || tables.length === 0) return
+    if (!window.confirm(`테이블 전체 ${tables.length}개를 모두 삭제할까요? 되돌릴 수 없어요.`)) return
+    const succeededIds = await deleteTablesDescending(tables)
+    if (succeededIds.size === tables.length) {
+      setSelectedForDelete(new Set())
+      setDeleteMode(false)
+    } else {
+      setSelectedForDelete(new Set(tables.filter((t) => !succeededIds.has(t.id)).map((t) => t.id)))
+    }
   }
 
   // 포인터 위치를 그리드 컨테이너 기준 칸(행/열)으로 바꾼다 — 카드 중심이 손가락/커서 아래 오게 카드 절반만큼 보정.
@@ -250,6 +269,9 @@ export default function TableHomePage() {
           <>
             <PillButton type="button" onClick={cancelDeleteMode} disabled={tableActionBusy}>
               취소
+            </PillButton>
+            <PillButton type="button" onClick={handleDeleteAllTables} disabled={tableActionBusy || tables.length === 0}>
+              전체 삭제
             </PillButton>
             <PillButton
               type="button"
