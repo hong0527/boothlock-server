@@ -37,11 +37,12 @@ export type OrderSummary = {
   sessionId: number | null
 }
 
-/** O10 응답의 미확인 호출 1건 (DashboardResponse.CallSummary). O15 확인(ack)하면 목록에서 빠진다 */
+/** O10 응답의 미확인 호출 1건 (DashboardResponse.CallSummary). O15 확인(ack)하면 목록에서 빠진다
+ * PAYMENT(v0.6.11, 명세서 밖) — 손님이 계좌이체 후 입금을 알리는 결제확인 전용 호출. 일반 호출과 쿨다운이 분리된다 */
 export type CallSummary = {
   callId: number
   tableLabel: string
-  reason: 'HELP' | 'WATER' | 'ETC'
+  reason: 'HELP' | 'WATER' | 'ETC' | 'PAYMENT'
   createdAt: string
 }
 
@@ -74,4 +75,5 @@ export const CALL_REASON_LABEL: Record<CallSummary['reason'], string> = {
   HELP: '직원 호출',
   WATER: '물·수저',
   ETC: '기타',
+  PAYMENT: '결제 확인',
 }
