@@ -7,6 +7,8 @@ const NAV_ITEMS = [
   { to: '/settings', label: '설정' },
 ]
 
+const WEEKDAY_LABEL = ['일', '월', '화', '수', '목', '금', '토']
+
 /** 상단 상시 시계 — 1초 간격으로만 이 부분을 다시 그린다(TopNav 전체를 초 단위로 리렌더하지 않게 분리) */
 function LiveClock() {
   const now = useNow(1000)
@@ -14,9 +16,10 @@ function LiveClock() {
   const hh = String(time.getHours()).padStart(2, '0')
   const mm = String(time.getMinutes()).padStart(2, '0')
   const ss = String(time.getSeconds()).padStart(2, '0')
+  const weekday = WEEKDAY_LABEL[time.getDay()]
   return (
-    <span className="absolute right-8 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-400">
-      {hh}:{mm}:{ss}
+    <span className="absolute right-8 text-xl leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-400">
+      ({weekday}) {hh}:{mm}:{ss}
     </span>
   )
 }
