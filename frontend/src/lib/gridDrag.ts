@@ -34,3 +34,15 @@ export function resolveDrop(
   if (occupant) changes.push({ tableId: occupant.tableId, row: origin.row, col: origin.col })
   return changes
 }
+
+/** 새 테이블을 "테이블 추가"로 만들면 바로 앉힐 자리 — 행 우선으로 훑어 처음 비어있는 칸.
+ * columns는 한 행에 둘 칸 수(Figma 686:2223 예시가 10열이라 그 값을 기본으로 쓴다) */
+export function nextFreeCell(placed: DropTarget[], columns: number, maxIndex: number): DropTarget {
+  const occupied = new Set(placed.map((p) => `${p.row},${p.col}`))
+  for (let row = 1; row <= maxIndex; row++) {
+    for (let col = 1; col <= columns; col++) {
+      if (!occupied.has(`${row},${col}`)) return { row, col }
+    }
+  }
+  return { row: maxIndex, col: columns } // 이론상 꽉 찼을 때 — 마지막 칸에 겹쳐 놓고 사용자가 옮기게 한다
+}

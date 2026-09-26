@@ -4,7 +4,14 @@ import PillButton from '../components/PillButton'
 import TableGridCard from '../components/TableGridCard'
 import TopNav from '../components/TopNav'
 import { useTableOrders } from '../context/TableOrderContext'
-import { GRID_CARD_SIZE, GRID_CELL_PITCH, pixelToGridIndex, resolveDrop, type PlacedTable } from '../lib/gridDrag'
+import {
+  GRID_CARD_SIZE,
+  GRID_CELL_PITCH,
+  nextFreeCell,
+  pixelToGridIndex,
+  resolveDrop,
+  type PlacedTable,
+} from '../lib/gridDrag'
 import { planGridSave } from '../lib/gridSavePlan'
 import { useNow } from '../lib/useNow'
 import { shouldShowTableEmptyState } from '../lib/tableEmptyState'
@@ -16,6 +23,8 @@ const MIN_GRID_INDEX = 1
 const MAX_GRID_INDEX = 50
 const MIN_COLUMNS = 1
 const MIN_ROWS = 1
+// "테이블 추가" 시 자동 배치할 때 한 행에 둘 칸 수 — Figma(686:2223) 예시가 10열
+const AUTO_PLACE_COLUMNS = 10
 
 type GridPos = { row: number | null; col: number | null }
 // target(스냅된 칸)은 항상 pointermove/pointerdown 핸들러 안에서 미리 계산해 둔다
@@ -29,6 +38,9 @@ export default function TableHomePage() {
   // 편집 모드 중 드래그로 바꾼(아직 저장 안 한) 행/열 — "저장하기"를 눌러야 서버에 반영된다
   const [gridEdits, setGridEdits] = useState<Record<number, GridPos>>({})
   const [drag, setDrag] = useState<DragState | null>(null)
+  // 일괄 삭제 선택 모드 — "테이블 삭제"를 누르면 켜진다. 편집 모드(드래그 배치)와 동시에 켤 수 없다
+  const [deleteMode, setDeleteMode] = useState(false)
+  const [selectedForDelete, setSelectedForDelete] = useState<ReadonlySet<number>>(() => new Set())
   // 추가·삭제·배치 저장 중 연타를 막는다 — 안 막으면 "테이블 추가"는 두 개 생기고, 삭제는 DELETE가 두 번 나간다
   const [tableActionBusy, setTableActionBusy] = useState(false)
   const [tableError, setTableError] = useState<string | null>(null)
@@ -50,34 +62,83 @@ export default function TableHomePage() {
   const columns = Math.max(MIN_COLUMNS, ...placedEntries.map((e) => e.pos.col))
   const rows = Math.max(MIN_ROWS, ...placedEntries.map((e) => e.pos.row))
 
+  // 만들자마자 다음 빈 칸에 바로 앉힌다 — 미배치 트레이에 두고 따로 드래그하게 하던 걸 없앴다
   const handleAddTable = async () => {
     if (tableActionBusy) return
     setTableActionBusy(true)
     setTableError(null)
     try {
-      await addTable()
+      const newId = await addTable()
+      if (newId != null) {
+        const cell = nextFreeCell(
+          placedEntries.map((e) => e.pos),
+          AUTO_PLACE_COLUMNS,
+          MAX_GRID_INDEX,
+        )
+        const placed = await commitGridPosition(newId, cell.row, cell.col)
+        if (!placed) setTableError('테이블을 추가했지만 자리 배치는 실패했어요 — 미배치 테이블에서 직접 옮겨주세요.')
+      }
     } catch {
-      // addTable이 던지는 건 401(apiFetch가 로그인 화면으로 보내는 중)이나 망 끊김이다.
+      // addTable/commitGridPosition이 던지는 건 401(apiFetch가 로그인 화면으로 보내는 중)이나 망 끊김이다.
       if (getAuthToken()) setTableError('테이블을 추가하지 못했어요. 네트워크 상태를 확인해주세요.')
     } finally {
       setTableActionBusy(false)
     }
   }
 
-  // 개별 카드마다 삭제 버튼을 두지 않고, 항상 라벨이 가장 큰(마지막) 테이블만 지운다
-  const handleDeleteLastTable = async () => {
-    if (tables.length === 0 || tableActionBusy) return
-    const lastTable = tables.reduce((max, t) => (compareTableLabels(t.label, max.label) > 0 ? t : max))
-    if (!window.confirm(`${displayTableLabel(lastTable.label)}을(를) 삭제할까요?`)) return
+  const enterDeleteMode = () => {
+    if (tables.length === 0) return
+    setSelectedForDelete(new Set())
+    setDeleteMode(true)
+  }
+
+  const cancelDeleteMode = () => {
+    setDeleteMode(false)
+    setSelectedForDelete(new Set())
+  }
+
+  const toggleDeleteSelect = (tableId: number) => {
+    setSelectedForDelete((prev) => {
+      const next = new Set(prev)
+      if (next.has(tableId)) next.delete(tableId)
+      else next.add(tableId)
+      return next
+    })
+  }
+
+  // 서버는 "가장 큰 번호(마지막) 테이블"만 삭제를 허용한다 — 선택한 것들을 번호 큰 순으로 지운다.
+  // 선택 안 한 더 큰 번호 테이블이 남아있으면 거기서 409로 막힌다 — 성공한 만큼만 선택에서 지우고
+  // 삭제 모드는 그대로 둔다(막힌 테이블을 추가로 선택해서 바로 다시 시도할 수 있게)
+  const handleConfirmDelete = async () => {
+    if (tableActionBusy || selectedForDelete.size === 0) return
+    if (!window.confirm(`선택한 테이블 ${selectedForDelete.size}개를 삭제할까요?`)) return
+    const targets = [...selectedForDelete]
+      .map((id) => tables.find((t) => t.id === id))
+      .filter((t): t is TableStatusInfo => t != null)
+      .sort((a, b) => compareTableLabels(b.label, a.label))
+
     setTableActionBusy(true)
     setTableError(null)
+    const succeededIds = new Set<number>()
     try {
-      await deleteTable(lastTable.id)
+      for (const table of targets) {
+        const ok = await deleteTable(table.id)
+        if (!ok) {
+          setTableError(
+            `${displayTableLabel(table.label)}을(를) 삭제하지 못했어요 — 더 큰 번호의 테이블도 함께 선택해야 할 수 있어요.`,
+          )
+          break
+        }
+        succeededIds.add(table.id)
+      }
     } catch {
       if (getAuthToken()) setTableError('테이블을 삭제하지 못했어요. 네트워크 상태를 확인해주세요.')
     } finally {
       setTableActionBusy(false)
     }
+    const allSucceeded = succeededIds.size === targets.length
+    setSelectedForDelete((prev) => new Set([...prev].filter((id) => !succeededIds.has(id))))
+    if (allSucceeded) setDeleteMode(false) // 전부 지웠을 때만 선택 모드를 닫는다
   }
 
   // 포인터 위치를 그리드 컨테이너 기준 칸(행/열)으로 바꾼다 — 카드 중심이 손가락/커서 아래 오게 카드 절반만큼 보정.
@@ -185,12 +246,25 @@ export default function TableHomePage() {
       <TopNav />
 
       <div className="flex justify-end gap-3 px-10 py-6">
-        {editMode ? (
+        {editMode && deleteMode ? (
+          <>
+            <PillButton type="button" onClick={cancelDeleteMode} disabled={tableActionBusy}>
+              취소
+            </PillButton>
+            <PillButton
+              type="button"
+              onClick={handleConfirmDelete}
+              disabled={tableActionBusy || selectedForDelete.size === 0}
+            >
+              삭제하기{selectedForDelete.size > 0 ? ` (${selectedForDelete.size})` : ''}
+            </PillButton>
+          </>
+        ) : editMode ? (
           <>
             <PillButton type="button" onClick={handleAddTable} disabled={tableActionBusy}>
               테이블 추가
             </PillButton>
-            <PillButton type="button" onClick={handleDeleteLastTable} disabled={tables.length === 0 || tableActionBusy}>
+            <PillButton type="button" onClick={enterDeleteMode} disabled={tables.length === 0 || tableActionBusy}>
               테이블 삭제
             </PillButton>
             <PillButton type="button" onClick={handleSaveGridEdits} disabled={tableActionBusy}>
@@ -217,17 +291,21 @@ export default function TableHomePage() {
 
       {editMode && unplacedEntries.length > 0 && (
         <div className="border-b border-neutral-200 bg-neutral-100 px-10 py-4">
-          <p className="mb-2 text-sm text-neutral-400">미배치 테이블 — 그립을 눌러 그리드로 드래그해 배치하세요</p>
+          <p className="mb-2 text-sm text-neutral-400">
+            {deleteMode ? '미배치 테이블 — 눌러서 삭제할 테이블을 고르세요' : '미배치 테이블 — 그립을 눌러 그리드로 드래그해 배치하세요'}
+          </p>
           <div className="flex flex-wrap gap-4 pt-5">
             {unplacedEntries.map(({ table }) => (
               <TableGridCard
                 key={table.id}
                 table={table}
                 editMode
-                onClick={() => {}}
+                onClick={() => (deleteMode ? toggleDeleteSelect(table.id) : undefined)}
                 now={now}
-                onDragStart={startDrag(table.id)}
+                onDragStart={deleteMode ? undefined : startDrag(table.id)}
                 dragging={drag?.tableId === table.id}
+                selectMode={deleteMode}
+                selected={selectedForDelete.has(table.id)}
               />
             ))}
           </div>
@@ -262,10 +340,15 @@ export default function TableHomePage() {
             <TableGridCard
               table={table}
               editMode={editMode}
-              onClick={() => !editMode && setSelectedTableId(table.id)}
+              onClick={() => {
+                if (deleteMode) toggleDeleteSelect(table.id)
+                else if (!editMode) setSelectedTableId(table.id)
+              }}
               now={now}
-              onDragStart={editMode ? startDrag(table.id) : undefined}
+              onDragStart={editMode && !deleteMode ? startDrag(table.id) : undefined}
               dragging={drag?.tableId === table.id}
+              selectMode={deleteMode}
+              selected={selectedForDelete.has(table.id)}
             />
           </div>
         ))}

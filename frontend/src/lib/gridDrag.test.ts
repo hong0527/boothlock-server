@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampIndex, pixelToGridIndex, resolveDrop } from './gridDrag'
+import { clampIndex, nextFreeCell, pixelToGridIndex, resolveDrop } from './gridDrag'
 
 describe('clampIndex', () => {
   it('범위 안이면 그대로', () => expect(clampIndex(5, 1, 50)).toBe(5))
@@ -53,5 +53,24 @@ describe('resolveDrop — 드롭 대상 칸이 비어있는지/차 있는지에 
 
   it('같은 칸에 도로 놓으면(움직이지 않음) 변경 없음', () => {
     expect(resolveDrop(1, { row: 2, col: 2 }, { row: 2, col: 2 }, [{ tableId: 1, row: 2, col: 2 }])).toEqual([])
+  })
+})
+
+describe('nextFreeCell — "테이블 추가" 시 자동 배치할 다음 빈 칸', () => {
+  it('아무것도 없으면 (1,1)', () => {
+    expect(nextFreeCell([], 10, 50)).toEqual({ row: 1, col: 1 })
+  })
+
+  it('한 행이 다 차면 다음 행 첫 칸으로', () => {
+    const placed = Array.from({ length: 10 }, (_, i) => ({ row: 1, col: i + 1 }))
+    expect(nextFreeCell(placed, 10, 50)).toEqual({ row: 2, col: 1 })
+  })
+
+  it('중간에 빈 칸이 있으면(삭제 등) 그 칸을 먼저 채운다', () => {
+    const placed = [
+      { row: 1, col: 1 },
+      { row: 1, col: 3 },
+    ]
+    expect(nextFreeCell(placed, 10, 50)).toEqual({ row: 1, col: 2 })
   })
 })

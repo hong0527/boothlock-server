@@ -26,6 +26,9 @@ type TableGridCardProps = {
   onDragStart?: (e: React.PointerEvent) => void
   /** 지금 이 카드가 드래그되어 옮겨지는 중(원래 자리는 흐리게 비워 보여준다) */
   dragging?: boolean
+  /** 일괄 삭제 선택 모드 — 켜지면 배색·경과시간·그립을 다 무시하고 흰 배경(선택 시 빨강)에 번호만 보여준다 */
+  selectMode?: boolean
+  selected?: boolean
 }
 
 const TIER_CARD_CLASS: Record<TableTier, string> = {
@@ -39,14 +42,28 @@ const TIER_CARD_CLASS: Record<TableTier, string> = {
  * 자릿세 등 항목 상세는 카드가 아니라 눌렀을 때 여는 결제 모달(PaymentModal)에서 본다 — 카드는
  * 한눈에 보는 상태 표시 전용(9/23 피드백 "2단계 구조").
  */
-export default function TableGridCard({ table, editMode, onClick, now, onDragStart, dragging }: TableGridCardProps) {
+export default function TableGridCard({
+  table,
+  editMode,
+  onClick,
+  now,
+  onDragStart,
+  dragging,
+  selectMode,
+  selected,
+}: TableGridCardProps) {
   const tier = tableTierOf(table, now)
+  const cardClass = selectMode
+    ? selected
+      ? 'border-transparent bg-red-500 text-white'
+      : 'border-neutral-200 bg-neutral-50 text-neutral-900'
+    : TIER_CARD_CLASS[tier]
 
   return (
     // 바깥 상자는 항상 96×96(lib/gridDrag.ts GRID_CARD_SIZE) — 그립은 이 상자 밖 위로 겹쳐 그려서
     // 그리드 절대좌표 배치(TableHomePage)가 그립 높이만큼 밀리지 않게 한다
     <div className={`relative h-24 w-24 ${dragging ? 'opacity-30' : ''}`}>
-      {editMode && (
+      {editMode && !selectMode && (
         <button
           type="button"
           onPointerDown={onDragStart}
@@ -59,12 +76,12 @@ export default function TableGridCard({ table, editMode, onClick, now, onDragSta
       <button
         type="button"
         onClick={onClick}
-        disabled={editMode}
-        className={`flex h-24 w-24 flex-col items-center justify-center gap-0.5 rounded-2xl border-2 text-center ${TIER_CARD_CLASS[tier]}`}
+        disabled={editMode && !selectMode}
+        className={`flex h-24 w-24 flex-col items-center justify-center gap-0.5 rounded-2xl border-2 text-center ${cardClass}`}
       >
         <span className="text-2xl leading-none font-semibold tracking-[-0.04em]">{tableNumberLabel(table.label)}</span>
-        {/* 주문 전에는 표시하지 않는다 — 손님이 앉기만 하고 아직 주문이 없으면 숫자만 보인다 */}
-        {table.firstOrderAt && (
+        {/* 삭제 선택 모드에서는 배색 신호(경과시간)를 아예 안 보여준다 — 번호만으로 고르게 */}
+        {!selectMode && table.firstOrderAt && (
           <span className="text-xs leading-none tracking-[-0.04em]">{formatElapsedClock(table.firstOrderAt, now)}</span>
         )}
       </button>
