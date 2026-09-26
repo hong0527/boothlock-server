@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
 import { CopyIcon, InfoIcon } from '../../components/customer/icons'
+import StaffCallConfirmModal from '../../components/customer/StaffCallConfirmModal'
 import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { customerApiFetch } from '../../lib/customerApiFetch'
+import { requestStaffCall } from '../../lib/staffCall'
 import type { OrderSummary } from '../../types/customer'
 
 export default function PaymentInfoPage() {
@@ -11,6 +13,8 @@ export default function PaymentInfoPage() {
   const [orders, setOrders] = useState<OrderSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [callMessage, setCallMessage] = useState<string | null>(null)
+  const [showCallConfirm, setShowCallConfirm] = useState(false)
 
   useEffect(() => {
     customerApiFetch('/api/v1/orders')
@@ -59,6 +63,13 @@ export default function PaymentInfoPage() {
     } catch {
       setCopied(false)
     }
+  }
+
+  // 결제확인 전용 직원호출(PAYMENT, v0.6.11) — 일반 호출(HELP)과 쿨다운이 분리돼 있어 여기서 눌러도 막히지 않는다
+  const handleCallStaff = async () => {
+    setShowCallConfirm(false)
+    const message = await requestStaffCall('PAYMENT')
+    if (message) setCallMessage(message)
   }
 
   return (
@@ -120,9 +131,20 @@ export default function PaymentInfoPage() {
             {copied && <p className="mt-2 text-center text-caption text-neutral-400">복사됐어요.</p>}
           </>
         )}
+
+        {callMessage && <p className="mt-4 text-center text-body-3 text-neutral-400">{callMessage}</p>}
       </div>
 
       <div className="flex flex-col gap-[6px] px-[18px] pb-8">
+        {unpaidOrders.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowCallConfirm(true)}
+            className={`${CUSTOMER_BUTTON_BASE} border border-primary-300 bg-white text-heading-3 text-primary-300`}
+          >
+            입금했어요, 직원 호출
+          </button>
+        )}
         <button
           type="button"
           onClick={() => navigate('/order-history', { replace: true })}
@@ -138,6 +160,10 @@ export default function PaymentInfoPage() {
           완료
         </button>
       </div>
+
+      {showCallConfirm && (
+        <StaffCallConfirmModal onConfirm={handleCallStaff} onCancel={() => setShowCallConfirm(false)} />
+      )}
     </div>
   )
 }
