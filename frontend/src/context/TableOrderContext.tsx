@@ -27,7 +27,8 @@ type TableOrderContextValue = {
   loaded: boolean
   /** 폴링을 기다리지 않고 즉시 다시 읽는다 — 퇴실 직후 카드가 바로 비게 */
   refetch: () => Promise<TableStatusInfo[]>
-  addTable: () => Promise<void>
+  /** 새 테이블의 id를 돌려준다(자동 배치용) — 요청 자체가 실패하면 null */
+  addTable: () => Promise<number | null>
   /** 드래그 중 로컬 좌표만 갱신(시각 피드백) — 서버 저장은 commitTablePosition이 한다 */
   moveTable: (tableId: number, x: number, y: number) => void
   /** O22 — 드래그가 끝났을 때(pointerup) 한 번 호출해 저장한다 */
@@ -37,8 +38,9 @@ type TableOrderContextValue = {
   /** O22b — 파일럿 전용, 운영자가 직접 입력한 행/열을 저장한다. 둘 다 null이면 미배치로 되돌린다. 성공 여부를 돌려준다 —
    * 실패(예: 중복 좌표 409)했을 때 호출자가 사용자 입력을 그대로 남겨둘지(재시도 가능하게) 판단하는 데 쓴다 */
   commitGridPosition: (tableId: number, row: number | null, col: number | null) => Promise<boolean>
-  /** 테이블 삭제(숨김 처리) — 사용 중인 테이블은 서버가 409로 거부한다 */
-  deleteTable: (tableId: number) => Promise<void>
+  /** 테이블 삭제(숨김 처리) — 사용 중이거나 마지막 번호가 아니면 서버가 409로 거부한다.
+   * 성공(404=이미 지워짐 포함) 여부를 돌려준다 — 일괄 삭제 시 호출자가 어디서 멈출지 판단하는 데 쓴다 */
+  deleteTable: (tableId: number) => Promise<boolean>
 }
 
 const TableOrderContext = createContext<TableOrderContextValue | null>(null)
@@ -140,34 +142,37 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
     }
   }, [runRefetch])
 
-  const addTable = async () => {
+  const addTable: TableOrderContextValue['addTable'] = async () => {
     // 라벨 번호는 프론트가 계산하지 않는다 — 부스별 영구 카운터로 서버가 채번(삭제해도 재사용 안 함)
     const res = await apiFetch('/api/v1/admin/tables', { method: 'POST' })
     if (!res.ok) {
       setError(`테이블을 추가하지 못했어요 (${res.status})`)
-      return
+      return null
     }
-    // 그리드 좌표(파일럿)는 운영자가 숫자로 직접 입력한다 — 새 테이블은 항상 미배치 상태로 시작해 트레이에 나타난다
+    // 새 테이블은 항상 미배치(그리드 좌표 없음) 상태로 생겨서, 호출자가 바로 자리를 배치할 수 있게 id를 돌려준다
+    const created: { id: number } = await res.json()
     await refetch()
+    return created.id
   }
 
-  const deleteTable = async (tableId: number) => {
+  const deleteTable: TableOrderContextValue['deleteTable'] = async (tableId) => {
     const res = await apiFetch(`/api/v1/admin/tables/${tableId}`, { method: 'DELETE' })
     // 404는 실패가 아니라 이미 지워진 상태다 — 버튼 연타나 다른 기기의 동시 삭제로 중복 요청이 나가도
     // (실제로 재현됨: 같은 테이블에 DELETE 두 번 보내면 하나는 204, 하나는 404) "실패했다"고 잘못 띄우지 않는다
     if (res.status === 404) {
       setError(null)
       setTables((prev) => prev.filter((t) => t.id !== tableId))
-      return
+      return true
     }
     if (!res.ok) {
-      setError(
-        res.status === 409 ? '사용 중인 테이블은 삭제할 수 없어요.' : `테이블을 삭제하지 못했어요 (${res.status})`,
-      )
-      return
+      // 서버 메시지를 그대로 보여준다 — "사용 중" / "마지막 번호만" 두 가지 409 사유를 구분해서 알려줄 수 있게
+      const body: { error?: { message?: string } } | null = await res.json().catch(() => null)
+      setError(body?.error?.message ?? `테이블을 삭제하지 못했어요 (${res.status})`)
+      return false
     }
     setError(null)
     setTables((prev) => prev.filter((t) => t.id !== tableId))
+    return true
   }
 
   const moveTable: TableOrderContextValue['moveTable'] = (tableId, x, y) => {

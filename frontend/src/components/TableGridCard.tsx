@@ -1,87 +1,88 @@
-import { formatClockTime, isLongWait } from '../lib/time'
-import { displayTableLabel } from '../lib/tableLabel'
+import { formatElapsedClock } from '../lib/time'
+import { tableNumberLabel } from '../lib/tableLabel'
+import { tableTierOf, type TableTier } from '../lib/tableTier'
 import type { TableStatusInfo } from '../types/table'
 
-type GridDraft = { row: string; col: string }
+/** 그립 아이콘(6점) — Figma 686:2223, 편집 모드에서 카드를 드래그로 옮기는 손잡이 */
+function GripDots({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 8" className={className} fill="currentColor">
+      {[0, 6, 12].map((x) => (
+        <g key={x}>
+          <circle cx={x + 2} cy={2} r={1.4} />
+          <circle cx={x + 2} cy={6} r={1.4} />
+        </g>
+      ))}
+    </svg>
+  )
+}
 
 type TableGridCardProps = {
   table: TableStatusInfo
   editMode: boolean
   onClick: () => void
-  /** 편집 모드에서 행/열 입력값(문자열, 미확정) — 편집 모드가 아니면 불필요 */
-  gridDraft?: GridDraft
-  onGridDraftChange?: (draft: GridDraft) => void
-  /** 경과시간 색상 판정 기준 시각(ms) — 첫 주문 후 2시간을 넘기면 시각 텍스트가 빨강(#105) */
   now: number
+  /** 편집 모드 전용 — 그립을 눌러 드래그를 시작한다 */
+  onDragStart?: (e: React.PointerEvent) => void
+  /** 지금 이 카드가 드래그되어 옮겨지는 중(원래 자리는 흐리게 비워 보여준다) */
+  dragging?: boolean
+  /** 일괄 삭제 선택 모드 — 켜지면 배색·경과시간·그립을 다 무시하고 흰 배경(선택 시 빨강)에 번호만 보여준다 */
+  selectMode?: boolean
+  selected?: boolean
 }
 
-export default function TableGridCard({ table, editMode, onClick, gridDraft, onGridDraftChange, now }: TableGridCardProps) {
-  const longWait = isLongWait(table.firstOrderAt, now)
+const TIER_CARD_CLASS: Record<TableTier, string> = {
+  empty: 'border-neutral-200 bg-neutral-50 text-neutral-900',
+  seated: 'border-primary-100 bg-neutral-50 text-neutral-900',
+  longWait: 'border-transparent bg-primary-100 text-white',
+}
+
+/**
+ * 테이블-홈 카드 (Figma 672:1247) — 정사각형, "테이블" 글자 없이 번호+경과시간만.
+ * 자릿세 등 항목 상세는 카드가 아니라 눌렀을 때 여는 결제 모달(PaymentModal)에서 본다 — 카드는
+ * 한눈에 보는 상태 표시 전용(9/23 피드백 "2단계 구조").
+ */
+export default function TableGridCard({
+  table,
+  editMode,
+  onClick,
+  now,
+  onDragStart,
+  dragging,
+  selectMode,
+  selected,
+}: TableGridCardProps) {
+  const tier = tableTierOf(table, now)
+  const cardClass = selectMode
+    ? selected
+      ? 'border-transparent bg-red-500 text-white'
+      : 'border-neutral-200 bg-neutral-50 text-neutral-900'
+    : TIER_CARD_CLASS[tier]
+
   return (
-    <div className="w-[200px]">
-      {editMode && onGridDraftChange && (
-        <div className="mb-2 flex items-center gap-2">
-          <input
-            type="number"
-            min={1}
-            max={50}
-            placeholder="행"
-            aria-label={`${displayTableLabel(table.label)} 행 번호`}
-            value={gridDraft?.row ?? ''}
-            onChange={(e) => onGridDraftChange({ row: e.target.value, col: gridDraft?.col ?? '' })}
-            className="w-16 rounded-lg border border-neutral-300 px-2 py-1 text-center text-sm"
-          />
-          <span className="text-neutral-400">행</span>
-          <input
-            type="number"
-            min={1}
-            max={50}
-            placeholder="열"
-            aria-label={`${displayTableLabel(table.label)} 열 번호`}
-            value={gridDraft?.col ?? ''}
-            onChange={(e) => onGridDraftChange({ row: gridDraft?.row ?? '', col: e.target.value })}
-            className="w-16 rounded-lg border border-neutral-300 px-2 py-1 text-center text-sm"
-          />
-          <span className="text-neutral-400">열</span>
-        </div>
+    // 바깥 상자는 항상 96×96(lib/gridDrag.ts GRID_CARD_SIZE) — 그립은 이 상자 밖 위로 겹쳐 그려서
+    // 그리드 절대좌표 배치(TableHomePage)가 그립 높이만큼 밀리지 않게 한다
+    <div className={`relative h-24 w-24 ${dragging ? 'opacity-30' : ''}`}>
+      {editMode && !selectMode && (
+        <button
+          type="button"
+          onPointerDown={onDragStart}
+          aria-label={`${tableNumberLabel(table.label)}번 테이블 옮기기`}
+          className="absolute -top-5 left-1/2 -translate-x-1/2 touch-none rounded p-1 text-neutral-400 active:text-neutral-600"
+        >
+          <GripDots className="h-2 w-4" />
+        </button>
       )}
       <button
         type="button"
         onClick={onClick}
-        className="flex min-h-[240px] w-[200px] flex-col rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-left"
+        disabled={editMode && !selectMode}
+        className={`flex h-24 w-24 flex-col items-center justify-center gap-0.5 rounded-2xl border-2 text-center ${cardClass}`}
       >
-        <div className="flex items-start justify-between">
-          <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
-            {displayTableLabel(table.label)}
-          </span>
-          {/* QR을 처음 찍은 시각(session.startedAt)이 아니라 지금 손님의 첫 주문 시각 — 주문 전에는 표시하지 않는다.
-              2시간을 넘기면 색만 빨강으로 바꾼다 — 칸 배경은 그대로, 고객 비노출, 자동 조치 없음 */}
-          {table.firstOrderAt && (
-            <span
-              className={`text-sm leading-[1.5] tracking-[-0.04em] ${longWait ? 'text-red-600' : 'text-neutral-900'}`}
-            >
-              {formatClockTime(table.firstOrderAt)}
-            </span>
-          )}
-        </div>
-
-        <div className="mt-4 flex flex-1 flex-col gap-1">
-          {table.orderItems.length === 0 ? (
-            <span className="text-base text-neutral-300">빈 테이블</span>
-          ) : (
-            table.orderItems.map((item) => (
-              <div key={item.menuName} className="flex items-center justify-between text-base text-neutral-900">
-                <span>{item.menuName}</span>
-                <span>{item.qty}</span>
-              </div>
-            ))
-          )}
-        </div>
-
-        {table.orderTotal > 0 && (
-          <span className="self-end text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
-            {table.orderTotal.toLocaleString()} 원
-          </span>
+        <span className="text-2xl leading-none font-semibold tracking-[-0.04em]">{tableNumberLabel(table.label)}</span>
+        {/* 삭제 선택 모드에서는 배색 신호(경과시간)를 아예 안 보여준다 — 번호만으로 고르게 */}
+        {!selectMode && table.firstOrderAt && (
+          <span className="text-xs leading-none tracking-[-0.04em]">{formatElapsedClock(table.firstOrderAt, now)}</span>
         )}
       </button>
     </div>
