@@ -91,7 +91,8 @@ export default function OrderHistoryPage() {
                     className="flex items-center justify-between py-2 text-body-1 text-neutral-900"
                   >
                     <span>{item.menuName}</span>
-                    <span>{item.qty}개</span>
+                    {/* 자릿세는 인원수라 "N명"으로 — 운영자 카드(OrderCard)와 같은 표기 */}
+                    <span>{item.itemType === 'SEAT_FEE' ? `${item.qty}명` : `${item.qty}개`}</span>
                   </div>
                 ))}
               </div>

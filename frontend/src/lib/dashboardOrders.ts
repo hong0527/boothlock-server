@@ -1,4 +1,4 @@
-import type { OrderStatus, OrderSummary } from '../types/dashboard'
+import type { CallSummary, OrderStatus, OrderSummary } from '../types/dashboard'
 
 /**
  * 주문현황 탭에 실제로 그릴 순서를 정한다.
@@ -22,4 +22,37 @@ import type { OrderStatus, OrderSummary } from '../types/dashboard'
 export function orderedForTab(status: OrderStatus, orders: OrderSummary[]): readonly OrderSummary[] {
   // reverse()는 제자리 뒤집기라 복사본에 쓴다 — 원본(state)을 건드리지 않는다
   return status === 'PENDING_APPROVAL' || status === 'RECEIVED' ? [...orders].reverse() : orders
+}
+
+/** 주문 금액 표시 — "12,000원". 운영자가 은행 앱 입금액과 바로 대조하는 숫자라 카드·확인창이 같은 형식을 쓴다 */
+export function formatWon(amount: number): string {
+  return `${amount.toLocaleString('ko-KR')}원`
+}
+
+export const REJECT_UNPAID_WARNING =
+  "손님이 이미 입금했다면 먼저 '결제 확인'을 누른 뒤 거절하세요 — 그래야 환불 대상으로 남습니다. 입금 전이면 그대로 거절."
+
+/**
+ * 승인대기 거절 확인 문구.
+ *
+ * 손님은 승인 전에 먼저 이체하라고 안내받는다. 미결제(UNPAID) 상태로 거절하면 환불필요로 남지 않아,
+ * 이미 들어온 돈을 돌려줄 대상에서 빠진다. 그래서 거절 전에 '결제 확인'부터 누르라고 알린다.
+ * 같은 테이블의 미확인 결제확인 호출(PAYMENT, "입금했어요")이 있으면 입금됐을 가능성이 높아 맨 앞에서 강조한다.
+ */
+export function rejectConfirmMessage(order: OrderSummary | undefined, calls: readonly CallSummary[]): string {
+  if (order && order.paymentStatus !== 'UNPAID') {
+    return '이 주문을 거절할까요? (이미 입금확인된 주문이라 환불필요로 남아요)'
+  }
+  const paymentCalled =
+    !!order?.tableLabel && calls.some((call) => call.reason === 'PAYMENT' && call.tableLabel === order.tableLabel)
+  const head = paymentCalled
+    ? "⚠️ 이 테이블에서 '입금했어요' 결제확인 호출이 와 있어요! 은행 앱에서 입금 여부를 꼭 확인하세요.\n\n"
+    : ''
+  return `${head}이 주문을 거절할까요?\n\n${REJECT_UNPAID_WARNING}`
+}
+
+/** 결제 확인(O11) 확인 문구 — 금액을 보여줘 은행 앱 입금액과 대조하게 한다 */
+export function confirmPaymentMessage(order: OrderSummary | undefined): string {
+  if (!order) return '입금을 확인 처리할까요?'
+  return `${order.orderNo} · ${formatWon(order.totalAmount)}\n입금을 확인 처리할까요?`
 }

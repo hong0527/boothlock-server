@@ -3,7 +3,8 @@ import OrderCard from '../components/OrderCard'
 import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
 import { getAuthToken, getStaff } from '../lib/auth'
-import { orderedForTab } from '../lib/dashboardOrders'
+import { confirmPaymentMessage, orderedForTab, rejectConfirmMessage } from '../lib/dashboardOrders'
+import { alertTitle, diffArrivals, snapshotOf, type ArrivalSnapshot } from '../lib/newArrivals'
 import { createPollGuard } from '../lib/pollGuard'
 import {
   ackCall,
@@ -24,6 +25,15 @@ import {
   type OrderSummary,
 } from '../types/dashboard'
 import { onResume } from '../lib/onResume'
+import {
+  acquireWakeLock,
+  isAlertPreferred,
+  playBeep,
+  releaseWakeLock,
+  setAlertPreferred,
+  unlockAudio,
+  vibrate,
+} from '../lib/staffAlert'
 
 // O28(v0.6.10) — 승인대기를 맨 앞에 둔다(Figma "주문현황-승인대기" 641:1362 탭 순서)
 const TABS: { status: OrderStatus; label: string }[] = [
@@ -66,6 +76,13 @@ export default function OrderStatusPage() {
 
   const pollGuard = useRef(createPollGuard())
 
+  // 새 주문·호출 알림 — 직전 성공 조회의 스냅샷과 비교한다(첫 조회는 null이라 알리지 않는다, lib/newArrivals)
+  const arrivalsRef = useRef<ArrivalSnapshot | null>(null)
+  // 알림 켜기(소리·화면 꺼짐 방지) — 설정은 safeStorage에 남겨 새로고침해도 유지한다
+  const [alertOn, setAlertOn] = useState(() => isAlertPreferred())
+  // 탭 제목을 되돌릴 원래 값 — 마운트 시점 제목
+  const baseTitleRef = useRef(typeof document === 'undefined' ? '' : document.title)
+
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(id)
@@ -83,8 +100,20 @@ export default function OrderStatusPage() {
       )
       // calls(미확인 호출)는 상태 필터와 무관하게 부스 전체가 실려 온다 — 어느 응답에서 읽어도 같다. 승인대기가
       // 첫 탭이라 그 응답에서 읽는다(예전엔 RECEIVED 응답 기준이었다)
-      setCalls(results[0].calls ?? [])
+      const nextCalls = results[0].calls ?? []
+      setCalls(nextCalls)
       setError(null)
+      // 주문이 들어와도 아무 표시가 없으면 바쁜 운영자가 못 본다 — 새로 생긴 승인대기·호출이 있으면 소리·진동으로 알린다
+      const snapshot = snapshotOf(results[0].orders, nextCalls)
+      const arrivals = diffArrivals(arrivalsRef.current, snapshot)
+      arrivalsRef.current = snapshot
+      if (arrivals.newPendingOrders + arrivals.newCalls > 0) {
+        playBeep()
+        vibrate()
+      }
+      if (typeof document !== 'undefined') {
+        document.title = alertTitle(results[0].orders.length, baseTitleRef.current)
+      }
     } catch (err) {
       if (!pollGuard.current.isLatest(runId)) return
       setError(err instanceof Error ? err.message : '주문 목록을 불러오지 못했어요.')
@@ -102,6 +131,42 @@ export default function OrderStatusPage() {
       offResume()
     }
   }, [refetchAll])
+
+  // 떠날 때 탭 제목을 원래대로 — 다른 화면에 "(3) 승인대기"가 남지 않게
+  useEffect(() => {
+    const baseTitle = baseTitleRef.current
+    return () => {
+      if (typeof document !== 'undefined') document.title = baseTitle
+    }
+  }, [])
+
+  // 알림이 켜져 있으면 화면 꺼짐 방지를 잡고, 탭 전환·잠금 해제로 돌아올 때마다 다시 잡는다(브라우저가 자동으로 풀어서).
+  // 새로고침 뒤에는 오디오가 다시 잠겨 있으므로 화면을 처음 누르는 순간 풀어 준다(iOS 자동재생 정책)
+  useEffect(() => {
+    if (!alertOn || typeof document === 'undefined') return
+    void acquireWakeLock()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void acquireWakeLock()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    document.addEventListener('pointerdown', unlockAudio, { once: true })
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      document.removeEventListener('pointerdown', unlockAudio)
+      releaseWakeLock()
+    }
+  }, [alertOn])
+
+  // 버튼 클릭(사용자 동작) 안에서 오디오를 풀어야 iOS에서 소리가 난다 — 켜는 순간 한 번 울려 소리 크기도 확인하게 한다
+  const toggleAlert = () => {
+    const next = !alertOn
+    if (next) {
+      unlockAudio()
+      playBeep()
+    }
+    setAlertPreferred(next)
+    setAlertOn(next)
+  }
 
   const counts = useMemo(
     () => Object.fromEntries(TABS.map((tab) => [tab.status, ordersByStatus[tab.status].length])) as Record<OrderStatus, number>,
@@ -176,17 +241,23 @@ export default function OrderStatusPage() {
 
   // 거절은 손님에게 바로 영향이 가는 취소와 같은 무게라 취소와 같은 방식으로 한 번 더 묻는다.
   // 별도 API 없이 기존 취소(O13)를 사유만 다르게 재사용한다(백엔드 DashboardOrderActionService.approve 주석 참조)
+  // 손님은 승인 전에 먼저 이체하라고 안내받는다 — 미결제로 거절하면 이미 들어온 돈이 환불 대상에서 빠지므로 경고한다
   const rejectOrder = (orderId: number) => {
-    if (!window.confirm('이 주문을 거절할까요?')) return
+    const order = ordersByStatus.PENDING_APPROVAL.find((o) => o.orderId === orderId)
+    if (!window.confirm(rejectConfirmMessage(order, calls))) return
     return runOrderAction(orderId, () => cancelOrderRequest(orderId, '주문 거절'), '주문을 거절 처리하지 못했어요')
   }
 
   const completeOrder = (orderId: number) =>
     runOrderAction(orderId, () => completeOrderRequest(orderId), '주문을 완료 처리하지 못했어요')
 
-  // O11 결제확인 — 승인대기 카드 전용. 되돌릴 방법(주문 취소)이 있으니 승인처럼 확인을 묻지 않는다
-  const confirmPayment = (orderId: number) =>
-    runOrderAction(orderId, () => confirmOrderPayment(orderId), '결제 확인을 처리하지 못했어요')
+  // O11 결제확인 — 승인대기와 진행·완료의 미결제 카드. 승인 뒤에도 체크아웃 없이 입금을 기록할 수 있어야 한다.
+  // 금액을 확인창에 띄워 은행 앱 입금액과 대조한 뒤 누르게 한다
+  const confirmPayment = (orderId: number) => {
+    const order = TABS.flatMap((tab) => ordersByStatus[tab.status]).find((o) => o.orderId === orderId)
+    if (!window.confirm(confirmPaymentMessage(order))) return
+    return runOrderAction(orderId, () => confirmOrderPayment(orderId), '결제 확인을 처리하지 못했어요')
+  }
 
   // 취소는 손님에게 바로 영향이 가고 되돌리려면 한 단계를 더 거쳐야 한다 — 한 번 더 묻는다(되돌리기와 같은 방식)
   const cancelOrder = (orderId: number) => {
@@ -225,6 +296,20 @@ export default function OrderStatusPage() {
             {tab.label} {counts[tab.status]}
           </button>
         ))}
+      </div>
+
+      {/* 알림 켜기 — 소리는 사용자 동작 안에서만 풀린다(iOS). 켜 두면 화면 꺼짐도 막는다 */}
+      <div className="flex justify-end px-10 pt-4">
+        <button
+          type="button"
+          onClick={toggleAlert}
+          aria-pressed={alertOn}
+          className={`rounded-xl px-4 py-2 text-base leading-[1.2] font-semibold tracking-[-0.04em] ${
+            alertOn ? 'bg-neutral-200 text-neutral-700' : 'bg-primary-300 text-neutral-50'
+          }`}
+        >
+          {alertOn ? '🔔 알림 켜짐' : '🔔 알림 켜기'}
+        </button>
       </div>
 
       {actionError && (

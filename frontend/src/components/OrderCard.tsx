@@ -1,4 +1,5 @@
 import { PAYMENT_STATUS_LABEL, type OrderSummary } from '../types/dashboard'
+import { formatWon } from '../lib/dashboardOrders'
 import { displayTableLabel } from '../lib/tableLabel'
 import { formatClockTime, formatElapsed } from '../lib/time'
 
@@ -23,8 +24,9 @@ type OrderCardProps = {
   onRestore: (orderId: number) => void
   /** ADMIN이 아니면 넘기지 않는다 — 환불 완료는 ADMIN 전용(백엔드 403) */
   onRefundDone?: (orderId: number) => void
-  /** O11 결제확인(개별) — 승인대기 카드 전용. 손님은 승인 전에도 입금·결제확인 호출을 보낼 수 있어서
-   * (백엔드가 PENDING_APPROVAL도 허용) 승인/거절과 별개로 여기서 바로 처리할 수 있어야 한다 */
+  /** O11 결제확인(개별) — 미결제인 승인대기·진행·완료 카드. 손님은 승인 전에도 입금·결제확인 호출을 보낼 수 있어서
+   * (백엔드가 PENDING_APPROVAL도 허용) 승인/거절과 별개로 여기서 바로 처리할 수 있어야 하고, 승인 뒤에 입금한 손님도
+   * 체크아웃(결제창) 없이 기록할 수 있어야 한다 */
   onConfirmPayment?: (orderId: number) => void
 }
 
@@ -40,6 +42,19 @@ export default function OrderCard({
   onRefundDone,
   onConfirmPayment,
 }: OrderCardProps) {
+  // 결제 확인 버튼 — 승인대기·진행·완료 카드 공통. PAID면 이미 확인된 거라 다시 보여줄 이유가 없고,
+  // 취소 카드는 서버가 입금 확인을 막는다(409)
+  const confirmPaymentButton = order.status !== 'CANCELED' && order.paymentStatus === 'UNPAID' && onConfirmPayment && (
+    <button
+      type="button"
+      onClick={() => onConfirmPayment(order.orderId)}
+      disabled={pending}
+      className={`${ACTION_BUTTON_BASE} bg-neutral-900`}
+    >
+      결제 확인
+    </button>
+  )
+
   return (
     <div className="flex min-h-[321px] w-full flex-col rounded-xl border border-neutral-200 bg-neutral-50 p-4">
       <div className="flex items-start justify-between">
@@ -54,6 +69,13 @@ export default function OrderCard({
             {PAYMENT_STATUS_LABEL[order.paymentStatus]}
           </span>
           {order.manual && <span className="text-xs font-medium text-neutral-400">수기</span>}
+        </span>
+        {/* 주문번호·금액 — 손님 입금자명에 주문번호가 들어가서(C3·C4 depositorNameRule) 은행 앱 입금 내역과 바로 대조한다 */}
+        <span className="flex flex-col items-center">
+          <span className="text-xs leading-[1.5] text-neutral-400">{order.orderNo}</span>
+          <span className="text-base leading-[1.5] font-semibold tracking-[-0.04em] text-neutral-900">
+            {formatWon(order.totalAmount)}
+          </span>
         </span>
         <span className="flex flex-col items-end">
           <span className="text-base leading-[1.5] font-medium tracking-[-0.04em] text-blue-600">
@@ -86,16 +108,7 @@ export default function OrderCard({
         <div className="mt-4 flex flex-col gap-2">
           {/* 결제확인 호출(직원호출 PAYMENT 사유, v0.6.11)을 받았을 때 여기서 바로 입금 확인한다.
               PAID면 이미 확인된 거라 다시 보여줄 이유가 없다 */}
-          {order.paymentStatus === 'UNPAID' && onConfirmPayment && (
-            <button
-              type="button"
-              onClick={() => onConfirmPayment(order.orderId)}
-              disabled={pending}
-              className={`${ACTION_BUTTON_BASE} bg-neutral-900`}
-            >
-              결제 확인
-            </button>
-          )}
+          {confirmPaymentButton}
           <div className="flex gap-4">
             <button type="button" onClick={() => onReject(order.orderId)} disabled={pending} className={CANCEL_BUTTON_CLASS}>
               거절
@@ -108,15 +121,20 @@ export default function OrderCard({
       )}
 
       {order.status === 'RECEIVED' && (
-        <div className="mt-4 flex gap-4">
-          <button type="button" onClick={() => onCancel(order.orderId)} disabled={pending} className={CANCEL_BUTTON_CLASS}>
-            취소
-          </button>
-          <button type="button" onClick={() => onComplete(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
-            완료
-          </button>
+        <div className="mt-4 flex flex-col gap-2">
+          {confirmPaymentButton}
+          <div className="flex gap-4">
+            <button type="button" onClick={() => onCancel(order.orderId)} disabled={pending} className={CANCEL_BUTTON_CLASS}>
+              취소
+            </button>
+            <button type="button" onClick={() => onComplete(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
+              완료
+            </button>
+          </div>
         </div>
       )}
+
+      {order.status === 'DONE' && confirmPaymentButton && <div className="mt-4 flex">{confirmPaymentButton}</div>}
 
       {(order.status === 'DONE' || order.status === 'CANCELED') && (
         <div className="mt-4 flex gap-4">

@@ -92,4 +92,34 @@ describe('주문 카드 버튼', () => {
     // 입금 후 완료했다가 취소·환불이 필요해진 경우도 막다른 길이 되면 안 된다
     expect(buttonsOf(order('DONE', 'REFUND_NEEDED'), true)).toContain('환불 완료')
   })
+
+  // 승인 뒤에 입금한 손님도 체크아웃(결제창) 없이 기록할 수 있어야 한다 — 예전엔 승인대기 카드에만 있어서 막다른 길이었다
+  it('진행+미결제면 결제 확인 버튼이 보인다', () => {
+    expect(buttonsOf(order('RECEIVED', 'UNPAID'), true)).toContain('결제 확인')
+  })
+
+  it('완료+미결제면 결제 확인 버튼이 보인다', () => {
+    expect(buttonsOf(order('DONE', 'UNPAID'), true)).toContain('결제 확인')
+  })
+
+  it('진행·완료여도 이미 입금확인됐으면 결제 확인 버튼은 안 보인다', () => {
+    expect(buttonsOf(order('RECEIVED', 'PAID'), true)).not.toContain('결제 확인')
+    expect(buttonsOf(order('DONE', 'PAID'), true)).not.toContain('결제 확인')
+  })
+
+  it('취소된 주문에는 결제 확인 버튼이 없다 — 서버가 409로 막는다', () => {
+    expect(buttonsOf(order('CANCELED', 'UNPAID'), true)).not.toContain('결제 확인')
+  })
+})
+
+describe('주문 카드 머리', () => {
+  it('주문번호와 금액을 보여준다 — 은행 앱 입금 내역과 대조용', () => {
+    const l = buttonsOf({ ...order('RECEIVED', 'UNPAID'), orderNo: 'T1-17', totalAmount: 12000 }, true)
+    expect(l).toContain('T1-17')
+    expect(l).toContain('12,000원')
+  })
+
+  it('결제 상태 뱃지는 그대로 보인다', () => {
+    expect(buttonsOf(order('RECEIVED', 'UNPAID'), true)).toContain('미결제')
+  })
 })

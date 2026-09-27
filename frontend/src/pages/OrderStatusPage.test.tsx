@@ -1,7 +1,8 @@
 import { Children, isValidElement, type ReactNode } from 'react'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFetch } from '../lib/apiFetch'
-import { approveOrder, cancelOrder, completeOrder, refundDone, restoreOrder } from '../lib/orderActions'
+import { approveOrder, cancelOrder, completeOrder, confirmOrderPayment, refundDone, restoreOrder } from '../lib/orderActions'
+import { playBeep, vibrate } from '../lib/staffAlert'
 import OrderStatusPage from './OrderStatusPage'
 import type { OrderStatus, OrderSummary } from '../types/dashboard'
 
@@ -35,8 +36,19 @@ vi.mock('../lib/orderActions', () => ({
   approveOrder: vi.fn(),
   cancelOrder: vi.fn(),
   completeOrder: vi.fn(),
+  confirmOrderPayment: vi.fn(),
   refundDone: vi.fn(),
   restoreOrder: vi.fn(),
+}))
+// 소리·진동은 기기 API라 여기서는 "울리려 했는가"만 본다
+vi.mock('../lib/staffAlert', () => ({
+  acquireWakeLock: vi.fn(),
+  isAlertPreferred: () => false,
+  playBeep: vi.fn(),
+  releaseWakeLock: vi.fn(),
+  setAlertPreferred: vi.fn(),
+  unlockAudio: vi.fn(),
+  vibrate: vi.fn(),
 }))
 
 type Props = {
@@ -48,6 +60,7 @@ type Props = {
   onComplete?: (orderId: number) => void
   onRestore?: (orderId: number) => void
   onRefundDone?: (orderId: number) => void
+  onConfirmPayment?: (orderId: number) => void
   order?: OrderSummary
 }
 
@@ -154,7 +167,7 @@ beforeEach(() => {
   store.clear()
   vi.clearAllMocks()
   // 액션 목은 기본으로 성공을 돌려준다 — 안 주면 runOrderAction이 undefined.ok를 읽고 터진다
-  for (const action of [approveOrder, cancelOrder, completeOrder, refundDone, restoreOrder]) {
+  for (const action of [approveOrder, cancelOrder, completeOrder, confirmOrderPayment, refundDone, restoreOrder]) {
     vi.mocked(action).mockResolvedValue(new Response(null, { status: 200 }))
   }
 })
@@ -252,7 +265,10 @@ describe('주문 승인·거절 (O28)', () => {
   it('거절을 누르면 먼저 확인을 묻는다', async () => {
     await load()
     await cards()[0].onReject!(1)
-    expect(confirmMessages).toEqual(['이 주문을 거절할까요?'])
+    expect(confirmMessages).toHaveLength(1)
+    expect(confirmMessages[0]).toContain('이 주문을 거절할까요?')
+    // 승인 전 입금한 돈이 환불 대상에서 빠지지 않게 — 거절 전에 '결제 확인'부터 누르라고 알린다
+    expect(confirmMessages[0]).toContain("먼저 '결제 확인'을 누른 뒤 거절하세요")
   })
 
   it('거절 확인에서 아니오를 누르면 요청을 보내지 않는다', async () => {
@@ -295,5 +311,76 @@ describe('환불 완료', () => {
     confirmAnswer = true
     await cards()[1].onRefundDone!(2)
     expect(vi.mocked(refundDone)).toHaveBeenCalledWith(2)
+  })
+})
+
+/** 다음 폴링을 흉내낸다 — 마운트 효과를 다시 돌려 refetchAll을 한 번 더 부른다(상태·ref는 유지) */
+async function pollWith(pending: OrderSummary[], calls: { callId: number; tableLabel: string; reason: string; createdAt: string }[]) {
+  vi.mocked(apiFetch).mockImplementation(async (path) => {
+    const orders = String(path).includes('status=PENDING_APPROVAL') ? pending : []
+    return new Response(JSON.stringify({ orders, calls }), { status: 200 })
+  })
+  hooks.effects.splice(0)
+  hooks.mounted = false
+  render()
+  // 네 탭 조회가 모두 나간 뒤, 응답 파싱(json)·상태 반영까지 끝나도록 한 틱 더 기다린다
+  await vi.waitFor(() => expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(4))
+  await new Promise((resolve) => setTimeout(resolve, 10))
+}
+
+describe('새 주문·호출 알림', () => {
+  it('첫 조회는 이미 쌓여 있던 승인대기로 울리지 않는다', async () => {
+    await load()
+    expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+    expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
+  })
+
+  it('다음 폴링에 새 승인대기 주문이 생기면 소리·진동으로 알린다', async () => {
+    await load()
+    vi.mocked(apiFetch).mockClear()
+    await pollWith([order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL], [])
+    expect(vi.mocked(playBeep)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(vibrate)).toHaveBeenCalledTimes(1)
+  })
+
+  it('새 직원호출도 알린다', async () => {
+    await load()
+    vi.mocked(apiFetch).mockClear()
+    await pollWith(PENDING_APPROVAL, [{ callId: 9, tableLabel: 'A-1', reason: 'HELP', createdAt: '2026-09-21T19:00:00' }])
+    await vi.waitFor(() => expect(vi.mocked(playBeep)).toHaveBeenCalledTimes(1))
+  })
+
+  it('목록이 그대로면 울리지 않는다', async () => {
+    await load()
+    vi.mocked(apiFetch).mockClear()
+    await pollWith(PENDING_APPROVAL, [])
+    expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+  })
+})
+
+describe('결제 확인 (O11)', () => {
+  it('금액을 보여주는 확인을 거쳐 요청을 보낸다', async () => {
+    await load()
+    clickTab('진행')
+    await cards()[0].onConfirmPayment!(1)
+    expect(confirmMessages[0]).toContain('1,000원')
+    expect(vi.mocked(confirmOrderPayment)).toHaveBeenCalledWith(1)
+  })
+
+  it('확인에서 아니오면 요청하지 않는다', async () => {
+    await load()
+    confirmAnswer = false
+    await cards()[0].onConfirmPayment!(1)
+    expect(vi.mocked(confirmOrderPayment)).not.toHaveBeenCalled()
+  })
+})
+
+describe('거절 경고 강조', () => {
+  it('같은 테이블에 미확인 결제확인 호출이 있으면 경고를 강조한다', async () => {
+    await load()
+    vi.mocked(apiFetch).mockClear()
+    await pollWith(PENDING_APPROVAL, [{ callId: 5, tableLabel: 'A-1', reason: 'PAYMENT', createdAt: '2026-09-21T19:00:00' }])
+    await cards()[0].onReject!(1)
+    expect(confirmMessages[0].startsWith('⚠️')).toBe(true)
   })
 })
