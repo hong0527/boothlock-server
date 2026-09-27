@@ -30,8 +30,9 @@
 | v0.6.7 | 2026-09-23 | **O22b 신설(명세서 밖, 파일럿 전용)** — 2026-09-23 실제 부스 운영자 시연 피드백. 35~40개 테이블 파일럿 규모에서 드래그앤드롭 대신 운영자가 행/열 숫자를 직접 입력하는 그리드 좌표(`gridRow`/`gridCol`, 1~50, 중복 배치 거부)를 먼저 도입 — O22(`posX`/`posY`, px 드래그)는 그대로 두고 별개 필드/엔드포인트로 추가(드래그앤드롭은 파일럿 이후 과제). `TableStatusResponse`에 `gridRow`/`gridCol` 필드 추가(O3·O22·O22b 공통) |
 | v0.6.9 | 2026-09-24 | **인원 선택·자릿세 확정·구현(명세서 밖, 파일럿 전용)** — 2026-09-24 운영자 시연 피드백, §확정 필요 항목 3번(보류) 반전. `TableSessionEntity.partySize` 신설, 신규 `PATCH /api/v1/table-sessions/party-size`(1~20). 서버가 세션의 첫 주문에만 1인당 3,000원(`itemType: "SEAT_FEE"`, `menuId: null`)을 items에 자동 추가하고 totalAmount에 더한다. `OrderItemEntity.itemType`(MENU/SEAT_FEE) 신설, `menuId` nullable로 완화. O23/O23b는 SEAT_FEE 항목을 404로 거부(`OrderEntity.requireEditableItem`). 환불(O13·O21)·정산(O19)은 항목/주문 단위로 이미 동작해 코드 변경 없이 자동 반영됨. 손님 플로우: C1 직후(재스캔 복원 제외) `/party-size`를 다시 거치도록 되돌림(PR #62의 skip 반전) |
 | v0.6.8 | 2026-09-24 | **축제 대비 백엔드 방어 5건.** ① §1.2 유휴 세션 토큰을 인증 단계에서 `410` — 단 현재 영업일 미결제가 있으면 v0.6대로 통과(폴링이 유휴 세션을 되살려 다음 손님에게 넘어가던 문제) ② O14 `Idempotency-Key` 헤더(선택) ③ O6 `requireSettled` 쿼리 + `409 CHECKOUT_UNPAID_REMAINS` ④ O9 디코딩 서브샘플링·업로드 직렬화 + `503 UPLOAD_BUSY` ⑤ O10 `activeSessionOnly=true`는 `businessDate` 생략 시 영업일로 거르지 않음(O24 대상과 같은 범위) |
-| v0.6.10 | 2026-09-25 | **주문 승인/거절 워크플로우 신설(명세서 밖, 파일럿 전용) — O28.** Figma 디자인 갱신("주문현황-승인대기" 641:1362) 반영. 상태 모델에 `PENDING_APPROVAL`을 `RECEIVED` 앞에 추가 — 손님 주문(C3)은 이제 접수 전에 운영자 승인을 거친다. 수기 주문(O14)은 운영자가 직접 입력한 것이라 승인대기 없이 바로 `RECEIVED`로 시작한다(변경 없음). 신규 `PATCH /admin/orders/{orderId}/approve`(O28, PENDING_APPROVAL→RECEIVED). 거절은 별도 엔드포인트 없이 기존 O13(운영자 취소)을 그대로 쓴다 — cancelByStaff가 이미 "CANCELED가 아닌 모든 상태"를 대상으로 하기 때문. C3 미결제 상한(429, §1.4)의 판정 대상을 `RECEIVED`에서 `PENDING_APPROVAL·RECEIVED` 합계로 확장 — RECEIVED만 셌다면 승인 전까지 상한을 무시하고 계속 주문을 넣을 수 있었다. §2 "미결제"(UnpaidOrderRule) 정의에는 `PENDING_APPROVAL`을 **의도적으로 포함하지 않는다** — 아직 운영자가 받아들이지 않은 주문은 확정된 채무가 아니라서, O3·O6·O24 대상에 안 잡힌다. O6 퇴실 시 종료되는 세션의 남은 `PENDING_APPROVAL` 주문은 (RECEIVED가 자동 완료되는 것과 별개로) 자동 거절(CANCELED, 사유 "테이블 퇴실로 자동 거절", `canceledBy="SYSTEM"`)된다 — 안 그러면 손님은 떠났는데 승인대기 탭에 영영 안 사라지는 주문이 남는다. **DB**: `orders.status` 컬럼은 Hibernate 매핑상 VARCHAR(20)이라(§DB스키마) 신규 값 추가에 컬럼 타입 변경이 필요 없다. `schema-mysql8.sql`의 `chk_orders_status` CHECK 제약에 `PENDING_APPROVAL`을 추가했다 — 단 이 파일은 2026-09-17 결정으로 RDS를 안 쓰기로 하면서 현재는 참고 자료일 뿐이고, 실제 배포(EC2+H2, `ddl-auto=update`)는 이 값 추가에 별도 마이그레이션이 필요 없다(배포_운영절차.md §3 안내와 동일). |
-| v0.6.11 | 2026-09-26 | **C6 직원호출에 `PAYMENT` 사유 신설(명세서 밖, 파일럿 전용) — 결제확인 전용 호출 분리.** 2026-09-23 운영자 시연 피드백 "직원호출 버튼 분리" 항목 선반영(백엔드만, 프론트 버튼 연동은 별도 PR). 쿨다운 판정을 세션 단독 키에서 `(세션, 사유)` 키로 바꿔 **사유별 독립 쿨다운**으로 전환 — `PAYMENT`를 일반 호출과 분리하려는 목적이었지만 HELP·WATER·ETC 서로도 독립된 쿨다운을 갖게 됐다(기존 "사유가 달라도 같은 쿨다운" 규칙 폐기). DB `chk_call_reason` CHECK 제약에 `PAYMENT` 추가(`schema-mysql8.sql`은 참고 자료, 실배포는 H2 `ddl-auto=update`라 마이그레이션 불요) |
+| v0.6.10 | 2026-09-25 | **주문 승인/거절 워크플로우 신설(명세서 밖, 파일럿 전용) — O28.** Figma 디자인 갱신("주문현황-승인대기" 641:1362) 반영. 상태 모델에 `PENDING_APPROVAL`을 `RECEIVED` 앞에 추가 — 손님 주문(C3)은 이제 접수 전에 운영자 승인을 거친다. 수기 주문(O14)은 운영자가 직접 입력한 것이라 승인대기 없이 바로 `RECEIVED`로 시작한다(변경 없음). 신규 `PATCH /admin/orders/{orderId}/approve`(O28, PENDING_APPROVAL→RECEIVED). 거절은 별도 엔드포인트 없이 기존 O13(운영자 취소)을 그대로 쓴다 — cancelByStaff가 이미 "CANCELED가 아닌 모든 상태"를 대상으로 하기 때문. C3 미결제 상한(429, §1.4)의 판정 대상을 `RECEIVED`에서 `PENDING_APPROVAL·RECEIVED` 합계로 확장 — RECEIVED만 셌다면 승인 전까지 상한을 무시하고 계속 주문을 넣을 수 있었다. §2 "미결제"(UnpaidOrderRule) 정의에는 `PENDING_APPROVAL`을 **의도적으로 포함하지 않는다** — 아직 운영자가 받아들이지 않은 주문은 확정된 채무가 아니라서, O3·O6·O24 대상에 안 잡힌다. O6 퇴실 시 종료되는 세션의 남은 `PENDING_APPROVAL` 주문은 (RECEIVED가 자동 완료되는 것과 별개로) 자동 거절(CANCELED, 사유 "테이블 퇴실로 자동 거절", `canceledBy="SYSTEM"`)된다 — 안 그러면 손님은 떠났는데 승인대기 탭에 영영 안 사라지는 주문이 남는다. **DB**: `orders.status` 컬럼은 Hibernate 매핑상 VARCHAR(20)이라(§DB스키마) 신규 값 추가에 컬럼 타입 변경이 필요 없다. `schema-mysql8.sql`의 `chk_orders_status` CHECK 제약에 `PENDING_APPROVAL`을 추가했다. ~~실배포는 H2 `ddl-auto=update`라 마이그레이션 불요~~ — **정정(v0.6.12)**: 실배포는 9/24부터 RDS MySQL 8.0 + `ddl-auto=validate`라 CHECK 제약은 자동으로 바뀌지 않는다. 새 코드 배포 **전에** 운영 DB에 `chk_orders_status` 교체 SQL을 직접 실행해야 한다(배포_운영절차.md §3-1). |
+| v0.6.11 | 2026-09-26 | **C6 직원호출에 `PAYMENT` 사유 신설(명세서 밖, 파일럿 전용) — 결제확인 전용 호출 분리.** 2026-09-23 운영자 시연 피드백 "직원호출 버튼 분리" 항목 선반영(백엔드만, 프론트 버튼 연동은 별도 PR). 쿨다운 판정을 세션 단독 키에서 `(세션, 사유)` 키로 바꿔 **사유별 독립 쿨다운**으로 전환 — `PAYMENT`를 일반 호출과 분리하려는 목적이었지만 HELP·WATER·ETC 서로도 독립된 쿨다운을 갖게 됐다(기존 "사유가 달라도 같은 쿨다운" 규칙 폐기). DB `chk_call_reason` CHECK 제약에 `PAYMENT` 추가. ~~실배포는 H2 `ddl-auto=update`라 마이그레이션 불요~~ — **정정(v0.6.12)**: 실배포는 RDS MySQL 8.0(`ddl-auto=validate`)이라 배포 전 `chk_call_reason` 교체 SQL 실행이 필요하다(배포_운영절차.md §3-1) |
+| v0.6.12 | 2026-09-27 | **승인 워크플로우(O28) 돈 안전 보강.** ① 자동 거절(O6 퇴실·C1 유휴 재스캔)도 O13과 같이 입금된 승인대기를 `REFUND_NEEDED`로 넘긴다 — 예전엔 CANCELED+PAID로 남아 환불 목록에서 빠지고 매출에 잡혔다(O11은 승인대기도 PAID로 만들 수 있다) ② O6 `requireSettled=true`에서 종료할 세션에 승인대기가 남으면 **`409 CHECKOUT_PENDING_APPROVAL`**(`details.pendingOrderCount`)로 전체 롤백 — 손님 결제 안내는 승인대기 금액까지 포함해 이체를 안내하므로 조용히 거절하면 받은 돈과 확정 주문이 어긋난다 ③ O6 응답에 `rejectedPendingCount`(int, 항상 있음) 추가 — '테이블 비우기'가 자동 거절한 승인대기 수 ④ O28 승인이 세션 행을 먼저 잠그고 **종료된 세션이면 `409 INVALID_STATE`** — 퇴실 미결제 집계 뒤에 승인이 끼어 DONE+UNPAID로 `requireSettled`를 우회하던 경합 차단 ⑤ C1 유휴 재스캔이 옛 세션을 종료할 때 그 승인대기도 자동 거절(사유 `"유휴 만료 재스캔으로 자동 거절"`, `canceledBy="SYSTEM"`) ⑥ v0.6.10·v0.6.11 이력의 "H2 ddl-auto=update라 마이그레이션 불요" 문장 정정 |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -164,9 +165,10 @@ C1 세션 복원, O3 `session`·`needsCleanup`, E1 빈자리 집계 **세 곳이
 | 405 | `METHOD_NOT_ALLOWED` | 있는 경로에 잘못된 메서드 (보조 코드) |
 | 409 | `SOLD_OUT` | 주문·수량 증가에 품절·숨김 메뉴 포함 (details에 메뉴 목록) |
 | 409 | `ORDER_CLOSED` | 부스 `isOpen=false`에서 주문·수량 증가 시도. message `"지금은 주문을 받지 않습니다."` |
-| 409 | `INVALID_STATE` | 불가능한 상태 전이(재취소·재완료·PAID 주문의 손님 취소·항목 수정), **메뉴명 중복**(O7·O8), 테이블 삭제 거부(O26), O24 대상 없음·합계 불일치, O14 퇴실 경합 |
+| 409 | `INVALID_STATE` | 불가능한 상태 전이(재취소·재완료·PAID 주문의 손님 취소·항목 수정, **종료된 세션의 승인대기 승인(O28, v0.6.12)**), **메뉴명 중복**(O7·O8), 테이블 삭제 거부(O26), O24 대상 없음·합계 불일치, O14 퇴실 경합 |
 | 409 | `ALREADY_PAID` | 이미 결제된 주문에 입금 확인 재시도 |
 | 409 | `CHECKOUT_UNPAID_REMAINS` | O6 `requireSettled=true`인데 종료할 세션에 미결제가 남음 — 전체 롤백 (`details.unpaidOrderCount`) |
+| 409 | `CHECKOUT_PENDING_APPROVAL` | O6 `requireSettled=true`인데 종료할 세션에 승인대기(O28)가 남음 — 전체 롤백, 승인대기는 그대로 (`details.pendingOrderCount`, v0.6.12) |
 | 410 | `SESSION_EXPIRED` | 빈 토큰·미존재 토큰·종료된 세션 토큰·**유휴 세션 토큰(현재 영업일 미결제 없음, v0.6.8)**. message `"세션이 만료되었습니다. 테이블 QR을 다시 스캔해주세요."` |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Content-Type 불일치 (보조 코드) |
 | 429 | `CALL_COOLDOWN` | 직원 호출 30초 내 재시도 (`details.retryAfterSeconds`) |
@@ -219,7 +221,7 @@ RECEIVED ├─ 운영자 [완료] O12 ──► DONE (종결)
 
 - 이 정의를 쓰는 곳: O3 `unpaidOrderCount`, O6 `warning`, O24 대상, 유휴 정책의 미결제 예외(C1·O3), E1 좌석 집계. 다섯 쿼리가 같은 JPQL 상수를 잇고 `UnpaidOrderRuleConsistencyTests`가 일치를 검사한다
 - **이 정의가 아닌 것**: C3 상한(429)·C5·O23 판정은 `RECEIVED && UNPAID` — "접수 중이면서 미입금"이라는 다른 목적. **C3 상한(v0.6.10부터)**은 정확히는 `PENDING_APPROVAL·RECEIVED && UNPAID` — 승인대기도 함께 세지 않으면 운영자가 승인하기 전까지 손님이 상한 없이 계속 주문을 넣을 수 있다
-- **PENDING_APPROVAL은 의도적으로 미결제가 아니다(v0.6.10)** — 운영자가 아직 받아들이지 않은 주문은 확정된 채무가 아니다. O6 퇴실로 세션이 끝나면 그 세션에 남은 PENDING_APPROVAL은 자동 거절(CANCELED)된다(아래 O28 참고)
+- **PENDING_APPROVAL은 의도적으로 미결제가 아니다(v0.6.10)** — 운영자가 아직 받아들이지 않은 주문은 확정된 채무가 아니다. O6 퇴실·C1 유휴 재스캔으로 세션이 끝나면 그 세션에 남은 PENDING_APPROVAL은 자동 거절(CANCELED, 입금된 건은 `REFUND_NEEDED`)된다. 단 O6 `requireSettled=true`('결제 완료')는 거절 대신 `409 CHECKOUT_PENDING_APPROVAL`로 멈춘다(v0.6.12, 아래 O6·O28 참고)
 
 **주문번호(orderNo) 채번**
 - `{정규화된 테이블라벨}-{부스 영업일 통산번호}` — 예 `A3-17`. 정규화 = 하이픈·공백(전각 포함) 제거 + 대문자, 영숫자만, 6자 이내, 단독 `M` 금지
@@ -721,8 +723,10 @@ RECEIVED ├─ 운영자 [완료] O12 ──► DONE (종결)
 **Response 200 (항상 — 멱등)**
 
 ```json
-{ "unpaidWarning": true, "id": 12, "label": "A-3", "status": "EMPTY", "completedOrderCount": 2, "warning": "미결제 주문 1건 있음" }
+{ "unpaidWarning": true, "id": 12, "label": "A-3", "status": "EMPTY", "completedOrderCount": 2, "rejectedPendingCount": 0, "warning": "미결제 주문 1건 있음" }
 ```
+
+- `rejectedPendingCount`(int, 항상 있음, v0.6.12)는 이 퇴실로 **자동 거절한 승인대기 주문 수**(아래 6번). `requireSettled=true`면 승인대기가 있을 때 409이므로 성공 응답에서는 항상 0
 
 - `completedOrderCount`(int, 항상 있음)는 이 퇴실로 **완료(DONE) 처리한 남은 접수 주문 수**(v0.6.4, 아래 5번)
 - `unpaidWarning`(boolean)은 기존 프론트가 읽는 필드. `warning`은 미결제가 있을 때만 있고 없으면 **필드 자체가 생략**된다(`@JsonInclude(NON_NULL)`)
@@ -732,9 +736,9 @@ RECEIVED ├─ 운영자 [완료] O12 ──► DONE (종결)
 
 | 파라미터 | 예 | 설명 |
 |---|---|---|
-| requireSettled | `true` | 기본 `false`. `true`면 아래 3번에서 센 미결제가 1건이라도 있을 때 **`409 CHECKOUT_UNPAID_REMAINS`**(`details.unpaidOrderCount`)로 거절하고 **전체를 롤백**한다 — 세션은 열린 채, 테이블은 OCCUPIED, 주문은 그대로(5번 자동 완료도 없음). **'결제 완료' 버튼(O24 → O6)이 쓴다**: O24와 O6 사이에 들어온 손님 주문이 5번 자동 완료에 묻혀 주방 대기열에서 조용히 사라지지 않게. '테이블 비우기'는 생략(기존 동작) |
+| requireSettled | `true` | 기본 `false`. `true`면 아래 3번에서 센 미결제가 1건이라도 있을 때 **`409 CHECKOUT_UNPAID_REMAINS`**(`details.unpaidOrderCount`)로 거절하고 **전체를 롤백**한다 — 세션은 열린 채, 테이블은 OCCUPIED, 주문은 그대로(5번 자동 완료도 없음). **'결제 완료' 버튼(O24 → O6)이 쓴다**: O24와 O6 사이에 들어온 손님 주문이 5번 자동 완료에 묻혀 주방 대기열에서 조용히 사라지지 않게. 또 6번에서 거절될 승인대기가 1건이라도 있으면 **`409 CHECKOUT_PENDING_APPROVAL`**(`details.pendingOrderCount`)로 같은 방식으로 전체 롤백한다(v0.6.12) — 손님 결제 안내는 승인대기 금액까지 이체하라고 보여주므로 조용히 거절하면 안 된다. '테이블 비우기'는 생략(기존 동작 + 자동 거절 건수 응답) |
 
-**Errors**: `404`(타 부스·미존재·삭제 테이블) / `409 CHECKOUT_UNPAID_REMAINS`(`requireSettled=true`일 때만)
+**Errors**: `404`(타 부스·미존재·삭제 테이블) / `409 CHECKOUT_UNPAID_REMAINS`·`409 CHECKOUT_PENDING_APPROVAL`(`requireSettled=true`일 때만)
 
 **부작용·순서 (`TableAdminService.checkoutTable`)**
 1. 테이블 행 `FOR UPDATE` — C1 세션 생성·O26 삭제가 같은 행을 먼저 잠그므로 퇴실·재스캔·연타가 직렬화된다
@@ -742,7 +746,7 @@ RECEIVED ├─ 운영자 [완료] O12 ──► DONE (종결)
 3. **종료한 세션 기준으로** 미결제(RECEIVED·DONE && UNPAID) 건수를 잠금 읽기로 센다 — 집계를 먼저 하면 그 틈에 들어온 주문이 경고에서 빠진다. 이후 주문은 `410`
 4. `status = EMPTY`
 5. **종료한 세션의 RECEIVED 주문을 DONE으로** 조건부 UPDATE(O12와 같은 전이, v0.6.4) — 후결제 부스에서 손님이 나간다는 건 음식이 이미 나갔다는 뜻이라, 남은 접수 주문은 대개 "완료"를 깜빡한 것이다. 그대로 두면 주문현황 접수 탭(주방 대기열)에 떠난 손님 주문이 쌓인다. 입금 상태·취소·완료 주문·앞 손님 세션 주문은 건드리지 않는다. 잘못 넘어갔으면 주문현황 "되돌리기"로 되살린다
-6. **종료한 세션의 PENDING_APPROVAL 주문을 CANCELED로 자동 거절**(v0.6.10) — 승인대기는 §2 "미결제" 정의에서 빠져 있어 3번 집계·5번 자동 완료 어느 쪽에도 안 잡힌다. 그대로 두면 손님은 떠났는데(세션 토큰도 이미 `410`) "승인 대기" 탭에 영영 안 사라지는 주문이 남는다. 사유 `"테이블 퇴실로 자동 거절"`, `canceledBy = "SYSTEM"`. 응답 필드는 늘리지 않는다(자동 완료와 달리 확인이 필요한 수준의 동작이 아니라고 판단)
+6. **종료한 세션의 PENDING_APPROVAL 주문을 CANCELED로 자동 거절**(v0.6.10) — 승인대기는 §2 "미결제" 정의에서 빠져 있어 3번 집계·5번 자동 완료 어느 쪽에도 안 잡힌다. 그대로 두면 손님은 떠났는데(세션 토큰도 이미 `410`) "승인 대기" 탭에 영영 안 사라지는 주문이 남는다. 사유 `"테이블 퇴실로 자동 거절"`, `canceledBy = "SYSTEM"`. **입금된(PAID) 승인대기는 같은 문장에서 `REFUND_NEEDED`로**(O13과 같은 CASE, v0.6.12 — 예전엔 CANCELED+PAID로 남아 환불 목록에서 빠지고 매출에 잡혔다). 3번과 같은 잠금·종료 뒤의 조건부 UPDATE라 그 건수를 판정에도 쓴다: `requireSettled=true`면 1건 이상일 때 `409 CHECKOUT_PENDING_APPROVAL`로 롤백, 아니면 `rejectedPendingCount`로 응답(v0.6.12). 실행 순서는 4·5번보다 앞이다
 - 주문은 삭제하지 않는다(정산 보존). 미결제가 있어도 **막지 않는다** — 결제창 '결제 완료'는 O24를 먼저 부르고, '테이블 비우기'는 확인창 뒤 O6만 부른다
 - v0.5의 "선택 구현 `checkout-bulk`"는 **구현하지 않았다**
 
@@ -862,9 +866,9 @@ RECEIVED ├─ 운영자 [완료] O12 ──► DONE (종결)
 
 **Request**: body 없음 → **Response 200**: `OrderSummary`(`status: RECEIVED`)
 
-**Errors**: `404` / `409 INVALID_STATE`(PENDING_APPROVAL이 아님 — 이미 승인됐거나 취소·거절됨)
+**Errors**: `404` / `409 INVALID_STATE`(PENDING_APPROVAL이 아님 — 이미 승인됐거나 취소·거절됨 / **주문의 세션이 이미 종료됨**(O6 퇴실·C1 유휴 재스캔, v0.6.12))
 
-**규칙**: 조건부 UPDATE `WHERE status = 'PENDING_APPROVAL'` — O12(완료 처리)와 같은 패턴. **거절은 별도 엔드포인트가 없다** — 아래 O13이 이미 "CANCELED가 아닌 모든 상태"를 대상으로 하므로, 프론트가 O13을 사유(`"주문 거절"`)만 다르게 그대로 호출한다
+**규칙**: 주문의 세션 행을 먼저 `FOR UPDATE`로 잠그고(잠금 순서 세션 → 주문, 되돌리기·C3·O6와 같다) 종료된 세션이면 409(v0.6.12). 퇴실은 세션 행을 쥔 채 끝까지 가므로 승인이 퇴실의 미결제 집계와 자동 완료 사이에 끼어들 수 없다 — 끼어들면 DONE+UNPAID로 `requireSettled`를 우회했다. 타 부스 주문이면 종료 여부와 무관하게 404(존재 은닉). 그다음 조건부 UPDATE `WHERE status = 'PENDING_APPROVAL'` — O12(완료 처리)와 같은 패턴. **거절은 별도 엔드포인트가 없다** — 아래 O13이 이미 "CANCELED가 아닌 모든 상태"를 대상으로 하므로, 프론트가 O13을 사유(`"주문 거절"`)만 다르게 그대로 호출한다
 
 ## O13. POST /api/v1/admin/orders/{orderId}/cancel — 운영자 취소 (기능 5.5, STAFF 가능)
 

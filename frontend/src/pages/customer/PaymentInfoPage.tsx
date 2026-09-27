@@ -1,12 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
 import { CopyIcon, InfoIcon } from '../../components/customer/icons'
 import StaffCallConfirmModal from '../../components/customer/StaffCallConfirmModal'
 import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { customerApiFetch } from '../../lib/customerApiFetch'
+import { onResume } from '../../lib/onResume'
+import { createPollGuard } from '../../lib/pollGuard'
 import { requestStaffCall } from '../../lib/staffCall'
 import type { OrderSummary } from '../../types/customer'
+
+// 가벼운 폴링 — 운영자가 승인·거절·입금 확인하면 이체할 합계가 바뀐다. 주문내역(7초)보다 느슨하게 둔다
+const POLL_INTERVAL_MS = 10000
 
 export default function PaymentInfoPage() {
   const navigate = useNavigate()
@@ -16,17 +21,41 @@ export default function PaymentInfoPage() {
   const [callMessage, setCallMessage] = useState<string | null>(null)
   const [showCallConfirm, setShowCallConfirm] = useState(false)
 
+  // 예전에는 처음 한 번만 읽어, 화면을 켜 둔 채 운영자가 승인대기를 거절·승인하거나 입금 확인해도 옛 합계를 이체하라고 보여줬다.
+  // 다른 손님 화면(주문내역)과 같은 pollGuard(겹침·응답 역전 방지)+onResume(폰 잠금 해제·재연결 즉시 갱신)을 쓴다
+  const pollGuard = useRef(createPollGuard())
+  const fetchOrders = async (skipIfBusy = false) => {
+    const runId = pollGuard.current.begin(skipIfBusy)
+    if (runId === null) return
+    try {
+      const res = await customerApiFetch('/api/v1/orders')
+      if (!res.ok) throw new Error(`주문 정보를 불러오지 못했어요 (${res.status})`)
+      const data: { orders: OrderSummary[] } = await res.json()
+      if (!pollGuard.current.isLatest(runId)) return
+      setOrders(data.orders)
+      setError(null)
+    } catch (err) {
+      if (!pollGuard.current.isLatest(runId)) return
+      setError(err instanceof Error ? err.message : '주문 정보를 불러오지 못했어요.')
+    } finally {
+      pollGuard.current.end()
+    }
+  }
+
   useEffect(() => {
-    customerApiFetch('/api/v1/orders')
-      .then((res) => {
-        if (!res.ok) throw new Error(`주문 정보를 불러오지 못했어요 (${res.status})`)
-        return res.json() as Promise<{ orders: OrderSummary[] }>
-      })
-      .then((data) => setOrders(data.orders))
-      .catch((err) => setError(err instanceof Error ? err.message : '주문 정보를 불러오지 못했어요.'))
+    fetchOrders()
+    const id = setInterval(() => fetchOrders(true), POLL_INTERVAL_MS)
+    const offResume = onResume(() => fetchOrders(true))
+    return () => {
+      clearInterval(id)
+      offResume()
+    }
+    // 마운트 때 한 번만 구독한다 — fetchOrders는 ref(pollGuard)와 setState만 쓰므로 옛 클로저여도 결과가 같다(PaymentModal과 같은 방식)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  if (error) {
+  // 이미 한 번 받은 뒤의 폴링 실패는 화면을 에러로 갈아엎지 않는다 — 계좌·합계는 직전 값으로 두고 다음 주기에 다시 읽는다
+  if (error && !orders) {
     return (
       <div className="flex min-h-screen w-full items-center justify-center bg-neutral-50">
         <p className="text-body-1 text-red-600">{error}</p>

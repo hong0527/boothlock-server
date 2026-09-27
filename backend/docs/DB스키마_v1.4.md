@@ -135,7 +135,7 @@ erDiagram
 | business_date | DATE | NOT NULL | (생성시각 − 6h)의 날짜 |
 | order_seq | INT | NOT NULL | 부스 영업일 통산 순번 |
 | idempotency_key | VARCHAR(64) | **NULL 허용**, UNIQUE, **`COLLATE utf8mb4_bin`** | 수기 주문은 NULL. NOT NULL로 바꾸면 수기 INSERT 실패, UNIQUE 제거하면 더블탭 방지 소멸 — 조합 유지 |
-| status | VARCHAR(20) | NOT NULL | RECEIVED / DONE / CANCELED (`@JdbcTypeCode(VARCHAR)`) |
+| status | VARCHAR(20) | NOT NULL | PENDING_APPROVAL / RECEIVED / DONE / CANCELED (`@JdbcTypeCode(VARCHAR)`). PENDING_APPROVAL은 손님 주문(C3)의 승인대기(API v0.6.10 O28) — 세션 종료(O6 퇴실·C1 유휴 재스캔) 시 자동 CANCELED, PAID였으면 payment_status도 REFUND_NEEDED(v0.6.12) |
 | payment_status | VARCHAR(20) | NOT NULL | UNPAID / PAID / REFUND_NEEDED / REFUNDED |
 | payment_method | VARCHAR(20) | NULL | BANK_TRANSFER / CASH — 입금 확인(O11·O24) 시 기록 |
 | total_amount | INT | NOT NULL | 서버 재계산. **취소 안 된 항목의 합** — O23·O23b가 다시 계산해 저장 |
@@ -183,7 +183,7 @@ erDiagram
 |---|---|---|---|
 | id | BIGINT | PK, AUTO_INCREMENT | |
 | session_id | BIGINT | FK→table_session, NOT NULL | 부스 스코프는 세션→테이블→부스 조인 |
-| reason | VARCHAR(10) | NOT NULL | HELP / WATER / ETC (`@JdbcTypeCode(VARCHAR)`) |
+| reason | VARCHAR(10) | NOT NULL | HELP / WATER / ETC / PAYMENT (`@JdbcTypeCode(VARCHAR)`, PAYMENT는 API v0.6.11) |
 | acked | BOOLEAN | NOT NULL DEFAULT FALSE | O15로 TRUE — O10은 FALSE만 노출 |
 | created_at | DATETIME | NOT NULL | 30초 쿨다운 판정 재료 |
 
@@ -323,7 +323,7 @@ CREATE TABLE orders (
   CONSTRAINT fk_orders_booth   FOREIGN KEY (booth_id)   REFERENCES booth(id),
   CONSTRAINT fk_orders_session FOREIGN KEY (session_id) REFERENCES table_session(id),
   CONSTRAINT uq_orders_seq     UNIQUE (booth_id, business_date, order_seq),
-  CONSTRAINT chk_orders_status         CHECK (status IN ('RECEIVED','DONE','CANCELED')),
+  CONSTRAINT chk_orders_status         CHECK (status IN ('PENDING_APPROVAL','RECEIVED','DONE','CANCELED')),  -- PENDING_APPROVAL: O28(API v0.6.10)
   CONSTRAINT chk_orders_payment_status CHECK (payment_status IN ('UNPAID','PAID','REFUND_NEEDED','REFUNDED')),
   CONSTRAINT chk_orders_payment_method CHECK (payment_method IN ('BANK_TRANSFER','CASH'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -358,7 +358,7 @@ CREATE TABLE staff_call (
   acked      BOOLEAN     NOT NULL DEFAULT FALSE,
   created_at DATETIME(6) NOT NULL,
   CONSTRAINT fk_call_session FOREIGN KEY (session_id) REFERENCES table_session(id),
-  CONSTRAINT chk_call_reason CHECK (reason IN ('HELP','WATER','ETC'))
+  CONSTRAINT chk_call_reason CHECK (reason IN ('HELP','WATER','ETC','PAYMENT'))  -- PAYMENT: C6 결제확인 호출(API v0.6.11)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE feedback (
@@ -394,7 +394,7 @@ CREATE TABLE event_map (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 ```
 
-- CHECK 제약 이름(`chk_*`)은 이 문서의 표기다 — `schema-mysql8.sql`의 실제 이름과 다를 수 있다(**확정 필요**: 그 파일은 이 트리에 없어 대조하지 못했다)
+- CHECK 제약 이름(`chk_*`)·허용값은 `schema-mysql8.sql`과 대조해 일치한다(2026-09-27). 이미 운영 중인 RDS에 v0.6.10·v0.6.11 허용값을 넣는 ALTER는 `배포_운영절차.md` §3-1 — `ddl-auto=validate`는 CHECK를 대조하지 않으므로 빠뜨려도 기동은 되고 저장 단계에서 실패한다
 
 ## 3. 설계 원칙 (전 파트 공통 — 어기면 사고 나는 것들)
 

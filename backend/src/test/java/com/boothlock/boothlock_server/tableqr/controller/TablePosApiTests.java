@@ -423,8 +423,10 @@ class TablePosApiTests {
                 .andExpect(jsonPath("$.status").value("EMPTY"))
                 .andExpect(jsonPath("$.warning").doesNotExist())
                 .andReturn().getResponse().getContentAsString();
-        // 프론트가 이미 받는 unpaidWarning은 유지하고 명세 O6의 id·label·status를 더한다. warning은 미결제 없으면 필드째 없다
-        assertEquals(Set.of("unpaidWarning", "id", "label", "status", "completedOrderCount"), fieldNames(objectMapper.readTree(body)));
+        // 프론트가 이미 받는 unpaidWarning은 유지하고 명세 O6의 id·label·status를 더한다. warning은 미결제 없으면 필드째 없다.
+        // rejectedPendingCount(자동 거절한 승인대기 수)는 completedOrderCount처럼 0이어도 싣는다
+        assertEquals(Set.of("unpaidWarning", "id", "label", "status", "completedOrderCount", "rejectedPendingCount"),
+                fieldNames(objectMapper.readTree(body)));
 
         TableSessionEntity ended = reloadSession(session.getId());
         assertNotNull(ended.getEndedAt());
@@ -496,7 +498,13 @@ class TablePosApiTests {
     /**
      * 퇴실하면 그 손님의 남은 승인대기(O28) 주문은 자동 거절(CANCELED)된다 — 승인대기는 UnpaidOrderRule에서 빠져
      * completedOrderCount(RECEIVED만 대상)로도 안 잡히므로, 그대로 두면 손님은 떠났는데 "승인 대기" 탭에 영영 남는다.
-     * 앞 손님(이미 종료된 세션)·다른 부스의 승인대기는 건드리지 않는다
+     * 다른 부스의 승인대기는 건드리지 않는다.
+     *
+     * <p>앞 손님(이미 종료된 세션)의 승인대기가 남는 단언은 그대로 둔다 — 새 규칙(M2)에서는 세션을 끝내는 두 경로(O6 퇴실·C1 유휴 재스캔)가
+     * 모두 그 자리에서 승인대기를 거절하므로 정상 흐름으로는 "종료된 세션의 승인대기"가 생기지 않는다. 여기 시딩은 새 규칙 이전에
+     * 남은 데이터(또는 직접 넣은 행)를 흉내 낸 것이고, 이 단언이 지키는 건 "퇴실의 거절 범위는 이번에 종료한 세션뿐"이라는 범위 규칙이다 —
+     * 퇴실이 테이블의 과거 세션까지 훑어 거절하면 이미 끝난 손님의 기록(사유·취소자)을 뒤늦게 덮어쓴다. 유휴 재스캔 쪽 새 규칙은
+     * c1IdleRescanRejectsPendingApprovalOfTheExpiredSession이 본다
      */
     @Test
     void o6AutoRejectsPendingApprovalOrdersOfTheEndingSessionOnly() throws Exception {
@@ -514,7 +522,8 @@ class TablePosApiTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.unpaidWarning").value(false))       // 승인대기는 미결제 정의에서 빠진다
                 .andExpect(jsonPath("$.warning").doesNotExist())
-                .andExpect(jsonPath("$.completedOrderCount").value(0));    // RECEIVED가 아니라 자동완료 대상도 아니다
+                .andExpect(jsonPath("$.completedOrderCount").value(0))     // RECEIVED가 아니라 자동완료 대상도 아니다
+                .andExpect(jsonPath("$.rejectedPendingCount").value(1));   // 이번 세션 것만 — 앞 손님·다른 부스는 세지 않는다
 
         OrderEntity reloadedPending = orderRepository.findById(pending.getId()).orElseThrow();
         assertEquals(OrderStatus.CANCELED, reloadedPending.getStatus());
@@ -522,6 +531,125 @@ class TablePosApiTests {
         assertEquals("SYSTEM", reloadedPending.getCanceledBy());
         assertEquals(OrderStatus.PENDING_APPROVAL, orderRepository.findById(pastPending.getId()).orElseThrow().getStatus());
         assertEquals(OrderStatus.PENDING_APPROVAL, orderRepository.findById(foreignPending.getId()).orElseThrow().getStatus());
+    }
+
+    /**
+     * H1 — 입금 확인(O11)은 승인대기도 PAID로 만들 수 있다(#117 승인대기 카드 "결제 확인"). 퇴실의 자동 거절이 주문 축만 CANCELED로
+     * 바꾸면 CANCELED+PAID가 되어 환불 목록(REFUND_NEEDED)에서 사라지고 매출(PAID)에는 남는다. O13과 같이 REFUND_NEEDED로 넘어가야 한다.
+     * 미입금 승인대기는 UNPAID 그대로(받은 돈이 없으니 환불 대상이 아니다). "테이블 비우기"는 거절 건수를 응답에 싣는다
+     */
+    @Test
+    void o6VacateRejectsPaidPendingApprovalAsRefundNeededAndReportsCount() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity paidPending = pendingApprovalOrder(booth, session.getId());
+        assertEquals(1, orderRepository.markPaid(paidPending.getId(), booth.getId(), PaymentMethod.BANK_TRANSFER, "admin", now()));
+        OrderEntity unpaidPending = pendingApprovalOrder(booth, session.getId());
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("EMPTY"))
+                .andExpect(jsonPath("$.rejectedPendingCount").value(2));
+
+        OrderEntity reloadedPaid = orderRepository.findById(paidPending.getId()).orElseThrow();
+        assertEquals(OrderStatus.CANCELED, reloadedPaid.getStatus());
+        assertEquals(PaymentStatus.REFUND_NEEDED, reloadedPaid.getPaymentStatus());   // 받은 돈 → 환불 대상
+        assertEquals("테이블 퇴실로 자동 거절", reloadedPaid.getCancelReason());
+        assertEquals("SYSTEM", reloadedPaid.getCanceledBy());
+        assertNotNull(reloadedPaid.getCanceledAt());
+        assertEquals("admin", reloadedPaid.getApprovedBy());                          // 입금 기록은 그대로 남는다
+        OrderEntity reloadedUnpaid = orderRepository.findById(unpaidPending.getId()).orElseThrow();
+        assertEquals(OrderStatus.CANCELED, reloadedUnpaid.getStatus());
+        assertEquals(PaymentStatus.UNPAID, reloadedUnpaid.getPaymentStatus());
+    }
+
+    /** 승인대기가 없으면 rejectedPendingCount는 0으로 실린다(필드가 빠지지 않는다 — 프론트가 숫자로 읽는다) */
+    @Test
+    void o6VacateReportsZeroRejectedPendingCountWhenNothingPending() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rejectedPendingCount").value(0));
+    }
+
+    /**
+     * M2 — C1 유휴 재스캔이 옛 세션을 종료할 때 그 승인대기도 퇴실과 같은 규칙으로 거절한다(입금된 건은 REFUND_NEEDED).
+     * 예전에는 세션만 끝내서 영업일이 바뀔 때까지 "승인 대기" 탭에 떠난 손님 주문이 매달렸다(토큰은 410, 승인도 종료 세션이라 409).
+     * 이미 승인된 접수 주문은 그대로 두고, 새 세션·다른 테이블의 승인대기는 건드리지 않는다
+     */
+    @Test
+    void c1IdleRescanRejectsPendingApprovalOfTheExpiredSession() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity idle = openSession(table, "sess-idle", now().minusHours(6), now().minusHours(5));
+        OrderEntity pending = pendingApprovalOrder(booth, idle.getId());
+        OrderEntity paidPending = pendingApprovalOrder(booth, idle.getId());
+        assertEquals(1, orderRepository.markPaid(paidPending.getId(), booth.getId(), PaymentMethod.BANK_TRANSFER, "admin", now()));
+        OrderEntity received = unpaidOrder(booth, idle.getId());   // 영업일이 먼 과거라 유휴 예외를 만들지 않는다
+        TableEntity other = table(booth, "A-2", true);
+        TableSessionEntity otherSession = openSession(other, "sess-other", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity otherPending = pendingApprovalOrder(booth, otherSession.getId());
+
+        String newToken = scan(table.getTableToken(), false);
+        assertNotEquals("sess-idle", newToken);
+        assertNotNull(reloadSession(idle.getId()).getEndedAt());
+
+        OrderEntity reloadedPending = orderRepository.findById(pending.getId()).orElseThrow();
+        assertEquals(OrderStatus.CANCELED, reloadedPending.getStatus());
+        assertEquals(PaymentStatus.UNPAID, reloadedPending.getPaymentStatus());
+        assertEquals("유휴 만료 재스캔으로 자동 거절", reloadedPending.getCancelReason());
+        assertEquals("SYSTEM", reloadedPending.getCanceledBy());
+        OrderEntity reloadedPaid = orderRepository.findById(paidPending.getId()).orElseThrow();
+        assertEquals(OrderStatus.CANCELED, reloadedPaid.getStatus());
+        assertEquals(PaymentStatus.REFUND_NEEDED, reloadedPaid.getPaymentStatus());
+        assertEquals(OrderStatus.RECEIVED, orderRepository.findById(received.getId()).orElseThrow().getStatus());
+        assertEquals(OrderStatus.PENDING_APPROVAL, orderRepository.findById(otherPending.getId()).orElseThrow().getStatus());
+    }
+
+    /**
+     * M1 — 이미 종료된 세션(퇴실·유휴 재스캔)의 승인대기는 승인할 수 없다(409 INVALID_STATE). 승인하면 떠난 손님 주문이 주방 대기열에
+     * 들어가고, 퇴실이 끝난 뒤라 "결제 완료"의 미결제 판정도 받지 않은 미수금이 된다. 주문은 승인대기 그대로 남는다
+     */
+    @Test
+    void o28ApproveOnEndedSessionIsConflictAndChangesNothing() throws Exception {
+        TableEntity table = table(booth, "A-1", false);
+        TableSessionEntity ended = endedSession(table, "sess-ended");
+        OrderEntity pending = pendingApprovalOrder(booth, ended.getId());
+
+        mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/approve", pending.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+
+        assertEquals(OrderStatus.PENDING_APPROVAL, orderRepository.findById(pending.getId()).orElseThrow().getStatus());
+    }
+
+    /** 종료된 세션 판정이 존재 은닉을 깨지 않는다 — 다른 부스의 종료 세션 주문은 409가 아니라 404 */
+    @Test
+    void o28ApproveOnOtherBoothsEndedSessionIsNotFound() throws Exception {
+        TableEntity foreign = table(otherBooth, "B-1", false);
+        TableSessionEntity ended = endedSession(foreign, "sess-foreign-ended");
+        OrderEntity pending = pendingApprovalOrder(otherBooth, ended.getId());
+
+        mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/approve", pending.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isNotFound());
+    }
+
+    /** 열린 세션의 승인대기는 그대로 승인된다 — 세션 잠금이 정상 경로를 막지 않는다 */
+    @Test
+    void o28ApproveOnOpenSessionStillWorks() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity pending = pendingApprovalOrder(booth, session.getId());
+
+        mockMvc.perform(patch("/api/v1/admin/orders/{orderId}/approve", pending.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RECEIVED"));
     }
 
     /** 유휴로 만료된("정리 필요") 세션도 퇴실이 종료하므로 그 접수 주문도 완료로 넘어간다. 멱등 재호출은 0건 */
@@ -734,6 +862,40 @@ class TablePosApiTests {
         assertEquals(OrderStatus.RECEIVED, reloaded.getStatus());      // 주방 대기열에서 사라지지 않았다
         assertEquals(PaymentStatus.UNPAID, reloaded.getPaymentStatus());
         // 손님 토큰도 그대로 살아 있다
+        mockMvc.perform(get("/api/v1/orders").header("X-Session-Token", "sess-a1")).andExpect(status().isOk());
+    }
+
+    /**
+     * H2 — 승인대기(O28)가 남은 "결제 완료"는 409 CHECKOUT_PENDING_APPROVAL로 전부 롤백한다. 승인대기는 미결제 정의에서 빠져
+     * CHECKOUT_UNPAID_REMAINS로는 안 잡히는데, 손님 결제 안내 화면은 승인대기 금액까지 더한 총액을 이체하라고 했다 — 조용히 자동 거절하면
+     * 받은 돈과 확정 주문이 어긋난다. 세션·테이블·주문(입금된 승인대기 포함) 어느 것도 바뀌지 않는다
+     */
+    @Test
+    void o6RequireSettledRejectsWhenPendingApprovalRemainsAndChangesNothing() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        paidOrder(booth, session.getId());                                   // O24가 입금 확인한 접수 주문
+        OrderEntity pending = pendingApprovalOrder(booth, session.getId());   // 아직 승인 안 된 주문
+        OrderEntity paidPending = pendingApprovalOrder(booth, session.getId());
+        assertEquals(1, orderRepository.markPaid(paidPending.getId(), booth.getId(), PaymentMethod.BANK_TRANSFER, "admin", now()));
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .param("requireSettled", "true")
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("CHECKOUT_PENDING_APPROVAL"))
+                .andExpect(jsonPath("$.error.details.pendingOrderCount").value(2));
+
+        assertNull(reloadSession(session.getId()).getEndedAt());
+        assertEquals(0, reloadSession(session.getId()).getEndedAtKey());
+        assertEquals(TableStatus.OCCUPIED, reloadTable(table.getId()).getStatus());
+        OrderEntity reloadedPending = orderRepository.findById(pending.getId()).orElseThrow();
+        assertEquals(OrderStatus.PENDING_APPROVAL, reloadedPending.getStatus());
+        assertNull(reloadedPending.getCancelReason());
+        OrderEntity reloadedPaid = orderRepository.findById(paidPending.getId()).orElseThrow();
+        assertEquals(OrderStatus.PENDING_APPROVAL, reloadedPaid.getStatus());
+        assertEquals(PaymentStatus.PAID, reloadedPaid.getPaymentStatus());
+        assertEquals(0, orderRepository.findAll().stream().filter(o -> o.getStatus() == OrderStatus.DONE).count());
         mockMvc.perform(get("/api/v1/orders").header("X-Session-Token", "sess-a1")).andExpect(status().isOk());
     }
 

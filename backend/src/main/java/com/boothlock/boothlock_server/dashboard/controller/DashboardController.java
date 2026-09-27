@@ -105,7 +105,7 @@ public class DashboardController {
 
     /** O28 주문 승인 (v0.6.10 신설) — PENDING_APPROVAL→RECEIVED. 거절은 O13(운영자 취소)을 그대로 쓴다 */
     @Operation(summary = "O28 주문 승인", description = "손님 주문(C3)의 승인대기를 접수(RECEIVED)로 전환한다. "
-            + "승인대기 상태가 아니면(이미 승인됐거나 취소·거절됨) 409. 수기 주문(O14)은 대상이 아니다(이미 RECEIVED로 시작).")
+            + "승인대기 상태가 아니면(이미 승인됐거나 취소·거절됨) 409. 퇴실·유휴 재스캔으로 이미 종료된 세션의 주문이면 409 INVALID_STATE. 수기 주문(O14)은 대상이 아니다(이미 RECEIVED로 시작).")
     @PatchMapping("/admin/orders/{orderId}/approve")
     public DashboardResponse.OrderSummary approve(
             @RequestHeader("Authorization") String authorization,

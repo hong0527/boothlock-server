@@ -6,6 +6,7 @@ import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.booth.service.BoothInfoService;
 import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
 import com.boothlock.boothlock_server.global.error.ForbiddenException;
+import com.boothlock.boothlock_server.global.error.CheckoutPendingApprovalException;
 import com.boothlock.boothlock_server.global.error.CheckoutUnpaidRemainsException;
 import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.InvalidStateException;
@@ -468,6 +469,11 @@ public class TableAdminService {
      * 409 CHECKOUT_UNPAID_REMAINS를 던져 세션 종료·테이블 비움·자동 완료를 전부 롤백한다(세션은 열린 채, 주문은 그대로).
      * 판정은 반드시 잠금·종료 뒤에 한다 — 먼저 세면 판정과 종료 사이에 들어온 주문을 놓친다(위 warning과 같은 이유).
      * false(기본, "테이블 비우기")는 예전과 똑같이 막지 않고 warning만 준다.
+     *
+     * <p>승인대기(O28) 주문도 같은 잠금·종료 뒤에 본다 — requireSettled=true면 한 건이라도 있을 때 409 CHECKOUT_PENDING_APPROVAL로
+     * 전부 롤백하고, false면 자동 거절한 뒤 그 건수를 rejectedPendingCount로 돌려준다. 승인(O28)도 세션 행을 먼저 잠그고
+     * 종료된 세션이면 409라(DashboardOrderActionService.approve), 미결제 집계 뒤에 승인이 끼어들어 자동 완료(DONE)로
+     * requireSettled를 우회하는 틈이 없다.
      */
     @Transactional
     public TableCheckoutResponse checkoutTable(String authorization, Long tableId, boolean requireSettled) {
@@ -486,19 +492,26 @@ public class TableAdminService {
         if (requireSettled && unpaidOrderCount > 0) {
             throw new CheckoutUnpaidRemainsException(unpaidOrderCount);
         }
+        // v0.6.10: 승인대기(O28)는 미결제 정의에서 빠져 있어(UnpaidOrderRule) 위 unpaidOrderCount·아래 completedOrderCount
+        // 어느 쪽에도 안 잡힌다 — 그대로 두면 손님은 떠났는데 "승인 대기" 탭에 영영 안 사라지는 주문이 남으므로 자동 거절한다
+        // (입금된 승인대기는 같은 문장에서 REFUND_NEEDED로 — 리포지토리 주석 참조).
+        // 거절 UPDATE 자체를 판정에 쓴다: 조건부 UPDATE는 잠금 읽기라 위 미결제 집계와 같은 "잠금·종료 뒤 최신 커밋" 기준으로 센다.
+        // requireSettled면 한 건이라도 거절됐을 때 409로 전부 롤백한다(거절·세션 종료 포함) — 손님 결제 안내 화면은 승인대기
+        // 금액까지 더한 총액을 이체하라고 보여주므로, 조용히 거절하면 받은 돈과 확정 주문이 어긋난다(H2).
+        // false("테이블 비우기")는 예전처럼 거절하고 건수만 응답에 실어 화면이 알리게 한다
+        int rejectedPendingCount = endingSessionIds.isEmpty() ? 0
+                : tableCheckoutOrderRepository.rejectPendingApprovalOrdersOfSessions(
+                        endingSessionIds, staffBooth.getId(), CHECKOUT_AUTO_REJECT_REASON, CHECKOUT_AUTO_REJECT_BY, now);
+        if (requireSettled && rejectedPendingCount > 0) {
+            throw new CheckoutPendingApprovalException(rejectedPendingCount);
+        }
         table.vacate();
         int completedOrderCount = endingSessionIds.isEmpty() ? 0
                 : tableCheckoutOrderRepository.completeReceivedOrdersOfSessions(endingSessionIds, staffBooth.getId());
-        // v0.6.10: 승인대기(O28)는 미결제 정의에서 빠져 있어(UnpaidOrderRule) 위 completedOrderCount·unpaidOrderCount
-        // 어느 쪽에도 안 잡힌다 — 그대로 두면 손님은 떠났는데 "승인 대기" 탭에 영영 안 사라지는 주문이 남는다
-        if (!endingSessionIds.isEmpty()) {
-            tableCheckoutOrderRepository.rejectPendingApprovalOrdersOfSessions(
-                    endingSessionIds, staffBooth.getId(), CHECKOUT_AUTO_REJECT_REASON, CHECKOUT_AUTO_REJECT_BY, now);
-        }
 
         String warning = unpaidOrderCount > 0 ? "미결제 주문 " + unpaidOrderCount + "건 있음" : null;
         return new TableCheckoutResponse(unpaidOrderCount > 0, table.getId(), table.getLabel(), table.getStatus(),
-                completedOrderCount, warning);
+                completedOrderCount, rejectedPendingCount, warning);
     }
 
     /**

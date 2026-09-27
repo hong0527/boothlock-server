@@ -211,11 +211,17 @@ export default function TableHomePage() {
       setDrag(null)
     }
 
+    // 브라우저가 제스처를 가로채면(스크롤·줌 전환, 알림 팝업 등) pointerup 대신 pointercancel만 온다 — 안 들으면 드래그 상태가
+    // 영영 안 풀려 카드가 커서를 따라다닌다. 취소는 "놓은 것"이 아니므로 자리를 바꾸지 않고 드래그만 끝낸다
+    const onCancel = () => setDrag(null)
+
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
     return () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
     }
     // tableId가 바뀔 때만(드래그 시작/종료) 다시 구독한다 — 매 픽셀 이동마다 떼었다 붙이지 않는다
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -237,6 +243,7 @@ export default function TableHomePage() {
     setTableActionBusy(true)
     setTableError(null)
     const failedTableIds = new Set<number>()
+    let threw = false
     try {
       // 순차 저장 + 맞바꾸기 대비 — 순서만으로는 맞바꾸기가 409로 실패한다(lib/gridSavePlan.ts 주석)
       const current = tables.map((t) => ({ tableId: t.id, row: t.gridRow ?? null, col: t.gridCol ?? null }))
@@ -245,9 +252,17 @@ export default function TableHomePage() {
         const ok = await commitGridPosition(op.tableId, op.row, op.col)
         if (!ok) failedTableIds.add(op.tableId)
       }
+    } catch {
+      // commitGridPosition이 던지는 건 401(apiFetch가 로그인 화면으로 보내는 중)이나 망 끊김이다(handleAddTable과 같다).
+      // 예전엔 catch가 없어 처리 안 된 거부로 새어 나가고, 아래 편집 정리도 건너뛰어 화면에 아무 문구도 없었다
+      threw = true
+      if (getAuthToken()) setTableError('배치를 저장하지 못했어요. 네트워크 상태를 확인한 뒤 다시 저장해주세요.')
     } finally {
       setTableActionBusy(false)
     }
+    // 어디까지 저장됐는지 모르므로 편집을 전부 남기고 편집 모드도 유지한다 — 이미 저장된 칸은 다음 저장 때
+    // 서버 값과 같아 걸러진다(위 changes 필터)
+    if (threw) return
     setGridEdits((prev) => {
       const next: Record<number, GridPos> = {}
       for (const [idStr, pos] of Object.entries(prev)) {

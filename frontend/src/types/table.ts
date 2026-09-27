@@ -23,6 +23,8 @@ export type TableCheckoutResult = {
   status?: 'EMPTY' | 'OCCUPIED'
   /** 이 퇴실로 완료(DONE) 처리된 남은 접수 주문 수 */
   completedOrderCount?: number
+  /** 이 퇴실("테이블 비우기")로 자동 거절된 승인대기(O28) 주문 수(v0.6.12). 입금된 건은 '환불필요'로 넘어간다 */
+  rejectedPendingCount?: number
   warning?: string
 }
 
@@ -43,4 +45,6 @@ export type TableStatusInfo = {
   orderTotal: number
   /** 지금 앉은 손님의 첫 주문 시각(취소 제외) — 테이블-홈 카드 시간 표시용. 주문이 없으면 null. orderItems와 같이 프론트가 계산 */
   firstOrderAt: string | null
+  /** 지금 앉은 손님의 승인대기(O28) 주문 수 — orderTotal에서는 빠진다(결제 모달과 같은 기준). 카드에 "승인대기 N"으로 표시. 프론트 계산 */
+  pendingApprovalCount: number
 }

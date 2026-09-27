@@ -146,9 +146,11 @@ export default function OrderStatusPage() {
         // 409 = 다른 기기(같은 부스 운영자)가 먼저 바꿨거나, 응답을 못 받은 앞선 요청이 이미 처리된 경우다.
         // 숫자만 보여주면 운영자가 다시 누르며 헤맨다 — 최신 목록을 불러와 실제 상태를 보여준다
         if (res.status === 409) {
-          // 재조회로 실제 상태를 먼저 맞춘 뒤 알린다
+          // 서버가 준 사유를 그대로 보여준다 — 예: 종료된 세션의 주문 승인은 409인데 재조회해도 승인대기 탭에 그대로 남아,
+          // "이미 바뀌었어요"라고만 하면 운영자가 승인을 계속 누른다(그 주문은 거절로만 정리된다)
+          const body: { error?: { message?: string } } | null = await res.json().catch(() => null)
           await refetchAll()
-          setActionError(`${failMessage} — 이미 다른 상태로 바뀌었어요. 최신 목록을 불러왔어요.`)
+          setActionError(`${failMessage} — ${body?.error?.message ?? '이미 다른 상태로 바뀌었어요.'} 최신 목록을 불러왔어요.`)
           return
         }
         const body: { error?: { message?: string } } | null = await res.json().catch(() => null)

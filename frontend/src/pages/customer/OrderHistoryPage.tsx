@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { createPollGuard } from '../../lib/pollGuard'
+import { customerOrderBadge, type CustomerOrderBadge } from '../../lib/customerOrderStatus'
 import { getSessionInfo } from '../../lib/customerSession'
 import { displayTableLabel } from '../../lib/tableLabel'
 import { formatClockTime } from '../../lib/time'
@@ -10,6 +11,14 @@ import type { OrderSummary } from '../../types/customer'
 import { onResume } from '../../lib/onResume'
 
 const POLL_INTERVAL_MS = 7000
+
+// 승인대기는 조리가 아직 시작되지 않았다는 신호라 눈에 띄게, 취소·거절은 흐리게
+const BADGE_CLASS: Record<CustomerOrderBadge['tone'], string> = {
+  pending: 'bg-amber-100 text-amber-800',
+  active: 'bg-primary-100 text-white',
+  done: 'bg-neutral-200 text-neutral-700',
+  canceled: 'bg-neutral-100 text-neutral-400',
+}
 
 export default function OrderHistoryPage() {
   const navigate = useNavigate()
@@ -58,11 +67,21 @@ export default function OrderHistoryPage() {
         {error && <p className="pb-4 text-body-3 text-red-600">{error}</p>}
 
         <div className="flex flex-col gap-4">
-          {orders.map((order) => (
+          {orders.map((order) => {
+            const badge = customerOrderBadge(order)
+            return (
             <div key={order.orderId} className="rounded-[10px] border border-[#b8dcd3] bg-primary-50 p-5">
-              <div className="text-body-3 text-neutral-500">
-                <p>테이블 번호: {sessionInfo?.tableLabel && displayTableLabel(sessionInfo.tableLabel)}</p>
-                <p>주문 시간: {formatClockTime(order.createdAt)}</p>
+              <div className="flex items-start justify-between text-body-3 text-neutral-500">
+                <div>
+                  <p>테이블 번호: {sessionInfo?.tableLabel && displayTableLabel(sessionInfo.tableLabel)}</p>
+                  <p>주문 시간: {formatClockTime(order.createdAt)}</p>
+                </div>
+                <div className="flex flex-col items-end gap-1">
+                  <span className={`rounded-md px-2 py-0.5 text-caption font-semibold ${BADGE_CLASS[badge.tone]}`}>
+                    {badge.label}
+                  </span>
+                  {badge.refundNote && <span className="text-caption text-neutral-500">{badge.refundNote}</span>}
+                </div>
               </div>
 
               <div className="mt-3 divide-y divide-neutral-100 border-t border-neutral-100">
@@ -82,7 +101,8 @@ export default function OrderHistoryPage() {
                 <span>{order.totalAmount.toLocaleString()}원</span>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
 
         {orders.length === 0 && !error && (

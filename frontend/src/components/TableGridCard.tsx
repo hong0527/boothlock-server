@@ -84,6 +84,12 @@ export default function TableGridCard({
         {!selectMode && table.firstOrderAt && (
           <span className="text-xs leading-none tracking-[-0.04em]">{formatElapsedClock(table.firstOrderAt, now)}</span>
         )}
+        {/* 승인대기(O28)는 카드 합계에서 빠지므로 건수만 따로 알린다 — 승인·거절은 주문현황 "승인 대기" 탭에서 한다 */}
+        {!selectMode && table.pendingApprovalCount > 0 && (
+          <span className="rounded bg-amber-100 px-1 text-[10px] leading-tight font-semibold text-amber-800">
+            승인대기 {table.pendingApprovalCount}
+          </span>
+        )}
       </button>
     </div>
   )

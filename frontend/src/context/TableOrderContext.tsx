@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { apiFetch } from '../lib/apiFetch'
 import { createPollGuard } from '../lib/pollGuard'
-import { isOrderOfSession } from '../lib/sessionOrders'
+import { aggregateSessionOrders } from '../lib/sessionOrders'
 import type { OrderSummary } from '../types/dashboard'
 import type { TableStatusInfo } from '../types/table'
 import { onResume } from '../lib/onResume'
@@ -62,30 +62,16 @@ const findFreeGridPosition = (placed: { x: number; y: number }[]) => {
   return gridPosition(index, columns)
 }
 
-type TableOrderAggregate = Pick<TableStatusInfo, 'orderItems' | 'orderTotal' | 'firstOrderAt'>
+type TableOrderAggregate = Pick<TableStatusInfo, 'orderItems' | 'orderTotal' | 'firstOrderAt' | 'pendingApprovalCount'>
 
 // 테이블-홈(Figma)은 카드에 항목별 수량·합계를 보여준다 — O3엔 없는 값이라 O10 주문 목록을 테이블별로 묶어서 계산한다.
 // O10은 그 영업일의 모든 세션 주문을 주므로 지금 앉은 손님 것만 센다 — 주문의 sessionId와 O3 session.id(세션 PK)를 맞춘다.
 // 테이블마다 `?tableId=&activeSessionOnly=true`를 따로 부르면 5초 폴링마다 테이블 수만큼 요청이 늘어서, 한 번 조회한 목록을 나눈다.
-// 취소된 주문은 제외(진행+완료만 현재 테이블 이용 내역으로 침). 세션이 없는(유휴 포함) 테이블은 빈 카드.
+// 취소·승인대기 제외 규칙은 결제 모달과 같게 lib/sessionOrders.aggregateSessionOrders가 정한다(승인대기는 건수만 따로). 세션이 없는(유휴 포함) 테이블은 빈 카드.
 const aggregateTableOrders = (
   table: Pick<TableStatusInfo, 'session'>,
   orders: OrderSummary[],
-): TableOrderAggregate => {
-  const items = new Map<string, number>()
-  let total = 0
-  let firstOrderAt: string | null = null
-  for (const order of orders) {
-    if (order.status === 'CANCELED') continue
-    if (!isOrderOfSession(order, table.session)) continue
-    total += order.totalAmount
-    if (firstOrderAt === null || Date.parse(order.createdAt) < Date.parse(firstOrderAt)) firstOrderAt = order.createdAt
-    for (const item of order.items) {
-      items.set(item.menuName, (items.get(item.menuName) ?? 0) + item.qty)
-    }
-  }
-  return { orderItems: Array.from(items, ([menuName, qty]) => ({ menuName, qty })), orderTotal: total, firstOrderAt }
-}
+): TableOrderAggregate => aggregateSessionOrders(table.session, orders)
 
 export function TableOrderProvider({ children }: { children: ReactNode }) {
   const [tables, setTables] = useState<TableStatusInfo[]>([])
@@ -189,7 +175,7 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
       setError(`테이블 위치를 저장하지 못했어요 (${res.status})`)
       return
     }
-    // O22 응답엔 orderItems/orderTotal/firstOrderAt이 없다(프론트 계산 필드) — 기존 값을 덮어쓰지 않게 얹어준다
+    // O22 응답엔 orderItems/orderTotal/firstOrderAt/pendingApprovalCount가 없다(프론트 계산 필드) — 기존 값을 덮어쓰지 않게 얹어준다
     const updated: Omit<TableStatusInfo, keyof TableOrderAggregate> = await res.json()
     setTables((prev) => prev.map((t) => (t.id === tableId ? { ...t, ...updated } : t)))
   }
