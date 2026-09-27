@@ -268,6 +268,12 @@ public class OrderEntity {
         if (status != OrderStatus.CANCELED && status != OrderStatus.DONE) {
             throw new InvalidStateException("취소되거나 완료된 주문만 되돌릴 수 있습니다.");
         }
+        // 입금 뒤 취소돼 환불 대상(REFUND_NEEDED)이 됐거나 이미 돌려준(REFUNDED) 주문을 접수로 되살리면 "진행 중인 주문인데 환불할 돈"이
+        // 된다 — 결제 축은 되돌리기가 건드리지 않으므로 그대로 두면 받은 적 없는 돈을 또 환불하거나(O21) 정산에서 빠진다.
+        // 다시 받아야 하는 주문이면 새로 입력하는 것이 맞다
+        if (paymentStatus == PaymentStatus.REFUND_NEEDED || paymentStatus == PaymentStatus.REFUNDED) {
+            throw new InvalidStateException("환불 대상이거나 환불 완료된 주문은 되돌릴 수 없습니다. 필요하면 수기 주문으로 다시 입력해주세요.");
+        }
         if (!hasRemainingMenuItems()) {
             throw new InvalidStateException("모든 항목이 취소된 주문은 복구할 수 없습니다.");
         }

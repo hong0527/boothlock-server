@@ -50,12 +50,12 @@ public class OrderWriter {
         List<OrderItemEntity> items = new ArrayList<>(spec.items());
         int totalAmount = spec.totalAmount();
         Integer partySize = spec.seatFeePartySize();
+        LocalDate businessDate = numberingService.businessDateOf(spec.createdAt());
         if (partySize != null && partySize > 0 && spec.sessionId() != null
-                && !orderRepository.existsChargedSeatFee(spec.sessionId())) {
+                && !isSeatFeeCharged(spec.sessionId(), spec.createdAt())) {
             items.add(OrderItemEntity.seatFee(SEAT_FEE_PER_PERSON, partySize));
             totalAmount += SEAT_FEE_PER_PERSON * partySize;
         }
-        LocalDate businessDate = numberingService.businessDateOf(spec.createdAt());
         int orderSeq = numberingService.nextSeq(spec.boothId(), businessDate);
         OrderEntity order = new OrderEntity(
                 spec.boothId(), spec.sessionId(), spec.label() + "-" + orderSeq, businessDate,
@@ -69,6 +69,18 @@ public class OrderWriter {
         items.forEach(order::addItem);
         return orderRepository.saveAndFlush(order);
 
+    }
+
+    /**
+     * 이 세션이 자릿세를 이미 냈다고 보는가 — 자기 세션의 살아 있는 자릿세, 또는 유휴 인계로 이어진 앞 세션의
+     * 같은 영업일 자릿세(OrderRepository.inheritsSeatFeeFromIdleHandoff). save의 부과 판정과 C3의 인원수 요구(PARTY_SIZE_REQUIRED)가
+     * 같은 기준을 쓰게 여기 하나로 둔다. 부과 판정은 반드시 save 안, 세션 행 잠금 뒤에서 부른다 — C3의 인원수 검사는 잠금 밖
+     * 미리보기일 뿐이라 거기서 "청구됨"을 봐도 실제 부과 여부는 save가 다시 정한다.
+     * 앞 세션은 이미 종료돼 새 주문이 붙을 수 없으므로(410) 잠그지 않아도 그쪽 자릿세가 새로 생기지는 않는다
+     */
+    public boolean isSeatFeeCharged(Long sessionId, LocalDateTime at) {
+        return orderRepository.existsChargedSeatFee(sessionId)
+                || orderRepository.inheritsSeatFeeFromIdleHandoff(sessionId, numberingService.businessDateOf(at));
     }
 
 

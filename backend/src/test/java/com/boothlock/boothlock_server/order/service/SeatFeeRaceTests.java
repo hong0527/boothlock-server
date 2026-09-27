@@ -9,6 +9,8 @@ import com.boothlock.boothlock_server.order.domain.OrderItemType;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.order.dto.OrderCreateRequest;
 import com.boothlock.boothlock_server.order.dto.OrderCreateResponse;
+import com.boothlock.boothlock_server.global.error.InvalidStateException;
+import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +18,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -27,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 import static com.boothlock.boothlock_server.order.OrderRaceTestFixture.bearer;
 import static com.boothlock.boothlock_server.order.OrderRaceTestFixture.item;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * 자릿세(파일럿) — "세션에 한 번만" 규칙을 동시성과 취소까지 확인한다.
@@ -169,9 +174,60 @@ class SeatFeeRaceTests {
         dashboardOrderActionService.cancelByStaff(staff, first.orderId(), "실수로 취소");                    // REFUND_NEEDED
         order(sessionId);   // 다음 주문에 자릿세가 다시 붙었다
 
-        dashboardOrderActionService.restore(staff, first.orderId());
+        // v0.6.13부터 환불 대상 주문은 되돌리기 자체가 409다 — 금액도 상태도 그대로 남는다
+        assertThrows(InvalidStateException.class, () -> dashboardOrderActionService.restore(staff, first.orderId()));
 
         int restoredTotal = fx.tx.execute(st -> fx.orderRepository.findById(first.orderId()).orElseThrow().getTotalAmount());
         assertEquals(8000 + 3000 * PARTY_SIZE, restoredTotal, "이미 받은 돈이 걸린 주문의 금액은 되돌리기로 바뀌면 안 된다");
+    }
+
+    // ── 유휴 인계 이어받기(v0.6.13) + 동시성 ─────────────────────────
+
+    /**
+     * C1 유휴 재스캔이 남기는 모양 그대로 세션을 바꾼다 — 옛 세션 ended_at과 새 세션 started_at에 같은 시각.
+     * 테이블 파트 서비스(TableSessionWriter)는 테이블 잠금·유휴 판정까지 하므로, 여기서는 시각 모양만 흉내 낸다
+     */
+    private Long idleHandoff() {
+        LocalDateTime at = LocalDateTime.now(OrderRaceTestFixture.KST).truncatedTo(ChronoUnit.MICROS);
+        fx.tx.execute(st -> fx.endSessionIfActive(fx.table.getId(), at));
+        return fx.tableSessionRepository.save(
+                new TableSessionEntity(fx.table, "handoff-" + UUID.randomUUID(), at)).getId();
+    }
+
+    private int concurrentFirstOrdersTotal(Long sessionId) throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        Future<OrderCreateResponse> a = pool.submit(() -> { start.await(); return order(sessionId); });
+        Future<OrderCreateResponse> b = pool.submit(() -> { start.await(); return order(sessionId); });
+        start.countDown();
+        return a.get(30, TimeUnit.SECONDS).totalAmount() + b.get(30, TimeUnit.SECONDS).totalAmount();
+    }
+
+    @Test
+    void afterIdleHandoffWithoutInheritedFeeTwoPhonesAreChargedOnce() throws Exception {
+        for (int round = 0; round < ROUNDS / 3; round++) {
+            Long before = fx.openSession();
+            OrderCreateResponse feeOrder = approvedOrder(before);
+            orderCancelService.cancel(feeOrder.orderId(), before);   // 앞 세션 자릿세는 취소돼 이어받을 것이 없다
+            Long after = idleHandoff();
+
+            int total = concurrentFirstOrdersTotal(after);
+
+            assertEquals(1, chargedSeatFees(after), "round " + round + " 새 세션 자릿세는 한 번만");
+            assertEquals(8000 * 2 + 3000 * PARTY_SIZE, total, "round " + round);
+        }
+    }
+
+    @Test
+    void afterIdleHandoffWithInheritedFeeTwoPhonesAreNotChargedAtAll() throws Exception {
+        for (int round = 0; round < ROUNDS / 3; round++) {
+            Long before = fx.openSession();
+            approvedOrder(before);   // 앞 세션이 자릿세를 냈다
+            Long after = idleHandoff();
+
+            int total = concurrentFirstOrdersTotal(after);
+
+            assertEquals(0, chargedSeatFees(after), "round " + round + " 앞 세션 자릿세를 이어받아 새로 붙지 않는다");
+            assertEquals(8000 * 2, total, "round " + round);
+        }
     }
 }

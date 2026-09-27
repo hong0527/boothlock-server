@@ -131,7 +131,12 @@ public class OrderCreateService {
         Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request);
         // 인원 검사는 멱등 재요청(이미 접수된 주문은 인원수와 무관하게 그대로 돌려준다)과 메뉴 검증(없는 메뉴 400·품절 409) 뒤에 둔다 —
         // 입력 자체가 틀린 주문에 "인원을 고르세요"를 먼저 보여주면, 인원을 고르고 돌아와서야 품절을 알게 된다
-        if (requirePartySize && (partySize == null || partySize <= 0) && !orderRepository.existsChargedSeatFee(sessionId)) {
+        // 컬럼이 timestamp(6)라 마이크로초로 잘라 넣는다 — 리눅스 now()는 나노초까지 나와서, 자르지 않으면
+        // 첫 응답(메모리 값)과 멱등 재요청 응답(DB 재조회 값)의 createdAt이 달라진다
+        LocalDateTime createdAt = LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS);
+        // "이미 냈다"에는 유휴 인계 앞 세션의 같은 영업일 자릿세도 든다(OrderWriter.isSeatFeeCharged) — 다 먹고 결제까지 끝낸 일행이
+        // 임계를 넘겨 다시 찍었다고 인원을 또 묻지 않는다. 실제 부과는 잠금 아래 save가 같은 기준으로 다시 정한다
+        if (requirePartySize && (partySize == null || partySize <= 0) && !orderWriter.isSeatFeeCharged(sessionId, createdAt)) {
             throw new PartySizeRequiredException();
         }
         List<OrderItemEntity> items = new ArrayList<>(request.items().stream()
@@ -147,9 +152,7 @@ public class OrderCreateService {
         // "이 세션에 청구된 자릿세가 없을 때" 붙인다. 수기 주문(createManual, O14)은 인원수를 넘기지 않아 붙지 않는다
         OrderWriter.OrderSpec spec = new OrderWriter.OrderSpec(
                 boothId, sessionId, label, tableLabel.trim(), idempotencyKey,
-                // 컬럼이 timestamp(6)라 마이크로초로 잘라 넣는다 — 리눅스 now()는 나노초까지 나와서, 자르지 않으면
-                // 첫 응답(메모리 값)과 멱등 재요청 응답(DB 재조회 값)의 createdAt이 달라진다
-                total, items, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), false, partySize);
+                total, items, createdAt, false, partySize);
         return saveWithRetry(spec, booth.getBankAccount(), booth.getDepositorName());
     }
 

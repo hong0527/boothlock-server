@@ -26,7 +26,12 @@ import java.time.ZoneId;
 @Component
 public class BoothJwtProvider {
 
-    static final long EXPIRES_IN_SECONDS = 43_200;
+    /**
+     * 20시간(72,000초) — 예전 12시간은 오전에 로그인한 스태프가 저녁 장사 한가운데서 401로 쫓겨났다(축제 부스는 준비부터 마감까지
+     * 하루 12시간을 넘긴다). 하루 한 번 로그인이면 되도록 늘리되, 영업일이 바뀌면 한 번은 다시 로그인하도록 24시간 미만으로 둔다.
+     * 토큰 탈취 대응은 만료가 아니라 비밀번호 재발급(pwdAt 대조로 기존 토큰 즉시 무효)이 맡는다
+     */
+    static final long EXPIRES_IN_SECONDS = 72_000;
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     /** application.properties의 로컬 개발 기본값 — 이 값이 그대로 쓰이면 경고한다 */

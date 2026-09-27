@@ -52,10 +52,10 @@ class BoothLoginApiTests {
     }
 
     @Test
-    void issuesTwelveHourJwtWithRequiredClaims() throws Exception {
+    void issuesTwentyHourJwtWithRequiredClaims() throws Exception {
         String body = mockMvc.perform(login("test-admin", "correct-password"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.expiresIn").value(43_200))
+                .andExpect(jsonPath("$.expiresIn").value(72_000))
                 .andExpect(jsonPath("$.staff.role").value("ADMIN"))
                 .andExpect(jsonPath("$.staff.boothName").value("테스트 부스"))
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
@@ -65,7 +65,7 @@ class BoothLoginApiTests {
         JsonNode claims = objectMapper.readTree(claimsJson);
         assertEquals("ADMIN", claims.get("role").asText());
         assertEquals(claims.get("staffId").asLong(), claims.get("sub").asLong());
-        assertEquals(43_200, claims.get("exp").asLong() - claims.get("iat").asLong());
+        assertEquals(72_000, claims.get("exp").asLong() - claims.get("iat").asLong());
     }
 
     @Test

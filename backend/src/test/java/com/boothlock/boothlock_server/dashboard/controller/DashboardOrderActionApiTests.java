@@ -16,6 +16,8 @@ import com.boothlock.boothlock_server.order.repository.OrderRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.ParameterizedTest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -666,8 +668,8 @@ class DashboardOrderActionApiTests {
 
     @Test
     void restoresCanceledOrderToReceivedWithoutTouchingPaymentStatus() throws Exception {
+        // v0.6.13 전에는 REFUND_NEEDED 주문으로 확인했지만 그 경우는 이제 409다(아래 rejectsRestoreOfRefundOrder) — 미입금 취소 주문으로 본다
         Long orderId = newOrder(boothId, 26);
-        setPaymentStatus(orderId, PaymentStatus.REFUND_NEEDED);
         setOrderStatus(orderId, OrderStatus.CANCELED);
 
         mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", orderId)
@@ -675,7 +677,7 @@ class DashboardOrderActionApiTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.orderId").value(orderId))
                 .andExpect(jsonPath("$.status").value("RECEIVED"))
-                .andExpect(jsonPath("$.paymentStatus").value("REFUND_NEEDED"))
+                .andExpect(jsonPath("$.paymentStatus").value("UNPAID"))
                 .andExpect(jsonPath("$.totalAmount").value(16000))
                 .andExpect(jsonPath("$.items[0].menuName").value("김치전"))
                 .andExpect(jsonPath("$.items[0].qty").value(2));
@@ -683,7 +685,29 @@ class DashboardOrderActionApiTests {
         OrderEntity saved = orderRepository.findById(orderId).orElseThrow();
         assertEquals(orderId, saved.getId());
         assertEquals(OrderStatus.RECEIVED, saved.getStatus());
-        assertEquals(PaymentStatus.REFUND_NEEDED, saved.getPaymentStatus());   // 결제/환불 축은 그대로
+        assertEquals(PaymentStatus.UNPAID, saved.getPaymentStatus());   // 결제 축은 그대로
+    }
+
+    /**
+     * 환불 대상·환불 완료 주문은 되돌리지 않는다(v0.6.13) — 접수로 되살리면 "진행 중인데 환불할 돈"이 되어 O21 환불이나 정산이 어긋난다.
+     * 다시 받아야 하면 수기 주문(O14)으로 새로 넣으라고 안내한다
+     */
+    @ParameterizedTest
+    @EnumSource(value = PaymentStatus.class, names = {"REFUND_NEEDED", "REFUNDED"})
+    void rejectsRestoreOfRefundOrder(PaymentStatus paymentStatus) throws Exception {
+        Long orderId = newOrder(boothId, 40);
+        setPaymentStatus(orderId, paymentStatus);
+        setOrderStatus(orderId, OrderStatus.CANCELED);
+
+        mockMvc.perform(post("/api/v1/admin/orders/{orderId}/restore", orderId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("수기 주문")));
+
+        OrderEntity saved = orderRepository.findById(orderId).orElseThrow();
+        assertEquals(OrderStatus.CANCELED, saved.getStatus());
+        assertEquals(paymentStatus, saved.getPaymentStatus());
     }
 
     @Test

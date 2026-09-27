@@ -5,9 +5,12 @@ import { CopyIcon, InfoIcon } from '../../components/customer/icons'
 import StaffCallConfirmModal from '../../components/customer/StaffCallConfirmModal'
 import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { customerApiFetch } from '../../lib/customerApiFetch'
+import { getSessionInfo } from '../../lib/customerSession'
+import { depositorGuide } from '../../lib/depositorName'
 import { onResume } from '../../lib/onResume'
 import { createPollGuard } from '../../lib/pollGuard'
 import { requestStaffCall } from '../../lib/staffCall'
+import { displayTableLabel } from '../../lib/tableLabel'
 import type { OrderSummary } from '../../types/customer'
 
 // 가벼운 폴링 — 운영자가 승인·거절·입금 확인하면 이체할 합계가 바뀐다. 주문내역(7초)보다 느슨하게 둔다
@@ -17,7 +20,8 @@ export default function PaymentInfoPage() {
   const navigate = useNavigate()
   const [orders, setOrders] = useState<OrderSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
+  // 무엇을 복사했는지 — 계좌번호와 입금자명(주문번호) 복사 안내를 구분한다
+  const [copied, setCopied] = useState<'account' | 'depositor' | null>(null)
   const [callMessage, setCallMessage] = useState<string | null>(null)
   const [showCallConfirm, setShowCallConfirm] = useState(false)
 
@@ -89,14 +93,19 @@ export default function PaymentInfoPage() {
   const [bankName, ...rest] = bankAccount.split(' ')
   const accountNumber = rest.join(' ')
 
-  const handleCopy = async () => {
+  // 입금자명 규칙(서버 C4 depositorNameRule) — 35개 테이블 이체를 운영자가 구분하는 유일한 단서라 크게 보여준다
+  const guide = depositorGuide(unpaidOrders)
+  const tableLabel = getSessionInfo()?.tableLabel ?? null
+
+  const copyText = async (text: string, what: 'account' | 'depositor') => {
     try {
-      await navigator.clipboard.writeText(accountNumber || bankAccount)
-      setCopied(true)
+      await navigator.clipboard.writeText(text)
+      setCopied(what)
     } catch {
-      setCopied(false)
+      setCopied(null)
     }
   }
+  const handleCopy = () => copyText(accountNumber || bankAccount, 'account')
 
   // 결제확인 전용 직원호출(PAYMENT, v0.6.11) — 일반 호출(HELP)과 쿨다운이 분리돼 있어 여기서 눌러도 막히지 않는다
   const handleCallStaff = async () => {
@@ -156,12 +165,41 @@ export default function PaymentInfoPage() {
               </div>
             </div>
 
+            {guide && (
+              <div className="mt-3 rounded-[10px] border-2 border-primary-300 bg-white p-5">
+                <p className="text-body-2 text-neutral-900">
+                  입금자명{tableLabel && ` · ${displayTableLabel(tableLabel)}`}
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-heading-2 text-neutral-900">이름 + {guide.orderNo}</span>
+                  <button
+                    type="button"
+                    onClick={() => copyText(guide.orderNo, 'depositor')}
+                    aria-label="입금자명에 넣을 주문번호 복사"
+                    className="text-neutral-900"
+                  >
+                    <CopyIcon className="h-[19px] w-[19px]" />
+                  </button>
+                </div>
+                <p className="mt-2 text-body-3 text-neutral-700">{guide.rule}</p>
+                {guide.multiple && (
+                  <p className="mt-1 text-caption text-neutral-500">
+                    주문이 여러 건이면 합계를 한 번에 보내고, 입금자명에는 위 주문번호를 넣어주세요.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="mt-3 flex items-center gap-2 rounded-[10px] bg-neutral-100 px-4 py-3">
               <InfoIcon className="h-[18px] w-[18px] text-neutral-700" />
               <p className="text-caption text-neutral-700">결제 후에는 취소가 어려워요.</p>
             </div>
 
-            {copied && <p className="mt-2 text-center text-caption text-neutral-400">복사됐어요.</p>}
+            {copied && (
+              <p className="mt-2 text-center text-caption text-neutral-400">
+                {copied === 'depositor' ? '주문번호가 복사됐어요. 이름 뒤에 붙여 넣어주세요.' : '복사됐어요.'}
+              </p>
+            )}
           </>
         )}
 

@@ -55,7 +55,7 @@ class BoothSignupApiTests {
     void createsBoothAndAdminAccountThenReturnsWorkingJwt() throws Exception {
         mockMvc.perform(signup("새 부스", "new-admin", "password123"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.expiresIn").value(43_200))
+                .andExpect(jsonPath("$.expiresIn").value(72_000))
                 .andExpect(jsonPath("$.staff.role").value("ADMIN"))
                 .andExpect(jsonPath("$.staff.boothName").value("새 부스"))
                 .andExpect(jsonPath("$.accessToken").isNotEmpty());
