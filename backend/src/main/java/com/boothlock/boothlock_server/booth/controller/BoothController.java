@@ -14,7 +14,7 @@ import tools.jackson.databind.JsonNode;
 
 /**
  * [담당: 황대겸] 계정·부스 설정 — API 명세서 O1·O16·O17 (+/super/*는 파일럿 DB 시딩 대체)
- * 핵심 규칙: JWT(12h, 클레임 staffId·boothId·role), 로그인 실패 지수 백오프,
+ * 핵심 규칙: JWT(20h, 클레임 staffId·boothId·role), 로그인 실패 지수 백오프,
  * 계좌 변경은 ADMIN 전용 + 감사 기록 + 웹훅.
  */
 @RestController

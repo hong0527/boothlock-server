@@ -134,7 +134,7 @@ class FeedbackApiTests {
 
     @Test
     void rejectsExpiredToken() throws Exception {
-        String expiredToken = jwtProvider.issue(staff, Instant.now().minusSeconds(13 * 60 * 60));
+        String expiredToken = jwtProvider.issue(staff, Instant.now().minusSeconds(21 * 60 * 60));
 
         submitWithToken(expiredToken, validFeedback())
                 .andExpect(status().isUnauthorized())

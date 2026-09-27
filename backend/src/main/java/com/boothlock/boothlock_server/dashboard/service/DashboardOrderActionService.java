@@ -216,14 +216,20 @@ public class DashboardOrderActionService {
         // 세션 행을 먼저 잠근다 — 자릿세 판정은 C3 저장(OrderWriter.save)과 같은 잠금 아래서 해야 "되돌리기와 동시에 들어온 주문"이
         // 둘 다 자릿세를 갖는 일이 없다. 잠금 순서도 C3·퇴실과 같은 세션 → 주문으로 맞춘다(세션 id는 엔티티가 아닌 스칼라 조회로 먼저 얻는다 — OrderRepository.findSessionIdByIdAndBoothId 참조)
         Long sessionId = orderRepository.findSessionIdByIdAndBoothId(orderId, boothId).orElse(null);
-        if (sessionId != null) {
-            tableSessionRepository.findByIdForUpdate(sessionId);
-        }
+        TableSessionEntity lockedSession = sessionId == null ? null
+                : tableSessionRepository.findByIdForUpdate(sessionId).orElse(null);
         OrderEntity order = requireExistingForUpdate(orderId, boothId);
+        // 취소된 주문은 종료된 세션에서 되살리지 않는다 — 퇴실(O6)·유휴 재스캔이 자동 거절한 승인대기나 운영자가 취소한 주문이
+        // 떠난 손님 몫의 접수(RECEIVED)·미결제로 되살아나면 주방은 음식을 만들고 받을 사람도 받을 방법도 없다(그 세션 토큰은 410,
+        // 퇴실도 이미 끝나 다시 걸리지 않는다). 세션 행을 FOR UPDATE로 쥔 뒤라 판정 직후 퇴실이 끼어들 수도 없다.
+        // 완료(DONE)는 막지 않는다 — O6가 접수 주문을 자동 완료로 넘기므로 "잘못 넘어갔으면 되돌리기"가 공식 복구 경로다(명세서 O6 5단계)
+        if (lockedSession != null && lockedSession.getEndedAt() != null && order.getStatus() == OrderStatus.CANCELED) {
+            throw new InvalidStateException("이미 퇴실(종료)한 테이블의 취소 주문은 되돌릴 수 없습니다. 필요하면 수기 주문으로 다시 입력해주세요.");
+        }
         // 취소된 자릿세 주문을 되살리는데 그 사이 다음 주문에 자릿세가 다시 붙었다면, 되살린 쪽 자릿세는 뺀다(이중 청구 방지).
         // 되살리기 전에 본다 — 이 주문은 아직 CANCELED라 조회에서 빠지므로 "다른 주문의 자릿세"만 센다.
-        // 미결제(UNPAID) 주문만 — 이미 돈을 받은 주문(REFUND_NEEDED 등)의 금액은 바꾸지 않는다(받은 돈·환불·정산이 어긋난다).
-        // 그 경우 자릿세가 두 주문에 남으므로 운영자가 결제창에서 확인한다
+        // 미결제(UNPAID) 주문만 — 이미 돈을 받은 주문의 금액은 바꾸지 않는다(받은 돈·환불·정산이 어긋난다).
+        // 환불 대상·환불 완료(REFUND_NEEDED·REFUNDED) 주문은 아래 order.restore()가 아예 409로 막는다
         if (order.getStatus() == OrderStatus.CANCELED && order.getPaymentStatus() == PaymentStatus.UNPAID
                 && order.getSessionId() != null && order.hasLiveSeatFee()
                 && orderRepository.existsChargedSeatFee(order.getSessionId())) {

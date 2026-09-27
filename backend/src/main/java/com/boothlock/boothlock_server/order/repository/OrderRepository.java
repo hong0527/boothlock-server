@@ -114,6 +114,47 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
         return existsChargedSeatFee(sessionId, OrderStatus.CANCELED, OrderItemType.SEAT_FEE);
     }
 
+    /** 유휴 인계 선행 세션까지 거슬러 올라가는 최대 단계 — 한 일행이 한 자리에서 유휴 재스캔을 네 번 넘게 겪을 일은 없다 */
+    int IDLE_HANDOFF_MAX_HOPS = 3;
+
+    /**
+     * 유휴 인계 선행 세션 — C1 재스캔(TableSessionWriter)이 유휴 세션을 닫고 새 세션을 열 때 두 시각에 같은 now를 쓴다
+     * (옛 ended_at == 새 started_at, 같은 테이블). O6 퇴실은 테이블 행 잠금 아래 자기 now로 닫고, 그 뒤 스캔은 그 잠금을
+     * 기다린 다음 새 now를 구하므로 퇴실로 끝난 세션은 이 조건에 걸리지 않는다(시계가 마이크로초 단위로 흐르는 한).
+     * p.id <> c.id는 같은 순간에 열리고 닫힌 세션이 자기 자신을 선행으로 잡는 것을 막는다
+     */
+    @Query("select p.id from TableSessionEntity p, TableSessionEntity c "
+            + "where c.id in :sessionIds and p.table = c.table and p.endedAt = c.startedAt and p.id <> c.id")
+    List<Long> findIdleHandoffPredecessorIds(@Param("sessionIds") List<Long> sessionIds);
+
+    /** 자릿세 판정의 영업일 한정판 — 선행 세션의 자릿세는 같은 영업일 것만 이어받는다(다음 날 같은 자리는 새로 받는다) */
+    @Query("select count(o) > 0 from OrderEntity o join o.items i "
+            + "where o.sessionId in :sessionIds and o.businessDate = :businessDate "
+            + "and o.status <> :canceled and i.itemType = :seatFee and i.canceled = false")
+    boolean existsChargedSeatFeeOn(@Param("sessionIds") List<Long> sessionIds,
+                                   @Param("businessDate") LocalDate businessDate,
+                                   @Param("canceled") OrderStatus canceled,
+                                   @Param("seatFee") OrderItemType seatFee);
+
+    /**
+     * 유휴 인계로 이어진 앞 세션(최대 IDLE_HANDOFF_MAX_HOPS단계)에 이 영업일의 살아 있는 자릿세가 있는가 — sessionId 자신은 보지 않는다.
+     * 결제를 다 끝내고 폰을 안 만진 채 임계(120~180분)를 넘긴 일행이 QR을 다시 찍으면 세션이 바뀌어 자릿세가 한 번 더 붙었다(이중 청구).
+     * 취소된 주문·개별 취소된 자릿세 항목은 existsChargedSeatFee와 같은 이유로 청구된 것으로 보지 않는다
+     */
+    default boolean inheritsSeatFeeFromIdleHandoff(Long sessionId, LocalDate businessDate) {
+        List<Long> frontier = List.of(sessionId);
+        for (int hop = 0; hop < IDLE_HANDOFF_MAX_HOPS; hop++) {
+            frontier = findIdleHandoffPredecessorIds(frontier);
+            if (frontier.isEmpty()) {
+                return false;
+            }
+            if (existsChargedSeatFeeOn(frontier, businessDate, OrderStatus.CANCELED, OrderItemType.SEAT_FEE)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** C4 내 주문 조회 — 최신순 (동시각 대비 id 보조 정렬). EntityGraph: 폴링 N+1 방지 — items를 조인으로 한 번에 */
     @EntityGraph(attributePaths = "items")
     List<OrderEntity> findBySessionIdOrderByCreatedAtDescIdDesc(Long sessionId);

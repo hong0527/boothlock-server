@@ -2,6 +2,7 @@ package com.boothlock.boothlock_server.tableqr.service;
 
 import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
+import com.boothlock.boothlock_server.order.service.OrderWriter;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 import com.boothlock.boothlock_server.tableqr.repository.TableCheckoutOrderRepository;
@@ -44,17 +45,20 @@ public class TableSessionWriter {
     private final TableUnpaidOrderRepository tableUnpaidOrderRepository;
     private final TableCheckoutOrderRepository tableCheckoutOrderRepository;
     private final SeatIdlePolicy seatIdlePolicy;
+    private final OrderWriter orderWriter;
 
     public TableSessionWriter(TableRepository tableRepository,
                               TableSessionRepository tableSessionRepository,
                               TableUnpaidOrderRepository tableUnpaidOrderRepository,
                               TableCheckoutOrderRepository tableCheckoutOrderRepository,
-                              SeatIdlePolicy seatIdlePolicy) {
+                              SeatIdlePolicy seatIdlePolicy,
+                              OrderWriter orderWriter) {
         this.tableRepository = tableRepository;
         this.tableSessionRepository = tableSessionRepository;
         this.tableUnpaidOrderRepository = tableUnpaidOrderRepository;
         this.tableCheckoutOrderRepository = tableCheckoutOrderRepository;
         this.seatIdlePolicy = seatIdlePolicy;
+        this.orderWriter = orderWriter;
     }
 
     /** created=false면 잠금을 기다리는 사이 다른 요청이 연 세션을 복원한 것이다 */
@@ -68,6 +72,7 @@ public class TableSessionWriter {
         LocalDateTime now = seatIdlePolicy.now();
 
         Optional<TableSessionEntity> open = tableSessionRepository.findOpenByTableId(tableId);
+        Integer handoffPartySize = null;
         if (open.isPresent()) {
             TableSessionEntity session = open.get();
             if (isActive(table, session) && tableSessionRepository.touchIfActive(session.getId(), now) == 1) {
@@ -82,10 +87,20 @@ public class TableSessionWriter {
             // 이미 승인된 주문은 받을 돈·줄 음식이 확정된 것이라 운영자가 주문현황·결제창에서 정리한다(자동 거절 대상이 아니다)
             tableCheckoutOrderRepository.rejectPendingApprovalOrdersOfSessions(List.of(session.getId()),
                     table.getBooth().getId(), IDLE_AUTO_REJECT_REASON, IDLE_AUTO_REJECT_BY, now);
+            handoffPartySize = session.getPartySize();
         }
 
+        // 옛 세션의 ended_at과 새 세션의 started_at에 같은 now를 쓴다 — 이 일치가 곧 "유휴 인계"의 표지다
+        // (OrderRepository.findIdleHandoffPredecessorIds). O6 퇴실 뒤 스캔은 여기 open이 없어 인계로 잡히지 않는다
         TableSessionEntity session = tableSessionRepository.saveAndFlush(
                 new TableSessionEntity(table, sessionToken, now));
+        // 앞 세션이 오늘 자릿세를 이미 냈으면 인원수도 이어받는다 — 그래야 C1 응답에 partySize가 실려 프론트가 인원 선택을
+        // 다시 띄우지 않고, 새 세션 주문에는 자릿세가 붙지 않는다(OrderWriter.isSeatFeeCharged가 앞 세션 자릿세를 본다).
+        // 앞 세션이 자릿세를 안 냈으면(주문 전·취소됨·다른 영업일) 옮기지 않는다 — 옮기면 인원을 묻지 않은 채 옛 인원수로
+        // 새로 부과해, 실제로 자리를 바꾼 다른 손님에게 앞 손님 인원만큼 청구할 수 있다
+        if (handoffPartySize != null && orderWriter.isSeatFeeCharged(session.getId(), now)) {
+            session.updatePartySize(handoffPartySize);
+        }
         table.occupy();
         return new Result(session, true);
     }

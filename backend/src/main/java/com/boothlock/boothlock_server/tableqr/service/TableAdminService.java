@@ -5,6 +5,7 @@ import com.boothlock.boothlock_server.booth.domain.StaffAccountEntity;
 import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.booth.service.BoothInfoService;
 import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
+import com.boothlock.boothlock_server.dashboard.repository.StaffCallRepository;
 import com.boothlock.boothlock_server.global.error.ForbiddenException;
 import com.boothlock.boothlock_server.global.error.CheckoutPendingApprovalException;
 import com.boothlock.boothlock_server.global.error.CheckoutUnpaidRemainsException;
@@ -91,6 +92,7 @@ public class TableAdminService {
     private final TableSequenceRepository tableSequenceRepository;
     private final TableCheckoutOrderRepository tableCheckoutOrderRepository;
     private final EntityManager entityManager;
+    private final StaffCallRepository staffCallRepository;
 
     public TableAdminService(BoothJwtProvider jwtProvider,
                               BoothInfoService boothInfoService,
@@ -101,7 +103,8 @@ public class TableAdminService {
                               BoothRepository boothRepository,
                               TableSequenceRepository tableSequenceRepository,
                               TableCheckoutOrderRepository tableCheckoutOrderRepository,
-                              EntityManager entityManager) {
+                              EntityManager entityManager,
+                              StaffCallRepository staffCallRepository) {
         this.jwtProvider = jwtProvider;
         this.boothInfoService = boothInfoService;
         this.tableRepository = tableRepository;
@@ -112,6 +115,7 @@ public class TableAdminService {
         this.tableSequenceRepository = tableSequenceRepository;
         this.tableCheckoutOrderRepository = tableCheckoutOrderRepository;
         this.entityManager = entityManager;
+        this.staffCallRepository = staffCallRepository;
     }
 
     /**
@@ -508,6 +512,11 @@ public class TableAdminService {
         table.vacate();
         int completedOrderCount = endingSessionIds.isEmpty() ? 0
                 : tableCheckoutOrderRepository.completeReceivedOrdersOfSessions(endingSessionIds, staffBooth.getId());
+        // 종료한 세션의 미확인 직원 호출도 같은 트랜잭션에서 확인 처리한다 — 부를 손님이 떠났는데 호출이 대시보드에 영영 남았다.
+        // 세션 종료 UPDATE 뒤라 그 세션에 새 호출(C6)은 더 들어오지 않고(410), 409로 롤백되면 이 처리도 같이 되돌아간다
+        if (!endingSessionIds.isEmpty()) {
+            staffCallRepository.ackUnackedCallsOfSessions(endingSessionIds);
+        }
 
         String warning = unpaidOrderCount > 0 ? "미결제 주문 " + unpaidOrderCount + "건 있음" : null;
         return new TableCheckoutResponse(unpaidOrderCount > 0, table.getId(), table.getLabel(), table.getStatus(),

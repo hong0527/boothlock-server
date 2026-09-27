@@ -1,8 +1,15 @@
 package com.boothlock.boothlock_server.global.error;
 
+import org.apache.catalina.connector.ClientAbortException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -10,10 +17,12 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import java.io.IOException;
 import java.util.Map;
 
 /**
@@ -24,6 +33,8 @@ import java.util.Map;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     // ── 400 ──────────────────────────────────────────────
 
@@ -188,6 +199,47 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.SERVICE_UNAVAILABLE, "UPLOAD_BUSY", e.getMessage(), null);
     }
 
+    /**
+     * DB가 잠깐 못 받는 상황 — 버그가 아니라 부하·잠금 경합이라 500 대신 503으로 "다시 시도"를 알린다.
+     * <ul>
+     *   <li>PessimisticLockingFailureException(하위 CannotAcquireLockException 포함): MySQL 1205 잠금 대기 초과
+     *       (application-rds의 innodb_lock_wait_timeout=20초)·1213 데드락 희생. 문장·트랜잭션은 이미 되돌려져 재시도가 안전하다</li>
+     *   <li>CannotCreateTransactionException: 트랜잭션 시작 시 커넥션을 못 얻음 — Hikari connection-timeout(10초) 초과가 여기로 온다</li>
+     *   <li>DataAccessResourceFailureException: 커넥션이 끊김(RDS 장애 조치·socketTimeout 30초)</li>
+     *   <li>QueryTimeoutException: 문장 제한 시간 초과</li>
+     * </ul>
+     * 한 줄 warn만 남긴다 — 잠금 경합이 몰릴 때 요청마다 스택트레이스를 찍으면 로그가 원인보다 커진다. 몇 초 안에 수십 줄이
+     * 쌓이면 그 자체가 신호다(풀 10개 포화·긴 트랜잭션). 멱등키가 있는 C3·O14는 같은 키로 다시 보내면 중복 없이 이어진다
+     */
+    @ExceptionHandler({PessimisticLockingFailureException.class, CannotCreateTransactionException.class,
+            DataAccessResourceFailureException.class, QueryTimeoutException.class})
+    public ResponseEntity<ErrorResponse> handleTemporarilyUnavailable(Exception e) {
+        log.warn("DB 일시 불가로 503 응답: {} — {}", e.getClass().getSimpleName(), rootMessage(e));
+        return body(HttpStatus.SERVICE_UNAVAILABLE, "TEMPORARILY_UNAVAILABLE", "잠시 후 다시 시도해주세요.", null);
+    }
+
+    // ── 클라이언트가 먼저 끊음 ─────────────────────────────
+
+    /**
+     * 손님 폰이 응답을 받기 전에 연결을 끊었다(화면 이탈·약한 축제장 망·프론트 요청 제한시간). 서버 잘못이 아니고, 응답을 쓸 곳도
+     * 없다 — 여기서 JSON 본문을 쓰려 하면 같은 끊긴 소켓에 또 쓰다 예외가 겹친다. debug로만 남기고 본문 없이 끝낸다.
+     * 예전에는 아래 500 안전망으로 떨어져 요청마다 스택트레이스가 찍혀 진짜 500을 가렸다
+     */
+    @ExceptionHandler({ClientAbortException.class, AsyncRequestNotUsableException.class})
+    public void handleClientAbort(Exception e) {
+        log.debug("클라이언트 연결 끊김: {}", rootMessage(e));
+    }
+
+    /** 컨테이너가 ClientAbortException으로 감싸지 않은 끊김(Broken pipe·Connection reset)만 같은 처리 — 그 밖의 IOException은 500 */
+    @ExceptionHandler(IOException.class)
+    public ResponseEntity<ErrorResponse> handleIo(IOException e) {
+        if (isClientDisconnect(e)) {
+            log.debug("클라이언트 연결 끊김: {}", rootMessage(e));
+            return null;
+        }
+        return handleUnknown(e);
+    }
+
     // ── 501 · 500 ────────────────────────────────────────
 
     /** 스켈레톤 스텁(미구현 API)의 응답 — 구현되면 자연히 사라짐.
@@ -199,11 +251,35 @@ public class GlobalExceptionHandler {
                 "아직 구현되지 않은 API입니다. " + e.getMessage(), null);
     }
 
-    /** 최후 안전망 — 예상 못 한 예외. 원인은 서버 콘솔에만 기록 (내부정보 비노출) */
+    /**
+     * 최후 안전망 — 예상 못 한 예외. 원인은 서버 로그에만 기록 (내부정보 비노출).
+     * printStackTrace는 로거를 거치지 않아 표준에러에 시각·요청 스레드 없이 섞여 나왔다 — 로거로 스택트레이스를 한 번 남긴다
+     * (명세서 9.2의 디스코드 웹훅 통보는 아직 없다)
+     */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleUnknown(Exception e) {
-        e.printStackTrace();  // TODO(공통): 명세서 9.2 — 디스코드 웹훅 통보로 교체
+        log.error("처리되지 않은 예외로 500 응답", e);
         return body(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "서버 오류가 발생했습니다.", null);
+    }
+
+    private static boolean isClientDisconnect(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (t instanceof ClientAbortException || (message != null
+                    && (message.contains("Broken pipe") || message.contains("Connection reset by peer")))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 한 줄 로그용 — 가장 안쪽 원인의 메시지(MySQL 오류 문구·Hikari 대기 시간 등이 여기 있다) */
+    private static String rootMessage(Throwable e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        return root.getClass().getSimpleName() + ": " + root.getMessage();
     }
 
     private ResponseEntity<ErrorResponse> body(HttpStatus status, String code, String message, Object details) {
