@@ -450,9 +450,6 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 영업일을 넘긴 세션의 어제 접수 주문까지 서버가 완료했으면 그 차이를 함께 알린다
   /**
    * afterPayment: 방금 입금 확인(O24)이 성공한 뒤의 퇴실 — 실패 문구에 "입금은 됐다"를 밝혀야 운영자가 입금을 다시 받지 않는다.
-   * 그때는 requireSettled도 켠다(그 사이 새 주문이 있으면 서버가 퇴실을 되돌림).
-   */
-  /**
    * requireSettled: 미결제·승인대기가 남으면 서버가 퇴실을 통째로 되돌린다. "결제 완료" 흐름은 입금 확인 여부와 무관하게 켠다 —
    * 미결제 0건 분기에서 끄면 승인대기가 조용히 자동 거절돼 손님이 이체한 금액과 확정 주문이 어긋난다(H2).
    * "테이블 비우기"만 끈다(승인대기 자동 거절 + rejectedPendingCount 안내)
@@ -547,7 +544,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       // 화면 목록엔 없는데 O3가 미결제를 세고 있으면(이전 영업일·목록 미반영) 그대로 남는다는 것을 알린다
       const serverNote =
         table.unpaidOrderCount > 0
-          ? `\n서버 기준 미결제 ${table.unpaidOrderCount}건이 있지만 현재 목록에 없어요(다른 영업일 주문 등). 퇴실해도 그대로 남습니다.`
+          ? `\n서버 기준 미결제 ${table.unpaidOrderCount}건이 있지만 현재 목록에 없어요(다른 영업일 주문 등). 서버에 미결제가 남아 있으면 퇴실이 막히니, 그때는 "테이블 비우기"를 쓰세요.`
           : ''
       if (!window.confirm(`입금 확인할 미결제 주문이 없어요.${receivedNote(freshOrders)}\n퇴실 처리할까요?${serverNote}`)) return
       setCheckingOut(true)

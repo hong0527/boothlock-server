@@ -95,8 +95,8 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
      * findById로 엔티티를 읽으면 영속성 컨텍스트에 그 시점 사본이 올라가, 뒤이은 잠금 조회(FOR UPDATE)가
      * 잠금을 기다린 뒤에도 DB의 최신 행 대신 그 옛 사본을 돌려준다(되돌리기와 삭제 동시 요청에서 실측).
      */
-    @Query("select o.sessionId from OrderEntity o where o.id = :orderId")
-    Optional<Long> findSessionIdById(@Param("orderId") Long orderId);
+    @Query("select o.sessionId from OrderEntity o where o.id = :orderId and o.boothId = :boothId")
+    Optional<Long> findSessionIdByIdAndBoothId(@Param("orderId") Long orderId, @Param("boothId") Long boothId);
 
     /**
      * 자릿세 판정(명세서 밖, 파일럿 전용) — 이 세션에 이미 청구된 자릿세가 있는지. 취소(CANCELED)된 주문에 붙은 자릿세는

@@ -67,7 +67,10 @@ public interface TableUnpaidOrderRepository extends Repository<OrderEntity, Long
               from OrderEntity o
              where o.boothId = :boothId
                and o.sessionId in :sessionIds
-               and """ + UnpaidOrderRule.JPQL_CONDITION)
+               and """ + UnpaidOrderRule.JPQL_CONDITION + """
+             order by o.id""")
+    // id 순으로 잠근다 — O24 일괄 입금 확인도 id 순 FOR UPDATE라, 두 운영자가 같은 테이블에서 "결제 완료"와 입금 확인을
+    // 동시에 누를 때 같은 행들을 반대 순서로 잠가 교착(MySQL 1213 → 500)이 나지 않게 한다
     List<OrderEntity> findUnpaidOrdersOfSessionsForUpdate(@Param("sessionIds") List<Long> sessionIds, @Param("boothId") Long boothId);
 
     /** C1 세션 복원 판정 — 이 세션에 해당 영업일의 미결제({@link UnpaidOrderRule}) 주문이 있는가 (SeatIdlePolicy 활성 조건 2) */

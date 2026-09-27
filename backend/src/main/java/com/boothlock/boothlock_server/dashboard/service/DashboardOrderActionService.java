@@ -89,7 +89,7 @@ public class DashboardOrderActionService {
         StaffAccountEntity staff = authenticate(authorization);
         Long boothId = staff.getBooth().getId();
         // 주문 id → 세션 id는 잠그지 않은 조회로 먼저 얻는다(restore와 같은 방식). 세션 id는 바뀌지 않는 값이라 스냅샷이어도 된다
-        Long sessionId = orderRepository.findSessionIdById(orderId).orElse(null);
+        Long sessionId = orderRepository.findSessionIdByIdAndBoothId(orderId, boothId).orElse(null);
         if (sessionId != null) {
             TableSessionEntity session = tableSessionRepository.findByIdForUpdate(sessionId).orElse(null);
             if (session != null && session.getEndedAt() != null) {
@@ -214,8 +214,8 @@ public class DashboardOrderActionService {
         StaffAccountEntity staff = authenticate(authorization);
         Long boothId = staff.getBooth().getId();
         // 세션 행을 먼저 잠근다 — 자릿세 판정은 C3 저장(OrderWriter.save)과 같은 잠금 아래서 해야 "되돌리기와 동시에 들어온 주문"이
-        // 둘 다 자릿세를 갖는 일이 없다. 잠금 순서도 C3·퇴실과 같은 세션 → 주문으로 맞춘다(세션 id는 엔티티가 아닌 스칼라 조회로 먼저 얻는다 — OrderRepository.findSessionIdById 참조)
-        Long sessionId = orderRepository.findSessionIdById(orderId).orElse(null);
+        // 둘 다 자릿세를 갖는 일이 없다. 잠금 순서도 C3·퇴실과 같은 세션 → 주문으로 맞춘다(세션 id는 엔티티가 아닌 스칼라 조회로 먼저 얻는다 — OrderRepository.findSessionIdByIdAndBoothId 참조)
+        Long sessionId = orderRepository.findSessionIdByIdAndBoothId(orderId, boothId).orElse(null);
         if (sessionId != null) {
             tableSessionRepository.findByIdForUpdate(sessionId);
         }
