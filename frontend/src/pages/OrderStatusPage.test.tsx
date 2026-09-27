@@ -8,7 +8,13 @@ import type { OrderStatus, OrderSummary } from '../types/dashboard'
 
 // DOM 없이 페이지를 함수로 굴리는 최소 harness (AccountPage.test.tsx와 같은 방식).
 // useState 목이 setter를 즉시 반영하므로, setState 뒤 render()를 다시 부르면 바뀐 값으로 그려진다.
-const hooks = vi.hoisted(() => ({ values: [] as unknown[], cursor: 0, mounted: false, effects: [] as (() => void)[] }))
+const hooks = vi.hoisted(() => ({
+  values: [] as unknown[], cursor: 0, mounted: false,
+  effects: [] as (() => void | (() => void))[],
+  // 효과가 돌려준 정리 함수 — unmount()가 한꺼번에 부른다
+  cleanups: [] as (() => void)[],
+  alertPreferred: false,
+}))
 vi.mock('react', async () => ({
   ...await vi.importActual<typeof import('react')>('react'),
   useState: (initial: unknown) => {
@@ -18,7 +24,7 @@ vi.mock('react', async () => ({
       hooks.values[index] = typeof value === 'function' ? (value as (p: unknown) => unknown)(hooks.values[index]) : value
     }]
   },
-  useEffect: (effect: () => void) => { if (!hooks.mounted) hooks.effects.push(effect) },
+  useEffect: (effect: () => void | (() => void)) => { if (!hooks.mounted) hooks.effects.push(effect) },
   // 의존성 배열을 일부러 무시하고 매번 다시 계산한다 — deps 누락은 아래 [정렬] 테스트가 아니라
   // 렌더 결과로 잡는 게 아니라서, 여기서는 "현재 상태에 맞는 값이 나오는가"만 본다
   useMemo: (factory: () => unknown) => factory(),
@@ -43,10 +49,13 @@ vi.mock('../lib/orderActions', () => ({
 // 소리·진동은 기기 API라 여기서는 "울리려 했는가"만 본다
 vi.mock('../lib/staffAlert', () => ({
   acquireWakeLock: vi.fn(),
-  isAlertPreferred: () => false,
+  isAlertPreferred: () => hooks.alertPreferred,
+  listenForAudioUnlock: vi.fn(() => () => {}),
   playBeep: vi.fn(),
   releaseWakeLock: vi.fn(),
+  resumeAudio: vi.fn(),
   setAlertPreferred: vi.fn(),
+  suspendAudio: vi.fn(),
   unlockAudio: vi.fn(),
   vibrate: vi.fn(),
 }))
@@ -68,8 +77,15 @@ function render() {
   hooks.cursor = 0
   const tree = OrderStatusPage()
   hooks.mounted = true
-  hooks.effects.splice(0).forEach(effect => effect())
+  hooks.effects.splice(0).forEach(effect => {
+    const cleanup = effect()
+    if (typeof cleanup === 'function') hooks.cleanups.push(cleanup)
+  })
   return tree
+}
+/** 화면을 떠난다 — 지금까지 돌린 효과의 정리 함수를 모두 부른다 */
+function unmount() {
+  hooks.cleanups.splice(0).forEach(cleanup => cleanup())
 }
 function collect(node: ReactNode, predicate: (props: Props) => boolean, out: Props[] = []): Props[] {
   for (const child of Children.toArray(node)) {
@@ -151,9 +167,19 @@ const storage = {
   clear: () => { store.clear() },
 }
 vi.stubGlobal('localStorage', storage)
+// 탭 제목(document.title)을 보려고 최소한만 세운다
+const fakeDocument = {
+  title: '부스락',
+  visibilityState: 'visible',
+  addEventListener: () => {},
+  removeEventListener: () => {},
+}
+vi.stubGlobal('document', fakeDocument)
 vi.stubGlobal('window', {
   confirm: (message: string) => { confirmMessages.push(message); return confirmAnswer },
   localStorage: storage,
+  addEventListener: () => {},
+  removeEventListener: () => {},
 })
 afterAll(() => { vi.unstubAllGlobals() })
 
@@ -162,6 +188,9 @@ beforeEach(() => {
   hooks.cursor = 0
   hooks.mounted = false
   hooks.effects = []
+  unmount()
+  hooks.alertPreferred = false
+  fakeDocument.title = '부스락'
   confirmAnswer = true
   confirmMessages = []
   store.clear()
@@ -329,6 +358,9 @@ async function pollWith(pending: OrderSummary[], calls: { callId: number; tableL
 }
 
 describe('새 주문·호출 알림', () => {
+  // 알림 켜기를 눌러 둔 운영자 기준 — 꺼져 있을 때는 아래 [알림 끔] 테스트가 본다
+  beforeEach(() => { hooks.alertPreferred = true })
+
   it('첫 조회는 이미 쌓여 있던 승인대기로 울리지 않는다', async () => {
     await load()
     expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
@@ -355,6 +387,53 @@ describe('새 주문·호출 알림', () => {
     vi.mocked(apiFetch).mockClear()
     await pollWith(PENDING_APPROVAL, [])
     expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+  })
+
+  it('알림을 끄면 새 주문이 와도 소리·진동을 내지 않는다 — 탭 제목 숫자는 그대로 갱신한다', async () => {
+    await load()
+    // 버튼으로 끈다 — refetchAll은 마운트 때 만든 함수라 상태가 아니라 ref로 최신 값을 봐야 한다
+    const toggle = collect(render(), p => !!p.onClick && Children.toArray(p.children).some(k => k === '🔔 알림 켜짐'))[0]
+    toggle!.onClick!()
+    vi.mocked(apiFetch).mockClear()
+    vi.mocked(playBeep).mockClear()
+    await pollWith([order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL], [])
+    expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+    expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
+    expect(fakeDocument.title).toContain('3')
+  })
+
+  it('처음부터 알림이 꺼져 있으면 새 주문에도 울리지 않는다', async () => {
+    hooks.alertPreferred = false
+    await load()
+    vi.mocked(apiFetch).mockClear()
+    await pollWith([order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL], [])
+    expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+    expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
+  })
+
+  it('화면을 떠난 뒤 도착한 폴링 응답은 탭 제목을 바꾸지도, 울리지도 않는다', async () => {
+    await load()
+    vi.mocked(apiFetch).mockClear()
+    // 응답을 붙잡아 두고, 요청이 나간 상태에서 화면을 떠난다
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const pending = [order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL]
+    vi.mocked(apiFetch).mockImplementation(async (path) => {
+      await gate
+      const orders = String(path).includes('status=PENDING_APPROVAL') ? pending : []
+      return new Response(JSON.stringify({ orders, calls: [] }), { status: 200 })
+    })
+    hooks.effects.splice(0)
+    hooks.mounted = false
+    render()
+    await vi.waitFor(() => expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(4))
+    unmount()
+    expect(fakeDocument.title).toBe('부스락')
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(fakeDocument.title).toBe('부스락')
+    expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+    expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
   })
 })
 

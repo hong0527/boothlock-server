@@ -141,6 +141,48 @@ class SeatFeeIdleHandoffApiTests {
     }
 
     @Test
+    void c1ReportsSeatFeeChargedOnlyWhenInheritedOrPaid() throws Exception {
+        // 주문 확인 화면의 자릿세 미리보기 근거 — C4는 새 세션 주문만 돌려줘 이어받은 자릿세를 프론트가 볼 수 없다
+        JsonNode fresh = scan();
+        assertFalse(fresh.get("seatFeeCharged").asBoolean(), "새 세션은 아직 자릿세를 내지 않았다");
+        String first = fresh.get("sessionToken").asString();
+        approveAndPay(firstPartyOrdersWithSeatFee(first));
+        makeIdle(first);
+
+        JsonNode rescan = scan();
+        assertNotEquals(first, rescan.get("sessionToken").asString());
+        assertTrue(rescan.get("seatFeeCharged").asBoolean(), "유휴 인계로 이어받은 자릿세는 C1이 알려 준다");
+    }
+
+    @Test
+    void manualOrderAfterIdleHandoffStartsNewParty() throws Exception {
+        // O14 수기 주문이 유휴 세션을 끝내고 연 자리는 새 일행이다 — 인원수·자릿세를 이어받지 않는다
+        String first = scan().get("sessionToken").asString();
+        approveAndPay(firstPartyOrdersWithSeatFee(first));
+        makeIdle(first);
+
+        fx.manualOrder(fx.kimchiId, 1);
+
+        JsonNode rescan = scan();
+        String second = rescan.get("sessionToken").asString();
+        assertNotEquals(first, second);
+        assertTrue(rescan.get("restored").asBoolean(), "수기 주문이 연 세션을 복원한다");
+        assertTrue(!rescan.hasNonNull("partySize"), "운영자가 연 세션에는 앞 일행 인원수를 옮기지 않는다");
+        assertFalse(rescan.get("seatFeeCharged").asBoolean());
+        TableSessionEntity prev = fx.tableSessionRepository.findBySessionToken(first).orElseThrow();
+        TableSessionEntity next = fx.tableSessionRepository.findBySessionToken(second).orElseThrow();
+        assertNotEquals(prev.getEndedAt(), next.getStartedAt(), "유휴 인계 표지(ended_at == started_at)를 만들지 않는다");
+
+        order(second)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("PARTY_SIZE_REQUIRED"));
+        choosePartySize(second, 2);
+        order(second)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE + FEE * 2));
+    }
+
+    @Test
     void idleHandoffWithoutPartySizeCopyIsNotAskedAgain() throws Exception {
         // 인원수 이어받기와 별개로, 인원수가 없는 세션도 앞 세션 자릿세를 보면 PARTY_SIZE_REQUIRED를 내지 않는다
         String first = scan().get("sessionToken").asString();

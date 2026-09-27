@@ -5,6 +5,8 @@ export type CustomerSessionInfo = {
   tableLabel: string
   /** 테이블 이용 인원 선택 화면(PartySizePage)에서 확정 후 채워짐. 그 전까지는 없음 */
   partySize?: number
+  /** C1 스캔 시점에 서버가 본 "자릿세 이미 냄"(유휴 인계로 이어받은 앞 세션 자릿세 포함). 예전에 저장된 세션엔 없다 */
+  seatFeeCharged?: boolean
 }
 /** 메뉴 분류 — 백엔드 MenuService 허용값(MAIN·SIDE·DRINK, #53)과 같다. 분류 없는 메뉴는 null */
 export type MenuCategoryCode = 'MAIN' | 'SIDE' | 'DRINK'

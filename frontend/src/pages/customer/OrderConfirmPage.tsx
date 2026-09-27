@@ -32,7 +32,7 @@ export default function OrderConfirmPage() {
   }, [])
 
   const previewLoading = myOrders === undefined
-  const seatFee = previewLoading ? 0 : pendingSeatFee(partySize, myOrders)
+  const seatFee = previewLoading ? 0 : pendingSeatFee(partySize, myOrders, sessionInfo?.seatFeeCharged === true)
 
   const handleSubmit = async () => {
     if (loading || items.length === 0) return

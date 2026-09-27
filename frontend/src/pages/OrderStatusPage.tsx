@@ -28,9 +28,12 @@ import { onResume } from '../lib/onResume'
 import {
   acquireWakeLock,
   isAlertPreferred,
+  listenForAudioUnlock,
   playBeep,
   releaseWakeLock,
+  resumeAudio,
   setAlertPreferred,
+  suspendAudio,
   unlockAudio,
   vibrate,
 } from '../lib/staffAlert'
@@ -80,8 +83,13 @@ export default function OrderStatusPage() {
   const arrivalsRef = useRef<ArrivalSnapshot | null>(null)
   // 알림 켜기(소리·화면 꺼짐 방지) — 설정은 safeStorage에 남겨 새로고침해도 유지한다
   const [alertOn, setAlertOn] = useState(() => isAlertPreferred())
+  // refetchAll은 deps가 []인 useCallback이라 alertOn 상태를 직접 읽으면 마운트 시점 값에 갇힌다 — ref로 최신 값을 본다.
+  // alertOn은 toggleAlert에서만 바뀌므로 거기서 같이 맞춘다
+  const alertOnRef = useRef(alertOn)
   // 탭 제목을 되돌릴 원래 값 — 마운트 시점 제목
   const baseTitleRef = useRef(typeof document === 'undefined' ? '' : document.title)
+  // 화면을 떠난 뒤 늦게 도착한 폴링 응답이 탭 제목을 "(3) 승인대기"로 되돌리거나 소리를 내지 않게 한다
+  const mountedRef = useRef(false)
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000)
@@ -94,7 +102,7 @@ export default function OrderStatusPage() {
     if (runId === null) return
     try {
       const results = await Promise.all(TABS.map((tab) => fetchDashboard(tab.status)))
-      if (!pollGuard.current.isLatest(runId)) return
+      if (!pollGuard.current.isLatest(runId) || !mountedRef.current) return
       setOrdersByStatus(
         Object.fromEntries(TABS.map((tab, i) => [tab.status, results[i].orders])) as OrdersByStatus,
       )
@@ -107,7 +115,8 @@ export default function OrderStatusPage() {
       const snapshot = snapshotOf(results[0].orders, nextCalls)
       const arrivals = diffArrivals(arrivalsRef.current, snapshot)
       arrivalsRef.current = snapshot
-      if (arrivals.newPendingOrders + arrivals.newCalls > 0) {
+      // 알림을 꺼 두었으면 소리·진동은 내지 않는다 — 탭 제목의 승인대기 수는 켜고 끔과 무관하게 갱신한다
+      if (alertOnRef.current && arrivals.newPendingOrders + arrivals.newCalls > 0) {
         playBeep()
         vibrate()
       }
@@ -115,7 +124,7 @@ export default function OrderStatusPage() {
         document.title = alertTitle(results[0].orders.length, baseTitleRef.current)
       }
     } catch (err) {
-      if (!pollGuard.current.isLatest(runId)) return
+      if (!pollGuard.current.isLatest(runId) || !mountedRef.current) return
       setError(err instanceof Error ? err.message : '주문 목록을 불러오지 못했어요.')
     } finally {
       pollGuard.current.end()
@@ -123,10 +132,13 @@ export default function OrderStatusPage() {
   }, [])
 
   useEffect(() => {
+    // StrictMode의 마운트→정리→마운트에서도 맞도록 효과 안에서 켜고 정리에서 끈다
+    mountedRef.current = true
     refetchAll()
     const id = setInterval(() => refetchAll({ skipIfBusy: true }), POLL_INTERVAL_MS)
     const offResume = onResume(() => refetchAll({ skipIfBusy: true }))
     return () => {
+      mountedRef.current = false
       clearInterval(id)
       offResume()
     }
@@ -141,18 +153,21 @@ export default function OrderStatusPage() {
   }, [])
 
   // 알림이 켜져 있으면 화면 꺼짐 방지를 잡고, 탭 전환·잠금 해제로 돌아올 때마다 다시 잡는다(브라우저가 자동으로 풀어서).
-  // 새로고침 뒤에는 오디오가 다시 잠겨 있으므로 화면을 처음 누르는 순간 풀어 준다(iOS 자동재생 정책)
+  // 새로고침 뒤에는 오디오가 다시 잠겨 있으므로 화면을 누르는 순간 풀어 준다(iOS 자동재생 정책, listenForAudioUnlock).
+  // 돌아올 때는 오디오도 다시 깨운다 — iOS는 전화 등으로 끊긴('interrupted') 오디오를 스스로 되살리지 않는다
   useEffect(() => {
     if (!alertOn || typeof document === 'undefined') return
     void acquireWakeLock()
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void acquireWakeLock()
+      if (document.visibilityState !== 'visible') return
+      void acquireWakeLock()
+      resumeAudio()
     }
     document.addEventListener('visibilitychange', onVisible)
-    document.addEventListener('pointerdown', unlockAudio, { once: true })
+    const stopUnlock = listenForAudioUnlock()
     return () => {
       document.removeEventListener('visibilitychange', onVisible)
-      document.removeEventListener('pointerdown', unlockAudio)
+      stopUnlock()
       releaseWakeLock()
     }
   }, [alertOn])
@@ -163,7 +178,10 @@ export default function OrderStatusPage() {
     if (next) {
       unlockAudio()
       playBeep()
+    } else {
+      suspendAudio()
     }
+    alertOnRef.current = next
     setAlertPreferred(next)
     setAlertOn(next)
   }

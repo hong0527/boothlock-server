@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 
@@ -65,8 +66,18 @@ public class TableSessionWriter {
     public record Result(TableSessionEntity session, boolean created) {
     }
 
-    @Transactional
+    /** C1 손님 QR 스캔 — 유휴 인계면 앞 세션의 인원수를 이어받을 수 있다 */
     public Result createSession(Long tableId, String sessionToken) {
+        return createSession(tableId, sessionToken, false);
+    }
+
+    /**
+     * staffOpened=true는 O14 수기 주문이 여는 세션이다 — 운영자가 직접 자리를 여는 것은 새 일행이라고 본다.
+     * 유휴 세션 종료·자동 거절은 C1과 같게 하되, 인계로 잇지 않는다(인원수를 옮기지 않고 앞 세션 자릿세도 이어받지 않는다).
+     * 그래서 이 세션의 C3는 인원을 새로 고르고(409 PARTY_SIZE_REQUIRED) 자릿세를 새로 낸다
+     */
+    @Transactional
+    public Result createSession(Long tableId, String sessionToken, boolean staffOpened) {
         TableEntity table = tableRepository.findActiveByIdForUpdate(tableId)
                 .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다."));
         LocalDateTime now = seatIdlePolicy.now();
@@ -91,14 +102,18 @@ public class TableSessionWriter {
         }
 
         // 옛 세션의 ended_at과 새 세션의 started_at에 같은 now를 쓴다 — 이 일치가 곧 "유휴 인계"의 표지다
-        // (OrderRepository.findIdleHandoffPredecessorIds). O6 퇴실 뒤 스캔은 여기 open이 없어 인계로 잡히지 않는다
+        // (OrderRepository.findIdleHandoffPredecessorIds). O6 퇴실 뒤 스캔은 여기 open이 없어 인계로 잡히지 않는다.
+        // O14가 연 세션은 1µs 뒤에 시작시켜 그 일치를 일부러 깬다 — 인원수만 안 옮기면 C3의 인원수 검사가 앞 세션 자릿세를
+        // "이미 냈음"으로 보고 인원을 묻지 않은 채 자릿세 없이 받는다. 컬럼을 늘리는 대신 표지 자체를 만들지 않는 쪽을 골랐다
+        // (started_at은 DATETIME(6)이고 now는 µs로 잘려 있어 1µs 차이가 그대로 남는다. 유휴 판정에는 무시할 만한 차이다)
+        LocalDateTime startedAt = staffOpened && open.isPresent() ? now.plus(1, ChronoUnit.MICROS) : now;
         TableSessionEntity session = tableSessionRepository.saveAndFlush(
-                new TableSessionEntity(table, sessionToken, now));
+                new TableSessionEntity(table, sessionToken, startedAt));
         // 앞 세션이 오늘 자릿세를 이미 냈으면 인원수도 이어받는다 — 그래야 C1 응답에 partySize가 실려 프론트가 인원 선택을
         // 다시 띄우지 않고, 새 세션 주문에는 자릿세가 붙지 않는다(OrderWriter.isSeatFeeCharged가 앞 세션 자릿세를 본다).
         // 앞 세션이 자릿세를 안 냈으면(주문 전·취소됨·다른 영업일) 옮기지 않는다 — 옮기면 인원을 묻지 않은 채 옛 인원수로
         // 새로 부과해, 실제로 자리를 바꾼 다른 손님에게 앞 손님 인원만큼 청구할 수 있다
-        if (handoffPartySize != null && orderWriter.isSeatFeeCharged(session.getId(), now)) {
+        if (!staffOpened && handoffPartySize != null && orderWriter.isSeatFeeCharged(session.getId(), now)) {
             session.updatePartySize(handoffPartySize);
         }
         table.occupy();

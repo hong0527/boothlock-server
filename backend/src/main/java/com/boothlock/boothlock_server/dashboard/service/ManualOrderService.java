@@ -85,14 +85,15 @@ public class ManualOrderService {
     }
 
     /**
-     * 테이블의 활성 세션 id — C1(TableSessionService.createOrRestore)을 그 테이블의 QR 토큰으로 그대로 태운다.
+     * 테이블의 활성 세션 id — C1(TableSessionService.createOrRestoreForStaff)을 그 테이블의 QR 토큰으로 그대로 태운다.
      * 활성 세션이 있으면 복원, 없으면 생성 + 테이블 OCCUPIED. 손님 QR 스캔과 동시에 와도 C1의 유니크 제약 복구가 한 세션으로 모으고,
      * 테이블 파트가 C1에 넣는 유휴 판정·행 잠금도 자연히 따라온다 (명세서 O14 "C1과 동일 규칙").
      * C1 응답에는 세션 id가 없어 발급된 토큰을 인증 계층에 통과시켜 얻는다 — 그 사이 퇴실됐으면 여기서 410이 난다.
      */
     private Supplier<Long> activeSessionOf(TableEntity table, Long boothId) {
         return () -> {
-            TableSessionResponse issued = tableSessionService.createOrRestore(
+            // 새로 열 때는 유휴 인계로 잇지 않는다 — 운영자가 연 자리는 새 일행이라 인원·자릿세를 새로 받는다
+            TableSessionResponse issued = tableSessionService.createOrRestoreForStaff(
                     new TableSessionCreateRequest(table.getTableToken()));
             AuthenticatedSession session = tableSessionAuthService.authenticate(issued.sessionToken());
             // 위에서 부스 소속을 확인한 테이블의 토큰이라 어긋날 수 없다 — 어긋나면 남의 세션에 주문이 붙으므로 저장 전에 끊는다

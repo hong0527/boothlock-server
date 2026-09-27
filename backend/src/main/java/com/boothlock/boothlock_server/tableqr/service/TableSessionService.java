@@ -4,6 +4,7 @@ import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.global.error.SessionExpiredException;
 import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
+import com.boothlock.boothlock_server.order.service.OrderWriter;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
@@ -32,20 +33,35 @@ public class TableSessionService {
     private final TableSessionWriter tableSessionWriter;
     private final TableUnpaidOrderRepository tableUnpaidOrderRepository;
     private final SeatIdlePolicy seatIdlePolicy;
+    private final OrderWriter orderWriter;
 
     public TableSessionService(TableRepository tableRepository,
                                 TableSessionRepository tableSessionRepository,
                                 TableSessionWriter tableSessionWriter,
                                 TableUnpaidOrderRepository tableUnpaidOrderRepository,
-                                SeatIdlePolicy seatIdlePolicy) {
+                                SeatIdlePolicy seatIdlePolicy,
+                                OrderWriter orderWriter) {
         this.tableRepository = tableRepository;
         this.tableSessionRepository = tableSessionRepository;
         this.tableSessionWriter = tableSessionWriter;
         this.tableUnpaidOrderRepository = tableUnpaidOrderRepository;
         this.seatIdlePolicy = seatIdlePolicy;
+        this.orderWriter = orderWriter;
     }
 
     public TableSessionResponse createOrRestore(TableSessionCreateRequest request) {
+        return createOrRestore(request, false);
+    }
+
+    /**
+     * O14 수기 주문 전용 — 활성 세션 복원·유휴 세션 종료는 C1과 같고, 새로 열 때만 유휴 인계로 잇지 않는다
+     * (운영자가 연 자리는 새 일행이다, TableSessionWriter.createSession 주석)
+     */
+    public TableSessionResponse createOrRestoreForStaff(TableSessionCreateRequest request) {
+        return createOrRestore(request, true);
+    }
+
+    private TableSessionResponse createOrRestore(TableSessionCreateRequest request, boolean staffOpened) {
         if (request == null || request.tableToken() == null || request.tableToken().isBlank()) {
             throw new InvalidRequestException("tableToken이 필요합니다.");
         }
@@ -65,7 +81,7 @@ public class TableSessionService {
         // 열린 세션이 없거나 유휴 만료다 — 종료·생성은 테이블 row를 잠근 쓰기 경계에서 다시 판정하고 처리한다
         String sessionToken = SecureTokenGenerator.generate();
         try {
-            TableSessionWriter.Result result = tableSessionWriter.createSession(table.getId(), sessionToken);
+            TableSessionWriter.Result result = tableSessionWriter.createSession(table.getId(), sessionToken, staffOpened);
             return toResponse(table, result.session(), !result.created());
         } catch (DataIntegrityViolationException e) {
             // 동시 스캔 레이스 — 저장 트랜잭션이 끝난 뒤라 여기서는 재조회가 안전하다 (DB스키마 §1 table_session 주석)
@@ -111,6 +127,9 @@ public class TableSessionService {
                 new TableSessionResponse.Booth(table.getBooth().getName(), table.getBooth().isOpen()),
                 new TableSessionResponse.Table(table.getLabel()),
                 restored,
-                session.getPartySize());
+                session.getPartySize(),
+                // 주문 확인 화면의 자릿세 미리보기용 — C4는 이 세션 주문만 돌려줘 유휴 인계로 이어받은 자릿세를 프론트가 볼 수 없다.
+                // 실제 부과는 C3 저장이 같은 기준(isSeatFeeCharged)으로 다시 정한다
+                orderWriter.isSeatFeeCharged(session.getId(), seatIdlePolicy.now()));
     }
 }
