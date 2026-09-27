@@ -91,6 +91,14 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     long countBySessionIdAndStatusInAndPaymentStatus(Long sessionId, List<OrderStatus> statuses, PaymentStatus paymentStatus);
 
     /**
+     * 주문의 세션 id만 스칼라로 읽는다 — 세션을 먼저 잠그려고 주문 id → 세션 id를 알아낼 때 쓴다.
+     * findById로 엔티티를 읽으면 영속성 컨텍스트에 그 시점 사본이 올라가, 뒤이은 잠금 조회(FOR UPDATE)가
+     * 잠금을 기다린 뒤에도 DB의 최신 행 대신 그 옛 사본을 돌려준다(되돌리기와 삭제 동시 요청에서 실측).
+     */
+    @Query("select o.sessionId from OrderEntity o where o.id = :orderId")
+    Optional<Long> findSessionIdById(@Param("orderId") Long orderId);
+
+    /**
      * 자릿세 판정(명세서 밖, 파일럿 전용) — 이 세션에 이미 청구된 자릿세가 있는지. 취소(CANCELED)된 주문에 붙은 자릿세는
      * 청구된 것으로 보지 않는다(개별 취소된 자릿세 항목도 마찬가지) — 손님이 자릿세가 붙은 첫 주문을 취소하면 다음 주문에 다시 붙어야 한다.
      * 반드시 OrderWriter.save 안, 세션 행 잠금(touchIfSessionActive) 뒤에 부른다. 잠금 없이 보면 같은 테이블 폰 두 대가
