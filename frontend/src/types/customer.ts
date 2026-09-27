@@ -50,7 +50,7 @@ export type OrderSummaryItem = {
   itemType: 'MENU' | 'SEAT_FEE'
 }
 
-/** C4 내 주문 조회 응답의 주문 1건. PENDING_APPROVAL(O28, v0.6.10)은 화면에서 따로 표시하지 않는다(상태 뱃지 자체가 없음) */
+/** C4 내 주문 조회 응답의 주문 1건. 주문내역 화면은 status·paymentStatus로 상태 뱃지를 단다(lib/customerOrderStatus) */
 export type OrderSummary = {
   orderId: number
   orderNo: string

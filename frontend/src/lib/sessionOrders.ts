@@ -36,3 +36,63 @@ export function isUnpaid(order: Pick<OrderSummary, 'status' | 'paymentStatus'>):
 export function unpaidTotal(orders: Pick<OrderSummary, 'status' | 'paymentStatus' | 'totalAmount'>[]): number {
   return orders.filter(isUnpaid).reduce((sum, o) => sum + o.totalAmount, 0)
 }
+
+/**
+ * 승인대기(O28) 요약 — 결제 모달 "승인대기 N건 · X원" 줄과 "결제 완료" 사전 차단에 쓴다.
+ * 승인대기는 미결제 정의(isUnpaid)에서 빠져 O24 합계에 안 들어가지만, 손님 결제 안내 화면은 이 금액까지 더한 총액을
+ * 이체하라고 보여준다 — 운영자 화면에서 안 보이면 "손님이 더 보냈다"를 설명할 길이 없다. 서버는 승인대기가 남은
+ * "결제 완료"(requireSettled)를 409 CHECKOUT_PENDING_APPROVAL로 되돌리고, "테이블 비우기"는 자동 거절한다.
+ * paidCount는 승인대기인데 이미 입금 확인된 건(#117 "결제 확인") — 거절되면 '환불필요'로 넘어간다
+ */
+export function pendingApprovalSummary(
+  orders: Pick<OrderSummary, 'status' | 'paymentStatus' | 'totalAmount'>[],
+): { count: number; amount: number; paidCount: number } {
+  const pending = orders.filter((o) => o.status === 'PENDING_APPROVAL')
+  return {
+    count: pending.length,
+    amount: pending.reduce((sum, o) => sum + o.totalAmount, 0),
+    paidCount: pending.filter((o) => o.paymentStatus === 'PAID').length,
+  }
+}
+
+export type SessionOrderAggregate = {
+  orderItems: { menuName: string; qty: number }[]
+  orderTotal: number
+  firstOrderAt: string | null
+  pendingApprovalCount: number
+}
+
+/**
+ * 테이블-홈 카드 집계 — O10 목록(영업일 전체)에서 지금 앉은 손님(세션) 주문만 골라 항목·합계·첫 주문 시각을 낸다.
+ * 취소는 뺀다. 승인대기(O28)는 합계·항목에서 뺀다 — 결제 모달(PaymentModal)과 같은 기준이라야 카드와 모달의 금액이
+ * 어긋나지 않는다(운영자가 아직 받아들이지 않은 주문은 확정된 이용 내역이 아니다). 대신 건수를 따로 세어 카드에 표시한다.
+ * firstOrderAt은 승인대기도 포함한다 — "손님이 언제부터 앉아 있었나"(장시간 배색 기준)라 승인 여부와 무관하다
+ */
+export function aggregateSessionOrders(
+  session: Pick<TableSessionInfo, 'id'> | null | undefined,
+  orders: Pick<OrderSummary, 'sessionId' | 'status' | 'totalAmount' | 'createdAt' | 'items'>[],
+): SessionOrderAggregate {
+  const items = new Map<string, number>()
+  let total = 0
+  let firstOrderAt: string | null = null
+  let pendingApprovalCount = 0
+  for (const order of orders) {
+    if (order.status === 'CANCELED') continue
+    if (!isOrderOfSession(order, session)) continue
+    if (firstOrderAt === null || Date.parse(order.createdAt) < Date.parse(firstOrderAt)) firstOrderAt = order.createdAt
+    if (order.status === 'PENDING_APPROVAL') {
+      pendingApprovalCount++
+      continue
+    }
+    total += order.totalAmount
+    for (const item of order.items) {
+      items.set(item.menuName, (items.get(item.menuName) ?? 0) + item.qty)
+    }
+  }
+  return {
+    orderItems: Array.from(items, ([menuName, qty]) => ({ menuName, qty })),
+    orderTotal: total,
+    firstOrderAt,
+    pendingApprovalCount,
+  }
+}

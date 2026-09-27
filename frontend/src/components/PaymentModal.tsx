@@ -14,7 +14,7 @@ import {
   createManualOrder,
   updateItemQty,
 } from '../lib/orderActions'
-import { isUnpaid, unpaidTotal } from '../lib/sessionOrders'
+import { isUnpaid, pendingApprovalSummary, unpaidTotal } from '../lib/sessionOrders'
 import { displayTableLabel } from '../lib/tableLabel'
 import { formatClockTime } from '../lib/time'
 import { PAYMENT_STATUS_LABEL, type OrderStatus, type OrderSummary, type PaymentStatus } from '../types/dashboard'
@@ -180,6 +180,9 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   const receivedOrders = visibleOrders.filter((o) => o.status === 'RECEIVED')
   const unpaidOrders = visibleOrders.filter(isUnpaid)
   const unpaidAmount = unpaidTotal(visibleOrders)
+  // 승인대기는 목록·합계에서 빼지만 건수·금액은 따로 보여준다 — 손님 결제 안내(PaymentInfoPage)는 이 금액까지 더한 총액을
+  // 이체하라고 안내하므로, 여기서 안 보이면 운영자는 "손님이 더 보냈다"를 설명할 수 없다
+  const pending = pendingApprovalSummary(orders)
 
   const itemKey = (orderId: number, itemId: number) => `${orderId}:${itemId}`
 
@@ -449,19 +452,33 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
    * afterPayment: 방금 입금 확인(O24)이 성공한 뒤의 퇴실 — 실패 문구에 "입금은 됐다"를 밝혀야 운영자가 입금을 다시 받지 않는다.
    * 그때는 requireSettled도 켠다(그 사이 새 주문이 있으면 서버가 퇴실을 되돌림).
    */
-  const checkout = async (announcedReceived = 0, { afterPayment = false } = {}): Promise<boolean> => {
-    const res = await checkoutTable(table.id, { requireSettled: afterPayment })
+  /**
+   * requireSettled: 미결제·승인대기가 남으면 서버가 퇴실을 통째로 되돌린다. "결제 완료" 흐름은 입금 확인 여부와 무관하게 켠다 —
+   * 미결제 0건 분기에서 끄면 승인대기가 조용히 자동 거절돼 손님이 이체한 금액과 확정 주문이 어긋난다(H2).
+   * "테이블 비우기"만 끈다(승인대기 자동 거절 + rejectedPendingCount 안내)
+   */
+  const checkout = async (
+    announcedReceived = 0,
+    { afterPayment = false, requireSettled = afterPayment }: { afterPayment?: boolean; requireSettled?: boolean } = {},
+  ): Promise<boolean> => {
+    const res = await checkoutTable(table.id, { requireSettled })
     if (res.status === 410) {
       // 개정 전 백엔드: 이미 퇴실 처리된 테이블 — 할 일이 없으니 닫는다 (개정 후에는 멱등 200)
       onCheckedOut()
       return true
     }
     if (!res.ok) {
-      const { code } = await readApiError(res)
+      const { code, details } = await readApiError(res)
       const paidNote = afterPayment ? '입금 확인은 완료됐어요. ' : ''
       if (res.status === 409 && code === 'CHECKOUT_UNPAID_REMAINS') {
         // 입금 확인 뒤 손님이 새로 주문했다 — 같은 일행 주문이니 그 주문까지 받고 퇴실해야 한다
         setError(`${paidNote}그 사이 새 주문이 들어와 퇴실하지 않았어요. 새 주문을 확인한 뒤 "결제 완료"를 다시 눌러주세요.`)
+      } else if (res.status === 409 && code === 'CHECKOUT_PENDING_APPROVAL') {
+        // 승인대기가 남았다 — 손님은 그 금액까지 이체했을 수 있으니 조용히 거절하지 않고 운영자가 먼저 승인·거절하게 한다
+        const count = typeof details?.pendingOrderCount === 'number' ? `${details.pendingOrderCount}건` : ''
+        setError(
+          `${paidNote}승인대기 주문${count ? ` ${count}` : ''}이 남아 퇴실하지 않았어요. 주문현황 "승인 대기"에서 먼저 승인하거나 거절한 뒤 "결제 완료"를 다시 눌러주세요.`,
+        )
       } else {
         setError(`${paidNote}퇴실 처리에 실패했어요 (${res.status}). "결제 완료"를 다시 눌러 퇴실해 주세요.`)
       }
@@ -476,6 +493,10 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     const extraCompleted = (result?.completedOrderCount ?? 0) - announcedReceived
     if (extraCompleted > 0) {
       notices.push(`목록에 없던 다른 영업일 미완료 주문 ${extraCompleted}건도 완료 처리됐어요.`)
+    }
+    const rejectedPending = result?.rejectedPendingCount ?? 0
+    if (rejectedPending > 0) {
+      notices.push(`승인대기 주문 ${rejectedPending}건이 자동 거절됐어요. 입금확인된 건은 주문현황에서 '환불필요'로 확인해 주세요.`)
     }
     if (notices.length > 0) window.alert(notices.join('\n'))
     onCheckedOut()
@@ -512,6 +533,16 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     const freshUnpaid = freshVisible.filter(isUnpaid)
     const freshUnpaidAmount = unpaidTotal(freshVisible)
 
+    // 승인대기가 남았으면 입금 확인(O24)부터 막는다 — O24 합계에는 승인대기가 없는데 손님은 그 금액까지 이체했을 수 있다.
+    // 여기서 먼저 승인해야 O24 합계가 손님이 보낸 금액과 맞는다. 목록이 늦었을 때를 대비해 서버도 409로 한 번 더 막는다
+    const freshPending = pendingApprovalSummary(freshOrders)
+    if (freshPending.count > 0) {
+      setError(
+        `승인대기 ${freshPending.count}건 · ${freshPending.amount.toLocaleString()}원이 남아 있어요. 주문현황 "승인 대기"에서 먼저 승인하거나 거절한 뒤 "결제 완료"를 눌러주세요.`,
+      )
+      return
+    }
+
     if (freshUnpaid.length === 0) {
       // 화면 목록엔 없는데 O3가 미결제를 세고 있으면(이전 영업일·목록 미반영) 그대로 남는다는 것을 알린다
       const serverNote =
@@ -521,7 +552,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       if (!window.confirm(`입금 확인할 미결제 주문이 없어요.${receivedNote(freshOrders)}\n퇴실 처리할까요?${serverNote}`)) return
       setCheckingOut(true)
       try {
-        await checkout(receivedCount(freshOrders))
+        await checkout(receivedCount(freshOrders), { requireSettled: true })
       } catch {
         reportNoResponse('퇴실 처리')
         refetch()
@@ -590,10 +621,18 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     const freshOrders = await refetch()
     const freshUnpaidCount = freshOrders.filter((o) => o.status !== 'CANCELED').filter(isUnpaid).length
     const unpaidCount = Math.max(freshUnpaidCount, table.unpaidOrderCount)
+    // 비우기는 승인대기를 자동 거절한다(서버 O6) — 확인창에서 미리 알린다. 입금된 승인대기는 '환불필요'가 된다
+    const freshPending = pendingApprovalSummary(freshOrders)
+    const pendingNote =
+      freshPending.count > 0
+        ? `\n승인대기 ${freshPending.count}건(${freshPending.amount.toLocaleString()}원)은 자동 거절됩니다.${
+            freshPending.paidCount > 0 ? ` 그중 입금확인된 ${freshPending.paidCount}건은 '환불필요'로 바뀝니다.` : ''
+          }`
+        : ''
     const message =
       unpaidCount > 0
-        ? `미결제 ${unpaidCount}건이 그대로 남습니다.${receivedNote(freshOrders)}\n입금 확인 없이 테이블을 비울까요?`
-        : `테이블을 비울까요? 손님 화면은 바로 접속이 끊어져요.${receivedNote(freshOrders)}`
+        ? `미결제 ${unpaidCount}건이 그대로 남습니다.${receivedNote(freshOrders)}${pendingNote}\n입금 확인 없이 테이블을 비울까요?`
+        : `테이블을 비울까요? 손님 화면은 바로 접속이 끊어져요.${receivedNote(freshOrders)}${pendingNote}`
     if (!window.confirm(message)) return
     setCheckingOut(true)
     try {
@@ -802,6 +841,15 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
             <span>미결제 합계 {unpaidOrders.length > 0 && <span className="text-neutral-400">({unpaidOrders.length}건)</span>}</span>
             <span className="text-lg font-semibold">{unpaidAmount.toLocaleString()}원</span>
           </div>
+          {pending.count > 0 && (
+            // 미결제 합계(O24 대상)에 안 들어간 금액 — 손님 결제 안내에는 포함돼 있다. 승인·거절은 주문현황 "승인 대기"에서
+            <div className="flex items-baseline justify-between text-sm tracking-[-0.04em] text-amber-700">
+              <span className="font-semibold">
+                승인대기 {pending.count}건 · {pending.amount.toLocaleString()}원
+              </span>
+              <span>주문현황에서 승인·거절 후 결제 완료</span>
+            </div>
+          )}
           <div className="flex gap-3">
             {/* 수기 주문·수량 변경만 하고 테이블은 그대로 둘 때 — 담아둔 새 메뉴와 +/-·취소를 여기서 한 번에
                 커밋한 뒤 닫는다(별도의 "등록" 버튼 없이 이 버튼이 그 역할을 겸한다). 실패하면(품절·이미 완료

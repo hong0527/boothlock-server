@@ -67,9 +67,9 @@ docker compose -f docker-compose.prod.yml up -d --build  # prod: api + frontend 
 Production runs `SPRING_PROFILES_ACTIVE=prod` (`application-prod.properties` overlays the base
 properties). Required env vars with **no default** — startup fails without them:
 `BOOTLOCK_JWT_SECRET`, `BOOTLOCK_CUSTOMER_BASE_URL`, `BOOTLOCK_CORS_ALLOWED_ORIGINS`. See
-`.env.prod.example` and `backend/docs/배포_운영절차.md` for the full deploy runbook (currently H2
-file DB on EC2, not RDS — a deliberate pilot-scale tradeoff; data loss on instance failure is
-accepted).
+`.env.prod.example` and `backend/docs/배포_운영절차.md` for the full deploy runbook (production has
+run on RDS MySQL 8.0 with `ddl-auto=validate` and READ-COMMITTED since 2026-09-24 — schema/CHECK
+changes must be applied by hand before deploying, see §3-1 of the runbook).
 
 ## Architecture
 

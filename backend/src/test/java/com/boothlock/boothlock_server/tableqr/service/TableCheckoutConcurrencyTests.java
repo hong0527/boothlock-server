@@ -6,11 +6,18 @@ import com.boothlock.boothlock_server.booth.domain.StaffRole;
 import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.booth.repository.StaffAccountRepository;
 import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
+import com.boothlock.boothlock_server.dashboard.service.DashboardOrderActionService;
+import com.boothlock.boothlock_server.global.domain.OrderStatus;
+import com.boothlock.boothlock_server.global.domain.PaymentStatus;
+import com.boothlock.boothlock_server.global.error.CheckoutPendingApprovalException;
+import com.boothlock.boothlock_server.global.error.CheckoutUnpaidRemainsException;
+import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.OrderRateLimitedException;
 import com.boothlock.boothlock_server.global.error.SessionExpiredException;
 import com.boothlock.boothlock_server.menu.domain.MenuEntity;
 import com.boothlock.boothlock_server.menu.repository.MenuRepository;
 import com.boothlock.boothlock_server.order.controller.OrderController;
+import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.dto.OrderCreateRequest;
 import com.boothlock.boothlock_server.order.repository.DailyCounterRepository;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
@@ -68,6 +75,7 @@ class TableCheckoutConcurrencyTests {
     @Autowired TableSessionService tableSessionService;
     @Autowired TableSessionAuthService tableSessionAuthService;
     @Autowired OrderController orderController;
+    @Autowired DashboardOrderActionService dashboardOrderActionService;
     @Autowired BoothJwtProvider jwtProvider;
     @Autowired BoothRepository boothRepository;
     @Autowired StaffAccountRepository staffRepository;
@@ -344,6 +352,107 @@ class TableCheckoutConcurrencyTests {
         }
         assertNotNull(tableSessionRepository.findBySessionToken(token).orElseThrow().getEndedAt());
         assertTrue(isExpired(token));
+    }
+
+    /** 승인대기(O28) 주문을 직접 넣는다 — 손님 주문(C3)이 아직 승인을 못 받은 상태 */
+    private OrderEntity pendingOrder(Long sessionId, String label, int seq) {
+        OrderEntity order = new OrderEntity(booth.getId(), sessionId, label + "-" + seq, LocalDate.now(KST), seq,
+                "idem-pending-" + label + "-" + seq, 8000, false, LocalDateTime.now(KST));
+        order.startPendingApproval();
+        return orderRepository.save(order);
+    }
+
+    /**
+     * M1 결정적 재현 — 퇴실이 세션 행을 잠그고 종료한 채 아직 커밋 전일 때 들어온 승인(O28)은 그 잠금을 기다려야 하고,
+     * 퇴실 커밋 뒤 종료된 세션을 보고 409여야 한다. 세션을 잠그지 않던 예전 승인은 주문 행만 조건부 UPDATE해 바로 RECEIVED로 끝났다 —
+     * 실제 퇴실에서는 그 커밋이 미결제 집계 뒤·자동 완료 전에 끼어 DONE+UNPAID로 "결제 완료"(requireSettled)를 통과했다
+     */
+    @Test
+    void approveWaitsForCheckoutSessionLockAndRejectsEndedSession() throws Exception {
+        TableEntity table = tableRepository.save(new TableEntity(booth, "AP1", "tok-approve-lock"));
+        String token = tableSessionService.createOrRestore(new TableSessionCreateRequest(table.getTableToken())).sessionToken();
+        Long sessionId = tableSessionRepository.findBySessionToken(token).orElseThrow().getId();
+        OrderEntity pending = pendingOrder(sessionId, "AP1", 1);
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<Object> approve = tx.execute(status -> {
+                // 퇴실(checkoutTable)과 같은 모양 — 세션 행 FOR UPDATE 뒤 종료 UPDATE, 아직 커밋 전
+                tableSessionRepository.findByIdForUpdate(sessionId).orElseThrow();
+                assertEquals(1, tableSessionRepository.endSession(sessionId, LocalDateTime.now(KST)));
+                Future<Object> inFlight = executor.submit(() -> {
+                    try {
+                        return dashboardOrderActionService.approve(authorization, pending.getId());
+                    } catch (RuntimeException e) {
+                        return e;
+                    }
+                });
+                try {
+                    // H2 기본 잠금 대기(1초)보다 짧게 본다 — 이 안에 끝나면 세션 잠금을 기다리지 않은 것이다
+                    Object early = inFlight.get(300, TimeUnit.MILLISECONDS);
+                    throw new AssertionError("승인이 진행 중인 퇴실의 세션 잠금을 기다리지 않고 끝났다: " + early);
+                } catch (java.util.concurrent.TimeoutException expected) {
+                    // 세션 행 잠금에 막혀 대기 중 — 정상
+                } catch (InterruptedException | java.util.concurrent.ExecutionException e) {
+                    throw new IllegalStateException(e);
+                }
+                return inFlight;
+            });
+            Object result = approve.get(10, TimeUnit.SECONDS);   // 커밋 뒤 풀린다
+            assertTrue(result instanceof InvalidStateException, "종료된 세션의 승인이 409가 아니다: " + result);
+        } finally {
+            executor.shutdownNow();
+        }
+        assertEquals(OrderStatus.PENDING_APPROVAL, orderRepository.findById(pending.getId()).orElseThrow().getStatus());
+    }
+
+    /**
+     * M1+H2 실제 경합 — "결제 완료"(requireSettled=true) 퇴실과 승인(O28)을 동시에 출발시킨다. 어느 순서든 승인대기 1건이 걸린
+     * "결제 완료"는 성공하면 안 된다: 승인이 먼저면 RECEIVED+UNPAID라 409 CHECKOUT_UNPAID_REMAINS, 퇴실이 먼저면 409 CHECKOUT_PENDING_APPROVAL.
+     * 어떤 경우에도 퇴실이 성공한 채 DONE(또는 RECEIVED)+UNPAID가 남아 requireSettled를 우회해서는 안 된다
+     */
+    @Test
+    void approveRacingSettledCheckoutNeverLeavesDoneUnpaidBehindASuccessfulCheckout() throws Exception {
+        AtomicInteger unpaidConflicts = new AtomicInteger();
+        AtomicInteger pendingConflicts = new AtomicInteger();
+        AtomicInteger approvals = new AtomicInteger();
+        for (int round = 0; round < ROUNDS; round++) {
+            TableEntity table = tableRepository.save(new TableEntity(booth, "AR" + round, "tok-approve-race-" + round));
+            String token = tableSessionService.createOrRestore(new TableSessionCreateRequest(table.getTableToken())).sessionToken();
+            Long sessionId = tableSessionRepository.findBySessionToken(token).orElseThrow().getId();
+            OrderEntity pending = pendingOrder(sessionId, "AR" + round, 100 + round);   // 채번 유니크(부스·영업일·seq)를 라운드마다 비껴간다
+
+            List<Object> results = race(2, (i, checkoutDone) -> i == 0
+                    ? () -> tableAdminService.checkoutTable(authorization, table.getId(), true)
+                    : () -> dashboardOrderActionService.approve(authorization, pending.getId()));
+
+            Object checkout = results.get(0);
+            Object approve = results.get(1);
+            OrderEntity reloaded = orderRepository.findById(pending.getId()).orElseThrow();
+            if (checkout instanceof TableCheckoutResponse) {
+                // 성공한 "결제 완료" 뒤에 받을 돈이 남으면 안 된다 — 예전 코드가 DONE+UNPAID로 빠져나가던 경로
+                assertTrue(reloaded.getPaymentStatus() != PaymentStatus.UNPAID || reloaded.getStatus() == OrderStatus.CANCELED,
+                        "requireSettled 퇴실이 성공했는데 미결제가 남았다: " + reloaded.getStatus() + "/" + reloaded.getPaymentStatus());
+                throw new AssertionError("승인대기가 걸린 requireSettled 퇴실이 성공했다: " + reloaded.getStatus());
+            }
+            if (checkout instanceof CheckoutUnpaidRemainsException) {
+                unpaidConflicts.incrementAndGet();
+            } else if (checkout instanceof CheckoutPendingApprovalException) {
+                pendingConflicts.incrementAndGet();
+            } else {
+                throw new AssertionError("퇴실+승인 중 예상 밖 결과", checkout instanceof Throwable t ? t : null);
+            }
+            // 퇴실은 롤백됐으므로 세션은 열려 있고, 승인은 성공해야 한다(종료되지 않은 세션)
+            assertTrue(approve instanceof com.boothlock.boothlock_server.dashboard.dto.DashboardResponse.OrderSummary,
+                    "롤백된 퇴실 옆의 승인이 실패했다: " + approve);
+            approvals.incrementAndGet();
+            assertEquals(OrderStatus.RECEIVED, reloaded.getStatus());
+            assertEquals(PaymentStatus.UNPAID, reloaded.getPaymentStatus());
+            assertTrue(tableSessionRepository.findById(sessionId).orElseThrow().getEndedAt() == null);
+            assertEquals(TableStatus.OCCUPIED, tableRepository.findById(table.getId()).orElseThrow().getStatus());
+        }
+        System.out.println("[settled checkout vs approve] CHECKOUT_UNPAID_REMAINS=" + unpaidConflicts.get()
+                + ", CHECKOUT_PENDING_APPROVAL=" + pendingConflicts.get() + ", approved=" + approvals.get());
     }
 
     @Test

@@ -146,6 +146,12 @@ public class GlobalExceptionHandler {
                 Map.of("unpaidOrderCount", e.getUnpaidOrderCount()));
     }
 
+    @ExceptionHandler(CheckoutPendingApprovalException.class)
+    public ResponseEntity<ErrorResponse> handleCheckoutPendingApproval(CheckoutPendingApprovalException e) {
+        return body(HttpStatus.CONFLICT, "CHECKOUT_PENDING_APPROVAL", e.getMessage(),
+                Map.of("pendingOrderCount", e.getPendingOrderCount()));
+    }
+
     @ExceptionHandler(AlreadyPaidException.class)
     public ResponseEntity<ErrorResponse> handleAlreadyPaid(AlreadyPaidException e) {
         return body(HttpStatus.CONFLICT, "ALREADY_PAID", e.getMessage(), null);

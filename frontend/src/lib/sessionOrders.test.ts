@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { isOrderOfSession, isUnpaid, ordersOfSession, unpaidTotal } from './sessionOrders'
+import {
+  aggregateSessionOrders,
+  isOrderOfSession,
+  isUnpaid,
+  ordersOfSession,
+  pendingApprovalSummary,
+  unpaidTotal,
+} from './sessionOrders'
 
 const session = { id: 42 }
 
@@ -57,5 +64,63 @@ describe('isUnpaid / unpaidTotal — 백엔드 UnpaidOrderRule과 같은 정의'
 
   it('대상이 없으면 0', () => {
     expect(unpaidTotal([])).toBe(0)
+  })
+})
+
+describe('pendingApprovalSummary — 결제 모달 "승인대기 N건 · X원"', () => {
+  it('승인대기만 세고 금액을 더한다 — 미결제 합계(unpaidTotal)와 겹치지 않는다', () => {
+    const orders = [
+      { status: 'PENDING_APPROVAL', paymentStatus: 'UNPAID', totalAmount: 8000 },
+      { status: 'PENDING_APPROVAL', paymentStatus: 'PAID', totalAmount: 3000 },
+      { status: 'RECEIVED', paymentStatus: 'UNPAID', totalAmount: 13000 },
+      { status: 'CANCELED', paymentStatus: 'UNPAID', totalAmount: 9000 },
+    ] as const
+    expect(pendingApprovalSummary([...orders])).toEqual({ count: 2, amount: 11000, paidCount: 1 })
+    expect(unpaidTotal([...orders])).toBe(13000)
+  })
+
+  it('승인대기가 없으면 0건 0원', () => {
+    expect(pendingApprovalSummary([])).toEqual({ count: 0, amount: 0, paidCount: 0 })
+  })
+})
+
+describe('aggregateSessionOrders — 테이블-홈 카드 집계(M4)', () => {
+  const order = (
+    orderId: number,
+    status: 'PENDING_APPROVAL' | 'RECEIVED' | 'DONE' | 'CANCELED',
+    totalAmount: number,
+    createdAt: string,
+    sessionId: number | null = 42,
+  ) => ({ orderId, sessionId, status, totalAmount, createdAt, items: [{ menuName: `메뉴${orderId}`, qty: 1 }] })
+
+  it('승인대기는 합계·항목에서 빼고 건수만 센다 — 결제 모달과 같은 기준', () => {
+    const result = aggregateSessionOrders(session, [
+      order(1, 'RECEIVED', 10000, '2026-09-27T18:10:00+09:00'),
+      order(2, 'PENDING_APPROVAL', 5000, '2026-09-27T18:20:00+09:00'),
+      order(3, 'DONE', 7000, '2026-09-27T18:15:00+09:00'),
+      order(4, 'CANCELED', 9000, '2026-09-27T18:00:00+09:00'),
+      order(5, 'PENDING_APPROVAL', 2000, '2026-09-27T18:05:00+09:00', 41),   // 이전 세션
+    ] as never)
+    expect(result.orderTotal).toBe(17000)
+    expect(result.pendingApprovalCount).toBe(1)
+    expect(result.orderItems.map((i) => i.menuName).sort()).toEqual(['메뉴1', '메뉴3'])
+  })
+
+  it('첫 주문 시각은 승인대기도 포함한다(앉아 있던 시간 기준) — 취소는 제외', () => {
+    const result = aggregateSessionOrders(session, [
+      order(1, 'RECEIVED', 10000, '2026-09-27T18:10:00+09:00'),
+      order(2, 'PENDING_APPROVAL', 5000, '2026-09-27T18:05:00+09:00'),
+      order(3, 'CANCELED', 9000, '2026-09-27T18:00:00+09:00'),
+    ] as never)
+    expect(result.firstOrderAt).toBe('2026-09-27T18:05:00+09:00')
+  })
+
+  it('세션이 없으면 빈 카드', () => {
+    expect(aggregateSessionOrders(null, [order(1, 'PENDING_APPROVAL', 5000, '2026-09-27T18:05:00+09:00')] as never)).toEqual({
+      orderItems: [],
+      orderTotal: 0,
+      firstOrderAt: null,
+      pendingApprovalCount: 0,
+    })
   })
 })

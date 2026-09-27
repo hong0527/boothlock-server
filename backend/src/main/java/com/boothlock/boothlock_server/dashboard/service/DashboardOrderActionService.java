@@ -8,6 +8,7 @@ import com.boothlock.boothlock_server.global.error.ForbiddenException;
 import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
+import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
@@ -71,11 +72,31 @@ public class DashboardOrderActionService {
      * O28 주문 승인(v0.6.10) — PENDING_APPROVAL→RECEIVED. 거절은 별도 엔드포인트 없이 기존 O13(cancelByStaff)을
      * 그대로 쓴다 — cancelByStaff의 조건부 UPDATE가 이미 "CANCELED가 아닌 모든 상태"를 대상으로 하므로
      * PENDING_APPROVAL도 그대로 취소된다(Figma "주문현황-승인대기" 641:1362의 거절 버튼).
+     *
+     * <p>세션 행을 먼저 잠그고 종료 여부를 본다(M1) — 잠금 순서는 restore·C3·퇴실과 같은 세션 → 주문이다. 잠그지 않으면
+     * O6 퇴실(requireSettled=true)의 미결제 집계 뒤·자동 완료 전에 승인이 커밋될 수 있다: 승인대기라 집계에서 빠졌던 주문이
+     * RECEIVED가 되고, 곧이어 completeReceivedOrdersOfSessions가 DONE+UNPAID로 넘겨 "결제 완료"가 미수금을 남긴 채 성공한다.
+     * 퇴실은 세션 행을 FOR UPDATE로 쥔 채 끝까지 가므로, 여기서 같은 행을 기다리면 퇴실 커밋 뒤에 종료된 세션을 보고 409가 난다.
+     * 반대로 승인이 먼저 잠그면 퇴실이 기다렸다가 RECEIVED+UNPAID를 미결제로 세어 409 CHECKOUT_UNPAID_REMAINS로 막힌다.
+     * 이미 종료된 세션(퇴실·유휴 재스캔)의 승인대기를 되살리는 것도 같은 판정으로 막힌다 — 떠난 손님 주문이 주방 대기열에 들어간다.
+     *
+     * <p>거절(O13 cancelByStaff)에는 세션 잠금을 두지 않는다 — 거절은 돈을 확정하는 쪽이 아니라 없애는 쪽이다. 퇴실의 자동 거절과
+     * 겹쳐도 둘 다 "CANCELED가 아닌 것만" 조건부 UPDATE라 한쪽만 적용되고(다른 쪽은 0건 → 409 또는 건수 제외), 입금된 건은
+     * 어느 쪽이 이겨도 같은 CASE로 REFUND_NEEDED가 된다. 종료된 세션의 주문을 취소하는 것도 O13의 원래 용도(DONE 취소 포함)다.
      */
     @Transactional
     public DashboardResponse.OrderSummary approve(String authorization, Long orderId) {
         StaffAccountEntity staff = authenticate(authorization);
         Long boothId = staff.getBooth().getId();
+        // 주문 id → 세션 id는 잠그지 않은 조회로 먼저 얻는다(restore와 같은 방식). 세션 id는 바뀌지 않는 값이라 스냅샷이어도 된다
+        Long sessionId = orderRepository.findById(orderId).map(OrderEntity::getSessionId).orElse(null);
+        if (sessionId != null) {
+            TableSessionEntity session = tableSessionRepository.findByIdForUpdate(sessionId).orElse(null);
+            if (session != null && session.getEndedAt() != null) {
+                requireExistingForUpdate(orderId, boothId);   // 타 부스 주문이면 여기서 404(존재 은닉) — 409로 존재를 드러내지 않는다
+                throw new InvalidStateException("이미 종료된 테이블 세션의 주문은 승인할 수 없습니다.");
+            }
+        }
 
         int updated = orderRepository.approve(orderId, boothId);
         if (updated == 0) {
