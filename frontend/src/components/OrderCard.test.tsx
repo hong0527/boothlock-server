@@ -22,12 +22,13 @@ function order(status: OrderStatus, paymentStatus: PaymentStatus): OrderSummary 
   }
 }
 
-function buttonsOf(o: OrderSummary, withRefund: boolean) {
+function buttonsOf(o: OrderSummary, withRefund: boolean, withConfirmPayment = true) {
   const tree = OrderCard({
     order: o, now: Date.parse('2026-09-21T18:10:00'), pending: false,
     onApprove: vi.fn(), onReject: vi.fn(),
     onComplete: vi.fn(), onCancel: vi.fn(), onRestore: vi.fn(),
     ...(withRefund ? { onRefundDone: vi.fn() } : {}),
+    ...(withConfirmPayment ? { onConfirmPayment: vi.fn() } : {}),
   })
   return labels(tree)
 }
@@ -47,6 +48,20 @@ describe('주문 카드 버튼', () => {
       onComplete: vi.fn(), onCancel: vi.fn(), onRestore: vi.fn(),
     })
     expect(labels(tree)).not.toContain('승인')
+  })
+
+  // O11이 PENDING_APPROVAL도 결제확인을 허용하는데(백엔드는 CANCELED만 제외), 승인 전에는 이 버튼이
+  // 유일한 처리 경로였다 — PaymentModal은 승인대기를 일부러 빼고, 승인/거절 버튼은 결제와 무관하기 때문
+  it('승인대기+미결제면 결제 확인 버튼도 같이 보인다', () => {
+    expect(buttonsOf(order('PENDING_APPROVAL', 'UNPAID'), true)).toContain('결제 확인')
+  })
+
+  it('승인대기여도 이미 입금확인됐으면 결제 확인 버튼은 안 보인다', () => {
+    expect(buttonsOf(order('PENDING_APPROVAL', 'PAID'), true)).not.toContain('결제 확인')
+  })
+
+  it('onConfirmPayment이 없으면 승인대기+미결제여도 결제 확인 버튼을 그리지 않는다', () => {
+    expect(buttonsOf(order('PENDING_APPROVAL', 'UNPAID'), true, false)).not.toContain('결제 확인')
   })
 
   it('진행 중이면 취소와 완료', () => {
