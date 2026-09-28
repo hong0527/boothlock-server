@@ -201,6 +201,8 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 승인대기는 목록·합계에서 빼지만 건수·금액은 따로 보여준다 — 손님 결제 안내(PaymentInfoPage)는 이 금액까지 더한 총액을
   // 이체하라고 안내하므로, 여기서 안 보이면 운영자는 "손님이 더 보냈다"를 설명할 수 없다
   const pending = pendingApprovalSummary(orders)
+  // 담은 메뉴(수기 등록 전 draft) 합계 — +/-로 수량을 바꿀 때마다 draft가 다시 렌더되며 그대로 재계산된다
+  const draftTotal = draft.reduce((sum, d) => sum + d.price * d.qty, 0)
 
   const itemKey = (orderId: number, itemId: number) => `${orderId}:${itemId}`
 
@@ -780,45 +782,13 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
 
         {(error ?? loadError) && <p className="px-6 pt-3 text-sm text-red-600">{error ?? loadError}</p>}
 
-        {/* 확인을 눌러야 서버로 나가는 변경을 한 자리에 모아 보여준다 — 새로 담은 메뉴(draft)와 기존 주문의
-            수량 변경·취소(adjustments)가 서로 다른 요청으로 나가므로 칩 색으로 구분한다 */}
-        {(draft.length > 0 || adjustmentChips.length > 0) && (
+        {/* 확인을 눌러야 서버로 나가는 기존 주문 변경(수량·취소)을 모아 보여준다 — 새로 담은 메뉴(draft)는
+            여기가 아니라 왼쪽 "담은 메뉴" 리스트에 바로 보인다(2026-09-28 피드백: 상단 칩 대신 왼쪽 리스트로) */}
+        {adjustmentChips.length > 0 && (
           // 칩이 늘어도 주문 내역·메뉴판 높이를 빼앗지 않게 한다 — 모달 높이가 h-[85vh]로 고정이라 이 줄이
           // 여러 겹 쌓이면 아래 두 영역이 0에 수렴한다
           <div className="flex max-h-24 flex-wrap items-center gap-2 overflow-y-auto border-b border-neutral-200 bg-neutral-100 px-6 py-3">
             <span className="text-sm font-semibold text-neutral-500">확인 전 변경</span>
-            {draft.map((d) => (
-              <span
-                key={`draft-${d.menuId}`}
-                className="flex items-center gap-1 rounded-xl bg-white py-1 pr-1 pl-3 text-sm font-semibold text-neutral-900 shadow-sm"
-              >
-                담기 · {d.name} x{d.qty} · {(d.price * d.qty).toLocaleString()}원
-                <button
-                  type="button"
-                  onClick={() => adjustDraftQty(d.menuId, -1)}
-                  className="flex h-9 w-9 touch-manipulation items-center justify-center text-lg text-neutral-400"
-                  aria-label="수량 감소"
-                >
-                  -
-                </button>
-                <button
-                  type="button"
-                  onClick={() => adjustDraftQty(d.menuId, 1)}
-                  className="flex h-9 w-9 touch-manipulation items-center justify-center text-lg text-neutral-400"
-                  aria-label="수량 증가"
-                >
-                  +
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeDraftItem(d.menuId)}
-                  className="flex h-9 w-9 touch-manipulation items-center justify-center text-lg text-red-500"
-                  aria-label="빼기"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
             {adjustmentChips.map((chip) => (
               <span
                 key={`adj-${chip.id}`}
@@ -840,8 +810,68 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
         )}
 
         <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
-          {/* 왼쪽: 주문 내역 */}
+          {/* 왼쪽: 담은 메뉴(수기 등록 전 draft) + 주문 내역 — 메뉴를 누르면 오른쪽 그리드 위 칩이 아니라
+              여기 리스트에 바로 뜨고, 그 아래 합계가 수량 변경과 동시에 다시 계산되게 해 달라는 요청(2026-09-28) */}
           <div className="flex w-full flex-col lg:w-[380px] lg:shrink-0 lg:border-r lg:border-neutral-200">
+            {draft.length > 0 && (
+              <div className="border-b border-neutral-200 bg-amber-50/60">
+                <div className="px-6 py-4 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
+                  담은 메뉴 <span className="text-sm font-normal text-neutral-400">(등록 전)</span>
+                </div>
+                {draft.map((d) => (
+                  <div key={d.menuId} className="px-6 py-4">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">{d.name}</span>
+                      <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
+                        {(d.price * d.qty).toLocaleString()}원
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between">
+                      <span className="text-base leading-[1.5] tracking-[-0.04em] text-neutral-900">
+                        {d.price.toLocaleString()}원
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => adjustDraftQty(d.menuId, -1)}
+                          disabled={busy}
+                          className="h-11 w-11 touch-manipulation rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
+                          aria-label={`${d.name} 수량 줄이기`}
+                        >
+                          -
+                        </button>
+                        <span className="w-6 text-center text-lg font-semibold text-neutral-900">{d.qty}</span>
+                        <button
+                          type="button"
+                          onClick={() => adjustDraftQty(d.menuId, 1)}
+                          disabled={busy || (menus.find((m) => m.id === d.menuId)?.soldOut ?? false)}
+                          className="h-11 w-11 touch-manipulation rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
+                          aria-label={`${d.name} 수량 늘리기`}
+                        >
+                          +
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeDraftItem(d.menuId)}
+                          disabled={busy}
+                          className="h-11 touch-manipulation rounded-xl border border-neutral-900 px-4 text-base font-semibold text-neutral-900 disabled:opacity-30"
+                        >
+                          취소
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {/* 수량을 바꿀 때마다(위 +/-) draftTotal이 그대로 다시 계산돼 즉시 반영된다 — 별도 커밋 없이도 화면에 바로 보인다 */}
+                <div className="flex items-baseline justify-between border-t border-neutral-200 bg-amber-50 px-6 py-3">
+                  <span className="text-base leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">담은 메뉴 합계</span>
+                  <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">
+                    {draftTotal.toLocaleString()}원
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between border-b border-neutral-200 px-6 py-4">
               <span className="text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900">주문 내역</span>
               <button
