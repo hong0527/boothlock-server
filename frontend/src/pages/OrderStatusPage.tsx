@@ -28,7 +28,8 @@ import {
   acquireWakeLock,
   isAlertPreferred,
   listenForAudioUnlock,
-  playBeep,
+  playCallAlert,
+  playOrderAlert,
   releaseWakeLock,
   resumeAudio,
   setAlertPreferred,
@@ -123,10 +124,16 @@ export default function OrderStatusPage() {
       const snapshot = snapshotOf(results[0].orders, nextCalls)
       const arrivals = diffArrivals(arrivalsRef.current, snapshot)
       arrivalsRef.current = snapshot
-      // 알림을 꺼 두었으면 소리·진동은 내지 않는다 — 탭 제목의 승인대기 수는 켜고 끔과 무관하게 갱신한다
-      if (alertOnRef.current && arrivals.newPendingOrders + arrivals.newCalls > 0) {
-        playBeep()
-        vibrate()
+      // 알림을 꺼 두었으면 소리·진동은 내지 않는다 — 탭 제목의 승인대기 수는 켜고 끔과 무관하게 갱신한다.
+      // 새 주문·직원호출은 서로 다른 음으로 울려 소음 속에서도 구분되게 한다(playOrderAlert vs playCallAlert).
+      // 둘 다 새로 생겼으면 겹쳐 울리지 않도록 호출 알림을 살짝 늦춘다
+      if (alertOnRef.current) {
+        if (arrivals.newPendingOrders > 0) playOrderAlert()
+        if (arrivals.newCalls > 0) {
+          if (arrivals.newPendingOrders > 0) setTimeout(playCallAlert, 800)
+          else playCallAlert()
+        }
+        if (arrivals.newPendingOrders + arrivals.newCalls > 0) vibrate()
       }
       if (typeof document !== 'undefined') {
         document.title = alertTitle(results[0].orders.length, baseTitleRef.current)
@@ -185,7 +192,7 @@ export default function OrderStatusPage() {
     const next = !alertOn
     if (next) {
       unlockAudio()
-      playBeep()
+      playOrderAlert()
     } else {
       suspendAudio()
     }

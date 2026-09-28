@@ -121,7 +121,7 @@ function ringBell(ctx: AudioContext, at: number, freq: number, peakGain: number,
 }
 
 /**
- * 종이 두 번 울리는 알림음("땡-땡"). 한 번도 풀지 않았으면(사용자 동작 전) 소리 없이 넘어간다.
+ * 새 주문 알림음 — 같은 음(880Hz)이 두 번 울리는 "땡-땡". 한 번도 풀지 않았으면(사용자 동작 전) 소리 없이 넘어간다.
  *
  * audioContext가 아직 없으면(알림을 켠 뒤 한 번도 화면을 만지기 전에 첫 주문이 온 경우 등) 여기서도
  * unlockAudio를 한 번 시도한다 — 사용자 동작 밖이라 대부분 막히지만, 이미 다른 경로로 한 번이라도
@@ -129,7 +129,7 @@ function ringBell(ctx: AudioContext, at: number, freq: number, peakGain: number,
  * suspended여도 예약은 해 둔다 — 버튼을 누른 직후엔 resume()이 아직 끝나지 않아, 막으면 켤 때 확인음이 안 난다.
  * 축제장 소음 속에서도 들리도록 기존(짧은 사인파 비프)보다 크고 길게, 배음을 섞어 종소리에 가깝게 만든다
  */
-export function playBeep() {
+export function playOrderAlert() {
   if (!audioContext) unlockAudio()
   const ctx = audioContext
   if (!ctx || ctx.state === 'closed') return
@@ -137,6 +137,28 @@ export function playBeep() {
     const start = ctx.currentTime
     ringBell(ctx, start, 880, 0.7, 0.55)
     ringBell(ctx, start + 0.35, 880, 0.7, 0.55)
+  } catch {
+    // 무시 — 소리 한 번 못 낸 것으로 화면이 멈추면 안 된다
+  }
+}
+
+/**
+ * 직원 호출 알림음 — 손님이 화면에서 직접 부른 것이라 {@link playOrderAlert}(새 주문)와 소음 속에서도
+ * 헷갈리지 않게, 같은 음 두 번이 아니라 완전5도(E5·B5) 두 음을 빠르게 네 번 번갈아 울리는 "초인종" 패턴을 쓴다.
+ * 나머지 동작(오디오 잠금·오류 무시)은 새 주문 알림과 같다
+ */
+export function playCallAlert() {
+  if (!audioContext) unlockAudio()
+  const ctx = audioContext
+  if (!ctx || ctx.state === 'closed') return
+  try {
+    const start = ctx.currentTime
+    const LOW = 659.25 // E5
+    const HIGH = 987.77 // B5
+    ringBell(ctx, start, LOW, 0.7, 0.28)
+    ringBell(ctx, start + 0.2, HIGH, 0.7, 0.28)
+    ringBell(ctx, start + 0.4, LOW, 0.7, 0.28)
+    ringBell(ctx, start + 0.6, HIGH, 0.7, 0.4)
   } catch {
     // 무시 — 소리 한 번 못 낸 것으로 화면이 멈추면 안 된다
   }
