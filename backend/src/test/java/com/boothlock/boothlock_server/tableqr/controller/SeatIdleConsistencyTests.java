@@ -173,6 +173,15 @@ class SeatIdleConsistencyTests {
                 orderSeq, "idem-idle-" + orderSeq, 5000, false, businessDate.atTime(19, 0)));
     }
 
+    /** 아직 승인 안 된 주문(O28) — 2026-09-28 피드백: 미결제(UnpaidOrderRule)와 별개로 세션을 붙잡아야 한다 */
+    private OrderEntity pendingApprovalOrder(Long sessionId, LocalDate businessDate) {
+        orderSeq++;
+        OrderEntity order = new OrderEntity(booth.getId(), sessionId, "I" + orderSeq, businessDate,
+                orderSeq, "idem-idle-" + orderSeq, 5000, false, businessDate.atTime(19, 0));
+        order.startPendingApproval();
+        return orderRepository.save(order);
+    }
+
     /** 완료 처리(O12)됐지만 입금이 안 된 주문 — 미수금이라 미결제 예외에 그대로 잡혀야 한다(UnpaidOrderRule) */
     private void doneUnpaidOrder(Long sessionId, LocalDate businessDate) {
         OrderEntity order = unpaidOrder(sessionId, businessDate);
@@ -218,6 +227,17 @@ class SeatIdleConsistencyTests {
         unpaidOrder(session.getId(), DAY_ONE);
 
         assertEquals("sess-unpaid", scan(table.getTableToken(), true));
+        assertNull(tableSessionRepository.findById(session.getId()).orElseThrow().getEndedAt());
+    }
+
+    @Test
+    void c1RestoresIdleSessionThatHoldsPendingApprovalOrderOfCurrentBusinessDay() throws Exception {
+        // 2026-09-28 피드백: 주문 직후 자리를 뜬 손님 — 스태프가 늦게 승인해도 그 사이 세션이 끊기면 안 된다
+        TableEntity table = occupiedTable("A-1");
+        TableSessionEntity session = sessionLastActiveAt(table, "sess-pending", EVENING.minusHours(5));
+        pendingApprovalOrder(session.getId(), DAY_ONE);
+
+        assertEquals("sess-pending", scan(table.getTableToken(), true));
         assertNull(tableSessionRepository.findById(session.getId()).orElseThrow().getEndedAt());
     }
 
@@ -302,14 +322,18 @@ class SeatIdleConsistencyTests {
         doneUnpaidOrder(sessionLastActiveAt(idleDoneUnpaid, "sess-done-unpaid", EVENING.minusHours(5)).getId(), DAY_ONE);
         TableEntity idleDonePaid = occupiedTable("A-7");      // 5시간 유휴, 오늘 완료·입금 — 비활성
         donePaidOrder(sessionLastActiveAt(idleDonePaid, "sess-done-paid", EVENING.minusHours(5)).getId(), DAY_ONE);
+        TableEntity idlePendingApproval = occupiedTable("A-8"); // 5시간 유휴, 오늘 승인대기 — 활성 (2026-09-28 피드백)
+        pendingApprovalOrder(sessionLastActiveAt(idlePendingApproval, "sess-pending-today", EVENING.minusHours(5)).getId(), DAY_ONE);
+        TableEntity idlePendingApprovalOld = occupiedTable("A-9"); // 5시간 유휴, 지난 영업일 승인대기 — 비활성
+        pendingApprovalOrder(sessionLastActiveAt(idlePendingApprovalOld, "sess-pending-old", EVENING.minusHours(5)).getId(), DAY_ONE.minusDays(1));
 
-        List<String> labels = List.of("A-1", "A-2", "A-3", "A-4", "A-5", "A-6", "A-7");
-        List<Boolean> expectedActive = List.of(true, false, true, false, false, true, false);
+        List<String> labels = List.of("A-1", "A-2", "A-3", "A-4", "A-5", "A-6", "A-7", "A-8", "A-9");
+        List<Boolean> expectedActive = List.of(true, false, true, false, false, true, false, true, false);
 
         // E1 — 비활성 테이블 수 = 빈자리 수
         mockMvc.perform(get("/api/v1/event/booths"))
-                .andExpect(jsonPath("$.booths[0].tables.total").value(7))
-                .andExpect(jsonPath("$.booths[0].tables.empty").value(4));
+                .andExpect(jsonPath("$.booths[0].tables.total").value(9))
+                .andExpect(jsonPath("$.booths[0].tables.empty").value(5));
 
         // O3 — 활성이면 session 객체·needsCleanup false, 비활성이면 session null·needsCleanup true
         String body = mockMvc.perform(get("/api/v1/admin/tables").header("Authorization", "Bearer " + login()))

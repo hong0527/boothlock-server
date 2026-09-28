@@ -1,6 +1,7 @@
 package com.boothlock.boothlock_server.tableqr.repository;
 
 import com.boothlock.boothlock_server.global.domain.UnpaidOrderRule;
+import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 
 import jakarta.persistence.LockModeType;
@@ -73,7 +74,11 @@ public interface TableUnpaidOrderRepository extends Repository<OrderEntity, Long
     // 동시에 누를 때 같은 행들을 반대 순서로 잠가 교착(MySQL 1213 → 500)이 나지 않게 한다
     List<OrderEntity> findUnpaidOrdersOfSessionsForUpdate(@Param("sessionIds") List<Long> sessionIds, @Param("boothId") Long boothId);
 
-    /** C1 세션 복원 판정 — 이 세션에 해당 영업일의 미결제({@link UnpaidOrderRule}) 주문이 있는가 (SeatIdlePolicy 활성 조건 2) */
+    /**
+     * 미결제({@link UnpaidOrderRule}) 조건만 단독으로 — 프로덕션은 아래 병합 쿼리를 쓰고, 이 메서드는
+     * UnpaidOrderRuleConsistencyTests 전용이다. 병합 쿼리는 미결제와 승인대기를 OR로 묶어 "미결제 정의와
+     * 정확히 일치하는가"를 그것만으로는 가려낼 수 없어서, 규칙 상수를 단독으로 태워 볼 통로를 남겨 둔다.
+     */
     @Query("""
             select count(o.id) > 0
               from OrderEntity o
@@ -84,4 +89,38 @@ public interface TableUnpaidOrderRepository extends Repository<OrderEntity, Long
     boolean existsUnpaidOrderOn(@Param("sessionId") Long sessionId,
                                 @Param("boothId") Long boothId,
                                 @Param("businessDate") LocalDate businessDate);
+
+    /**
+     * C1 세션 복원·인증(C3·C4)·수기 주문 판정 — SeatIdlePolicy 활성 조건 2·3을 한 번에(미결제 OR 승인대기).
+     * 코드 리뷰 지적(2026-09-28): 이 둘을 따로 불러 왕복 두 번을 쓰던 걸 한 쿼리로 합쳤다 — 세션 인증은
+     * 손님 폰이 폴링할 때마다(3~5초) 타는 경로라 왕복 하나를 줄이는 게 실제 체감 지연에 영향이 있다.
+     */
+    @Query("""
+            select count(o.id) > 0
+              from OrderEntity o
+             where o.boothId = :boothId
+               and o.businessDate = :businessDate
+               and o.sessionId = :sessionId
+               and (""" + UnpaidOrderRule.JPQL_CONDITION + " or " + SeatIdlePolicy.PENDING_APPROVAL_JPQL_CONDITION + ")")
+    boolean existsUnpaidOrPendingApprovalOrderOn(@Param("sessionId") Long sessionId,
+                                                 @Param("boothId") Long boothId,
+                                                 @Param("businessDate") LocalDate businessDate);
+
+    /**
+     * O3 좌석 판정용 — 열린 세션 중 해당 영업일의 승인대기 주문이 있는 테이블 id (SeatIdlePolicy 활성 조건 3).
+     * countUnpaidOrdersOfOpenSessions와 같은 이유로 테이블 목록 크기와 무관하게 쿼리 한 번이다. WHERE절이 서로 달라
+     * (UnpaidOrderRule vs PENDING_APPROVAL_JPQL_CONDITION) 그 쿼리에 열을 얹지 않고 별도 쿼리로 둔다.
+     */
+    @Query("""
+            select distinct s.table.id
+              from OrderEntity o, com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity s
+             where o.sessionId = s.id
+               and o.boothId = s.table.booth.id
+               and o.businessDate = :businessDate
+               and s.table.id in :tableIds
+               and s.endedAtKey = 0
+               and s.endedAt is null
+               and """ + SeatIdlePolicy.PENDING_APPROVAL_JPQL_CONDITION)
+    List<Long> findTableIdsWithPendingApprovalOfOpenSessions(@Param("tableIds") List<Long> tableIds,
+                                                              @Param("businessDate") LocalDate businessDate);
 }

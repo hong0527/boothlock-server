@@ -169,8 +169,8 @@ class TableStatusBoundaryTests {
 
         System.out.println("[O3 query count] 3 tables=" + small + ", 40 tables=" + large);
         assertEquals(small, large, "테이블 수가 늘어도 O3 쿼리 수가 같아야 한다(N+1 금지)");
-        // 운영자 인증 1(계정) + 테이블 1 + 열린 세션 1 + 미결제 건수 1
-        assertEquals(4, large);
+        // 운영자 인증 1(계정) + 테이블 1 + 열린 세션 1 + 미결제 건수 1 + 승인대기 보유 테이블 1(2026-09-28, SeatIdlePolicy 활성 조건 3)
+        assertEquals(5, large);
     }
 
     @Test
@@ -185,8 +185,8 @@ class TableStatusBoundaryTests {
                 .andExpect(status().isOk()));
 
         System.out.println("[O22 query count] " + statements);
-        // 인증 1 + 테이블 1 + 열린 세션 1 + 미결제 1 + 좌표 UPDATE 1
-        assertEquals(5, statements);
+        // 인증 1 + 테이블 1 + 열린 세션 1 + 미결제 1 + 승인대기 보유 테이블 1(2026-09-28) + 좌표 UPDATE 1
+        assertEquals(6, statements);
     }
 
     /** from~to 라벨의 테이블마다 활성·유휴·종료 세션과 미결제 주문을 섞어 심는다 — 지연 로딩이 끼면 쿼리 수가 달라지게 */
