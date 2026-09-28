@@ -342,14 +342,25 @@ function createClipAlert(url: string, synth: (ctx: AudioContext, start: number) 
   let buffer: AudioBuffer | null = null
   let loadPromise: Promise<void> | null = null
 
-  /** 음원을 미리 받아 디코딩해 둔다 — 알림을 켤 때(unlockAudio) 한 번, 실패하면 다음 알림음을 낼 때 다시 시도한다.
-   * 반환하는 프로미스는 {@link playWhenReady}가 "잠깐 기다렸다 재생"할 때 쓴다 */
+  // 바이트는 AudioContext 없이도 받을 수 있다 — 페이지가 뜨는 즉시(모듈을 불러오는 시점) 미리 받아 둔다.
+  // "알림 켜기"를 누른 순간까지 기다리지 않아, 실제로 쓸 때는(그 사이 몇 초~몇 분은 지나므로) 거의 항상
+  // 이미 받아져 있다 — 디코딩(컨텍스트 필요)만 나중에 하면 되니 그만큼 준비가 빨라진다(2026-09-29 실측:
+  // "알림 켜기" 직후 확인음이 합성음으로 나가 실제 음원이 반영 안 된 줄 착각했던 문제의 근본 대책)
+  const bytesPromise: Promise<ArrayBuffer | null> =
+    typeof fetch === 'function'
+      ? fetch(url).then((res) => res.arrayBuffer()).catch(() => null)
+      : Promise.resolve(null)
+
+  /** 미리 받아둔 바이트를 디코딩해 둔다 — AudioContext가 생긴 뒤(알림을 켤 때 등) 한 번, 실패하면 다음
+   * 알림음을 낼 때 다시 시도한다. 반환하는 프로미스는 {@link playWhenReady}가 "잠깐 기다렸다 재생"할 때 쓴다 */
   function ensureLoaded(ctx: AudioContext): Promise<void> {
     if (buffer) return Promise.resolve()
     if (loadPromise) return loadPromise
-    loadPromise = fetch(url)
-      .then((res) => res.arrayBuffer())
-      .then((data) => ctx.decodeAudioData(data))
+    loadPromise = bytesPromise
+      .then((data) => {
+        if (!data) throw new Error('음원을 못 받았다')
+        return ctx.decodeAudioData(data)
+      })
       .then((decoded) => { buffer = decoded })
       .catch(() => {
         // 무시 — 다음 play() 호출이 다시 시도하고, 그때까지는 합성음이 대신 울린다
