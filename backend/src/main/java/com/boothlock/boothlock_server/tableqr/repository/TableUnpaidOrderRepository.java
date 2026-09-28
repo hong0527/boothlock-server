@@ -1,6 +1,7 @@
 package com.boothlock.boothlock_server.tableqr.repository;
 
 import com.boothlock.boothlock_server.global.domain.UnpaidOrderRule;
+import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 
 import jakarta.persistence.LockModeType;
@@ -84,4 +85,34 @@ public interface TableUnpaidOrderRepository extends Repository<OrderEntity, Long
     boolean existsUnpaidOrderOn(@Param("sessionId") Long sessionId,
                                 @Param("boothId") Long boothId,
                                 @Param("businessDate") LocalDate businessDate);
+
+    /** C1 세션 복원·인증(C3·C4)·수기 주문 판정 — 이 세션에 해당 영업일의 승인대기 주문이 있는가 (SeatIdlePolicy 활성 조건 3) */
+    @Query("""
+            select count(o.id) > 0
+              from OrderEntity o
+             where o.boothId = :boothId
+               and o.businessDate = :businessDate
+               and o.sessionId = :sessionId
+               and """ + SeatIdlePolicy.PENDING_APPROVAL_JPQL_CONDITION)
+    boolean existsPendingApprovalOrderOn(@Param("sessionId") Long sessionId,
+                                         @Param("boothId") Long boothId,
+                                         @Param("businessDate") LocalDate businessDate);
+
+    /**
+     * O3 좌석 판정용 — 열린 세션 중 해당 영업일의 승인대기 주문이 있는 테이블 id (SeatIdlePolicy 활성 조건 3).
+     * countUnpaidOrdersOfOpenSessions와 같은 이유로 테이블 목록 크기와 무관하게 쿼리 한 번이다. WHERE절이 서로 달라
+     * (UnpaidOrderRule vs PENDING_APPROVAL_JPQL_CONDITION) 그 쿼리에 열을 얹지 않고 별도 쿼리로 둔다.
+     */
+    @Query("""
+            select distinct s.table.id
+              from OrderEntity o, com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity s
+             where o.sessionId = s.id
+               and o.boothId = s.table.booth.id
+               and o.businessDate = :businessDate
+               and s.table.id in :tableIds
+               and s.endedAtKey = 0
+               and s.endedAt is null
+               and """ + SeatIdlePolicy.PENDING_APPROVAL_JPQL_CONDITION)
+    List<Long> findTableIdsWithPendingApprovalOfOpenSessions(@Param("tableIds") List<Long> tableIds,
+                                                              @Param("businessDate") LocalDate businessDate);
 }

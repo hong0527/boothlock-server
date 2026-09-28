@@ -141,6 +141,13 @@ class TableSessionAuthServiceTests {
                 "idem-auth-idle-" + sessionId, 5000, false, seatIdlePolicy.now().minusHours(4)));
     }
 
+    private void pendingApprovalOrderOn(Long sessionId, LocalDate businessDate) {
+        OrderEntity order = new OrderEntity(booth.getId(), sessionId, "A12", businessDate, 2,
+                "idem-auth-idle-pending-" + sessionId, 5000, false, seatIdlePolicy.now().minusHours(4));
+        order.startPendingApproval();
+        orderRepository.save(order);
+    }
+
     @Test
     void rejectsIdleSessionWithoutUnpaidOrderWithSessionExpired() {
         idleSession("session-idle-1");
@@ -166,6 +173,27 @@ class TableSessionAuthServiceTests {
         assertThrows(SessionExpiredException.class, () -> tableSessionAuthService.authenticate("session-idle-3"));
     }
 
+    /**
+     * 2026-09-28 파일럿 피드백 — 주문 직후 손님이 자리를 뜨고 스태프가 늦게 승인하는 사이 유휴 임계를 넘겨도
+     * 세션이 끊기지 않아야 한다(SeatIdlePolicy 활성 조건 3). 승인·거절 전까지는 계속 통과한다
+     */
+    @Test
+    void acceptsIdleSessionThatHoldsPendingApprovalOrderOfCurrentBusinessDate() {
+        TableSessionEntity session = idleSession("session-idle-pending");
+        pendingApprovalOrderOn(session.getId(), seatIdlePolicy.criteria().businessDate());
+
+        assertEquals(session.getId(), tableSessionAuthService.authenticate("session-idle-pending").sessionId());
+    }
+
+    /** 전 영업일의 승인대기는 세션을 붙잡지 않는다 — 미결제와 같은 규칙(SeatIdlePolicy 활성 조건 3) */
+    @Test
+    void rejectsIdleSessionWhosePendingApprovalOrderIsFromPreviousBusinessDate() {
+        TableSessionEntity session = idleSession("session-idle-pending-old");
+        pendingApprovalOrderOn(session.getId(), seatIdlePolicy.criteria().businessDate().minusDays(1));
+
+        assertThrows(SessionExpiredException.class, () -> tableSessionAuthService.authenticate("session-idle-pending-old"));
+    }
+
     @Test
     void acceptsNonIdleSessionWithoutUnpaidOrder() {
         TableSessionEntity session = tableSessionRepository.save(
@@ -188,6 +216,6 @@ class TableSessionAuthServiceTests {
         TableSessionEntity reloaded = tableSessionRepository.findById(session.getId()).orElseThrow();
         assertEquals(before, reloaded.getLastActivityAt(), "유휴 세션의 활동 시각이 갱신됐다");
         assertNull(reloaded.getEndedAt(), "인증 계층은 세션을 종료하지 않는다(다음 C1 스캔이 닫는다)");
-        assertFalse(seatIdlePolicy.criteria().isActive(reloaded, false), "세션이 다시 활성이 됐다");
+        assertFalse(seatIdlePolicy.criteria().isActive(reloaded, false, false), "세션이 다시 활성이 됐다");
     }
 }

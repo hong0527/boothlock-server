@@ -122,7 +122,9 @@ public class TableSessionWriter {
 
     private boolean isActive(TableEntity table, TableSessionEntity session) {
         SeatIdlePolicy.Criteria criteria = seatIdlePolicy.criteria();
-        return criteria.isActive(session, tableUnpaidOrderRepository.existsUnpaidOrderOn(
-                session.getId(), table.getBooth().getId(), criteria.businessDate()));
+        Long boothId = table.getBooth().getId();
+        return criteria.isActive(session,
+                tableUnpaidOrderRepository.existsUnpaidOrderOn(session.getId(), boothId, criteria.businessDate()),
+                tableUnpaidOrderRepository.existsPendingApprovalOrderOn(session.getId(), boothId, criteria.businessDate()));
     }
 }

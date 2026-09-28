@@ -18,10 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>유휴 세션 거절 (명세서 v0.6 §1.2에서 바뀐 점)</b> — v0.6은 "종료되지 않았으면 유휴여도 통과"였다. 그런데 통과할 때마다
  * last_activity_at을 갱신하므로, SeatIdlePolicy가 이미 비활성으로 본 세션도 어제 손님 폰의 폴링 한 번이면 다시 활성이 된다.
  * 그 사이 새 손님이 QR을 찍으면 C1이 그 세션을 복원(restored:true)해 넘겨주고, 새 손님이 앞 손님 주문을 보고 취소까지 할 수 있다.
- * 그래서 이제는 SeatIdlePolicy 기준 비활성(유휴이고 현재 영업일 미결제도 없음)이면 410이다. 판정은 C1·O3와 같은
+ * 그래서 이제는 SeatIdlePolicy 기준 비활성(유휴이고 현재 영업일 미결제·승인대기도 없음)이면 410이다. 판정은 C1·O3와 같은
  * {@link SeatIdlePolicy.Criteria#isActive}를 그대로 불러 세 곳이 어긋날 수 없게 한다.
  * 유휴라도 현재 영업일 미결제가 있으면 v0.6대로 통과한다 — "미결제 보유 세션은 영업일 종료로만 만료"(§7-9)라
- * C1도 그 세션을 복원하므로 손님이 결제 안내를 계속 볼 수 있어야 한다.
+ * C1도 그 세션을 복원하므로 손님이 결제 안내를 계속 볼 수 있어야 한다. 승인대기 주문만 있어도 마찬가지다
+ * (2026-09-28 파일럿 피드백) — 주문 직후 자리를 뜬 손님이 스태프의 늦은 승인을 기다리는 동안 세션이 끊기면 안 된다.
  * 여기서 세션을 종료하지는 않는다 — 410 예외가 이 트랜잭션을 롤백하므로 종료 UPDATE도 함께 사라진다.
  * 종료는 다음 C1 스캔(TableSessionWriter.createSession)이 테이블 행을 잠근 뒤 같은 판정으로 하고 새 세션을 발급한다.
  */
@@ -59,11 +60,13 @@ public class TableSessionAuthService {
             throw new SessionExpiredException();
         }
         // 활동 시각을 갱신하기 전에 판정한다 — 갱신 뒤에 보면 방금 쓴 시각 때문에 항상 활성이다.
-        // 미결제 조회는 유휴일 때만 한다(|| 단축 평가와 같은 결과) — 폴링마다 주문 조회가 붙지 않게
+        // 미결제·승인대기 조회는 유휴일 때만 한다(|| 단축 평가와 같은 결과) — 폴링마다 주문 조회가 붙지 않게
         SeatIdlePolicy.Criteria criteria = seatIdlePolicy.criteria();
-        boolean idle = !criteria.isActive(session, false);
-        if (idle && !criteria.isActive(session, tableUnpaidOrderRepository.existsUnpaidOrderOn(
-                session.getId(), session.getTable().getBooth().getId(), criteria.businessDate()))) {
+        boolean idle = !criteria.isActive(session, false, false);
+        Long boothId = session.getTable().getBooth().getId();
+        if (idle && !criteria.isActive(session,
+                tableUnpaidOrderRepository.existsUnpaidOrderOn(session.getId(), boothId, criteria.businessDate()),
+                tableUnpaidOrderRepository.existsPendingApprovalOrderOn(session.getId(), boothId, criteria.businessDate()))) {
             throw new SessionExpiredException();
         }
 

@@ -140,11 +140,16 @@ class SeatFeeIdleHandoffApiTests {
     }
 
     /**
-     * 첫 일행: 인원 3명 + 첫 주문 — 자릿세 주문 id를 돌려준다. 메뉴 주문은 승인대기로 남는다(승인대기는 미결제가 아니라
-     * 유휴 판정을 막지 않는다 — UnpaidOrderRule)
+     * 첫 일행: 인원 3명 + 첫 주문 — 자릿세 주문 id를 돌려준다. 메뉴 주문은 이 헬퍼가 바로 거절해 정리한다 —
+     * 승인대기 주문을 그대로 두면(2026-09-28부터, SeatIdlePolicy 활성 조건 3) 유휴 판정을 막아 뒤이은 makeIdle
+     * 인계가 일어나지 않는다. 이 헬퍼를 쓰는 테스트들은 자릿세 인계만 보려는 것이라, 실제 운영자가 방치된
+     * 승인대기를 정리하듯 거절해 둔다(O28 거절도 O13 cancelByStaff 재사용, OrderRepository 주석 참고)
      */
     private Long firstPartyChoosesThree(String sessionToken) throws Exception {
-        return choosesAndOrders(sessionToken, 3)[0];
+        Long[] ids = choosesAndOrders(sessionToken, 3);
+        assertEquals(1, fx.orderRepository.cancelByStaff(ids[1], fx.booth.getId(), "테스트 정리", "race-staff",
+                LocalDateTime.now(KST)));
+        return ids[0];
     }
 
     /** 첫 일행: 인원 3명 + 메뉴 주문 후 모두 결제 — 미결제가 없어야 유휴 인계가 일어난다 */

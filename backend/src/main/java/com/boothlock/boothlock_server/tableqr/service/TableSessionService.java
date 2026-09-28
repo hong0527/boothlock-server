@@ -101,8 +101,9 @@ public class TableSessionService {
     private TableSessionEntity restoreActiveSession(Long tableId, Long boothId) {
         SeatIdlePolicy.Criteria criteria = seatIdlePolicy.criteria();
         return tableSessionRepository.findOpenByTableId(tableId)
-                .filter(session -> criteria.isActive(session, tableUnpaidOrderRepository.existsUnpaidOrderOn(
-                        session.getId(), boothId, criteria.businessDate())))
+                .filter(session -> criteria.isActive(session,
+                        tableUnpaidOrderRepository.existsUnpaidOrderOn(session.getId(), boothId, criteria.businessDate()),
+                        tableUnpaidOrderRepository.existsPendingApprovalOrderOn(session.getId(), boothId, criteria.businessDate())))
                 .filter(session -> tableSessionRepository.touchIfActive(session.getId(), seatIdlePolicy.now()) == 1)
                 .orElse(null);
     }

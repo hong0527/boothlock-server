@@ -524,10 +524,10 @@ public class TableAdminService {
     }
 
     /**
-     * O3·O22 공용 조립 — 테이블 목록 크기와 무관하게 세션 1회·미결제 1회 조회로 끝난다.
+     * O3·O22 공용 조립 — 테이블 목록 크기와 무관하게 세션 1회·미결제 1회·승인대기 1회 조회로 끝난다.
      * 활성 판정 기준(SeatIdlePolicy.Criteria)은 요청당 한 번만 구해 모든 테이블에 같은 기준을 쓴다.
      * session은 정책상 활성인 세션만 싣고, needsCleanup은 E1·C1과 같은 기준이다:
-     * 유휴이고 오늘 영업일 미결제도 없는 세션은 활성으로 보지 않으므로 OCCUPIED+그런 세션 = 정리 필요.
+     * 유휴이고 오늘 영업일 미결제·승인대기도 없는 세션은 활성으로 보지 않으므로 OCCUPIED+그런 세션 = 정리 필요.
      * unpaidOrderCount는 유휴 여부와 무관하게 열린 세션의 미결제(UnpaidOrderRule: RECEIVED·DONE && UNPAID) 수다 — 퇴실 전 확인용이다
      */
     private List<TableStatusResponse> toStatusResponses(List<TableEntity> tables) {
@@ -541,13 +541,17 @@ public class TableAdminService {
                         Function.identity(),
                         (a, b) -> a.getLastActivityAt().isAfter(b.getLastActivityAt()) ? a : b));
         Map<Long, TableUnpaidCountRow> unpaidByTable = unpaidOrderCounts(tableIds, criteria);
+        Set<Long> pendingApprovalTableIds = Set.copyOf(
+                tableUnpaidOrderRepository.findTableIdsWithPendingApprovalOfOpenSessions(tableIds, criteria.businessDate()));
 
         return tables.stream()
                 .map(table -> {
                     TableSessionEntity openSession = openSessionByTable.get(table.getId());
                     // 테이블당 열린 세션은 최대 1개라 테이블 단위 미결제 수가 곧 그 세션의 미결제 수다
                     TableUnpaidCountRow unpaid = unpaidByTable.get(table.getId());
-                    boolean active = criteria.isActive(openSession, unpaid != null && unpaid.getUnpaidOrderCountToday() > 0);
+                    boolean active = criteria.isActive(openSession,
+                            unpaid != null && unpaid.getUnpaidOrderCountToday() > 0,
+                            pendingApprovalTableIds.contains(table.getId()));
                     TableStatusResponse.Session session = active
                             ? new TableStatusResponse.Session(
                                     openSession.getStartedAt().atOffset(KST),

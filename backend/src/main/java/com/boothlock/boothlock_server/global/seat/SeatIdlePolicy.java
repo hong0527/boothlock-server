@@ -24,6 +24,11 @@ import java.util.Objects;
  *   <li>현재 영업일({@link Criteria#businessDate()})에 접수된 미결제 주문({@link com.boothlock.boothlock_server.global.domain.UnpaidOrderRule}:
  *       RECEIVED·DONE && UNPAID — 완료 처리된 미입금도 포함)이 있다 —
  *       §7-9 "미결제 주문 보유 세션은 영업일 종료로만 만료". 영업일(06:00 KST 경계)이 바뀌면 전날 미결제는 더 이상 세션을 붙잡지 않는다</li>
+ *   <li>현재 영업일에 아직 승인 안 된(PENDING_APPROVAL, O28) 주문이 있다(2026-09-28 파일럿 피드백) —
+ *       주문 직후 손님이 자리를 뜨는 사이 스태프가 늦게 승인해도, 그 사이 유휴 임계를 넘겨 세션이 자동 종료·그
+ *       승인대기 주문까지 자동 거절({@link com.boothlock.boothlock_server.tableqr.service.TableSessionWriter}
+ *       IDLE_AUTO_REJECT_REASON)되지 않게 한다. UnpaidOrderRule에는 이 상태가 일부러 빠져 있다(아직 확정된 채무가
+ *       아니라서) — 그래서 별도 조건으로 둔다. 스태프가 승인·거절하면 그때부터는 조건 2(또는 조건 1)가 이어받는다</li>
  * </ol>
  *
  * <p>이 정의를 쓰는 곳은 네 군데이고 넷이 반드시 같아야 한다 — C1 세션 복원(TableSessionService),
@@ -88,21 +93,33 @@ public class SeatIdlePolicy {
     }
 
     /**
+     * 활성 조건 3(승인대기 보유)의 JPQL 조각 — 클래스 도입부의 정의를 SQL 쪽에서도 같은 문자열로 쓴다
+     * (TableUnpaidOrderRepository·BoothSeatRepository가 이어 붙인다). UnpaidOrderRule과 별개로 이 클래스가 소유한다 —
+     * "미결제"의 정의 자체에는 PENDING_APPROVAL을 넣지 않기로 한 결정(UnpaidOrderRule 상단 주석)은 그대로 두기 위해서다.
+     */
+    // 괄호로 감싸 둔다 — 텍스트 블록은 각 줄 끝 공백을 자동으로 잘라내므로, "and """ + 이 상수로 이어 붙이면
+    // "and"와 "o.status" 사이에 구분자가 없어 "ando.status"라는 하나의 토큰으로 뭉친다(실제로 겪은 BadJpqlGrammarException).
+    // 여는 괄호 "("는 식별자 문자가 아니라 그 자체로 경계가 되어 이 문제가 생기지 않는다(UnpaidOrderRule.JPQL_CONDITION과 같은 이유)
+    public static final String PENDING_APPROVAL_JPQL_CONDITION =
+            "(o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.PENDING_APPROVAL)";
+
+    /**
      * 활성 판정 기준 한 벌.
      *
      * @param idleSince    이 시각보다 뒤에 활동이 있어야 활성
-     * @param businessDate 이 영업일의 미결제(UnpaidOrderRule) 주문이 있으면 유휴여도 활성
+     * @param businessDate 이 영업일의 미결제(UnpaidOrderRule) 주문·승인대기 주문이 있으면 유휴여도 활성
      */
     public record Criteria(LocalDateTime idleSince, LocalDate businessDate) {
 
         /**
-         * @param hasUnpaidOrderToday 이 세션에 {@link #businessDate()} 영업일의 미결제(UnpaidOrderRule) 주문이 있는가
+         * @param hasUnpaidOrderToday       이 세션에 {@link #businessDate()} 영업일의 미결제(UnpaidOrderRule) 주문이 있는가
+         * @param hasPendingApprovalOrder   이 세션에 {@link #businessDate()} 영업일의 승인대기(PENDING_APPROVAL) 주문이 있는가
          */
-        public boolean isActive(TableSessionEntity session, boolean hasUnpaidOrderToday) {
+        public boolean isActive(TableSessionEntity session, boolean hasUnpaidOrderToday, boolean hasPendingApprovalOrder) {
             if (session == null || session.getEndedAt() != null || session.getEndedAtKey() != 0) {
                 return false;
             }
-            return session.getLastActivityAt().isAfter(idleSince) || hasUnpaidOrderToday;
+            return session.getLastActivityAt().isAfter(idleSince) || hasUnpaidOrderToday || hasPendingApprovalOrder;
         }
     }
 }
