@@ -1,9 +1,13 @@
 import { readStored, writeStored } from './safeStorage'
+import orderAlertClipUrl from '../assets/sounds/order-alert.mp3'
+import callAlertClipUrl from '../assets/sounds/call-alert.mp3'
 
 /**
  * 운영자 새 주문·호출 알림의 기기 쪽 동작 — 소리(WebAudio 비프)·진동·화면 꺼짐 방지(wakeLock).
  *
- * <p>소리 파일을 두지 않고 OscillatorNode로 직접 만든다 — 에셋 로딩 실패(축제장 와이파이) 걱정이 없다.
+ * <p>새 주문·직원호출 알림음 둘 다 번들에 같이 실려 배포되는 짧은 음원(2026-09-29 파일럿 피드백, 팀이 고른 클립)을
+ * 쓴다. 못 받거나 디코딩에 실패하면(축제장 와이파이 등) 각자 원래 있던 합성음으로 조용히 대신한다
+ * ({@link createClipAlert}) — 음원 파일이 어떻게 되든 알림 자체는 항상 소리가 난다.
  *
  * <p>iOS Safari는 사용자 동작(탭) 안에서 한 번 resume()한 AudioContext만 소리를 낸다. 그래서 "알림 켜기" 버튼이
  * {@link unlockAudio}를 부르고, 새로고침 뒤 설정만 남아 있을 때는 화면 아무 곳이나 누르는 순간 풀리게 한다({@link listenForAudioUnlock}).
@@ -111,6 +115,8 @@ export function unlockAudio() {
       audioContext = new Ctor()
     }
     resumeAudio()
+    void orderAlert.ensureLoaded(audioContext)
+    void callAlert.ensureLoaded(audioContext)
   } catch {
     // 오디오를 못 쓰는 환경 — 진동·탭 제목 알림은 그대로 동작한다
   }
@@ -166,13 +172,12 @@ export function listenForAudioUnlock(): () => void {
 }
 
 /*
- * 알림음 두 가지 — 소리만 듣고 무엇인지 알 수 있게 음색·리듬·음높이를 모두 다르게 한다.
- * 음원 파일은 쓰지 않고 여기서 음을 직접 만든다(저작권·라이선스 걱정이 없고, 다른 서비스의 소리를 흉내 내지 않는다).
- * - 새 주문: 맑은 벨 음색으로 네 음이 이어지며 점점 높아지는 "띠디리링↗"(C6→E6→G6→C7, 마지막 음을 길게, 약 1.8초).
- *   1~2kHz라 낮은 소리가 많은 축제장 소음 위로 뚫고 나오고, 올라가는 음형은 "새 것이 왔다"로 들린다.
- * - 직원호출: 여운 없는 짧은 전자음으로 내려가는 두 음 "딩동 · 딩동"(약 0.7초).
- * 음높이 방향(올라감↔내려감)·음색(울리는 벨↔마른 전자음)·음역(높음↔중간)이 모두 달라 소음 속에서도 갈린다.
- * 둘 다 알림음 크기(마스터 게인)를 함께 탄다.
+ * 알림음 두 가지 — 소리만 듣고 무엇인지 알 수 있게 서로 다른 실제 음원을 쓴다(팀이 고른 클립, 2026-09-29).
+ * - 새 주문: order-alert.mp3(약 1초) — 준비 전이거나 못 받았으면 맑은 벨 음색으로 네 음이 이어지며 점점
+ *   높아지는 합성음 "띠디리링↗"(C6→E6→G6→C7, 마지막 음을 길게, 약 1.8초)으로 대신한다.
+ * - 직원호출: call-alert.mp3(약 1초) — 마찬가지로 준비 전이거나 못 받았으면 여운 없는 짧은 전자음으로
+ *   내려가는 두 음 "딩동 · 딩동"(약 0.7초)으로 대신한다.
+ * 서로 다른 클립이라 소음 속에서도 새 주문과 호출이 갈린다. 둘 다 알림음 크기(마스터 게인)를 함께 탄다.
  *
  * 폴링에서 부르는 알림음은 오디오가 실제로 돌고 있을(running) 때만 예약한다. 잠긴(suspended·interrupted) 동안에는
  * currentTime이 멈춰 있어 예약한 소리가 그대로 쌓였다가, 나중에 화면을 누르는 순간 한꺼번에 겹쳐 터진다.
@@ -183,8 +188,9 @@ export function listenForAudioUnlock(): () => void {
 let nextFreeAt = 0
 // 두 소리가 붙어 한 소리로 들리지 않게 띄우는 간격(초)
 const PATTERN_GAP = 0.15
-// 예약해 둔 소리 — 알림을 끄면 stopAlertSounds가 한꺼번에 끊는다(화면을 떠나는 것만으로는 끊지 않는다)
-const scheduledOscillators = new Set<OscillatorNode>()
+// 예약해 둔 소리(오실레이터·실제 음원 재생 둘 다) — 알림을 끄면 stopAlertSounds가 한꺼번에 끊는다
+// (화면을 떠나는 것만으로는 끊지 않는다). OscillatorNode·AudioBufferSourceNode 둘 다 AudioScheduledSourceNode다
+const scheduledSources = new Set<AudioScheduledSourceNode>()
 // 직원호출 음색용 저역통과 필터 — 컨텍스트가 하나뿐이라 한 번 만들어 재사용한다
 let callFilter: BiquadFilterNode | null = null
 // 모든 알림음이 지나는 출구 — 알림음 크기(마스터 게인) → 리미터 → 스피커. 컨텍스트가 하나뿐이라 한 번 만든다
@@ -225,9 +231,9 @@ function scheduleTone(
   gain.gain.exponentialRampToValueAtTime(peak, at + attack)
   gain.gain.exponentialRampToValueAtTime(0.0001, at + decaySeconds)
   osc.connect(gain).connect(destination)
-  scheduledOscillators.add(osc)
+  scheduledSources.add(osc)
   osc.onended = () => {
-    scheduledOscillators.delete(osc)
+    scheduledSources.delete(osc)
     gain.disconnect()
   }
   osc.start(at)
@@ -280,18 +286,6 @@ const ORDER_NOTES: [number, number, number, number][] = [
   [0.3, 2093, 1.5, 0.49], // C7 링 — 길게
 ]
 
-/** 새 주문 알림음 — 점점 높아지며 이어지는 "띠디리링↗"(약 1.8초). 오디오가 잠겨 있으면 소리 없이 넘어간다(진동·탭 제목은 그대로) */
-export function playOrderAlert() {
-  playPattern((ctx, start) => {
-    let end = 0
-    for (const [offset, freq, decay, peak] of ORDER_NOTES) {
-      ringChime(ctx, start + offset, freq, peak, decay)
-      end = Math.max(end, offset + decay)
-    }
-    return end
-  })
-}
-
 const CALL_HIGH = 987.77 // B5
 const CALL_LOW = 659.25 // E5
 // 사각파는 같은 음량에서도 사인파보다 훨씬 크게 들린다 — 최고 음량을 낮게 잡는다
@@ -300,42 +294,151 @@ const CALL_PULSE = 0.12
 // "딩동 · 딩동" — [시작(초), 음높이]
 const CALL_NOTES: [number, number][] = [[0, CALL_HIGH], [0.15, CALL_LOW], [0.42, CALL_HIGH], [0.57, CALL_LOW]]
 
-/**
- * 직원 호출 알림음 — 손님이 직접 부른 것이라 {@link playOrderAlert}(새 주문)와 소음 속에서도 헷갈리지 않게,
- * 종소리가 아니라 여운 없는 짧은 전자음(사각파)으로 두 음을 번갈아 "딩동 · 딩동" 울린다.
- * 사각파의 거친 윗배음은 저역통과로 걷어 내 또렷하지만 귀를 찌르지 않게 한다
- */
-export function playCallAlert() {
-  playPattern((ctx, start) => {
-    if (!callFilter) {
-      callFilter = ctx.createBiquadFilter()
-      callFilter.type = 'lowpass'
-      callFilter.frequency.value = 2500
-      callFilter.connect(alertOutput(ctx))
-    } else {
-      alertOutput(ctx) // 지금 저장된 알림음 크기로 맞춘다
-    }
-    for (const [offset, freq] of CALL_NOTES) {
-      scheduleTone(ctx, callFilter, 'square', freq, start + offset, CALL_PEAK, 0.005, CALL_PULSE)
-    }
-    return CALL_NOTES[CALL_NOTES.length - 1][0] + CALL_PULSE
-  })
+/** 직원호출 합성음 — 종소리가 아니라 여운 없는 짧은 전자음(사각파)으로 두 음을 번갈아 "딩동 · 딩동" 울린다.
+ * 사각파의 거친 윗배음은 저역통과로 걷어 내 또렷하지만 귀를 찌르지 않게 한다 */
+function synthCallAlert(ctx: AudioContext, start: number): number {
+  if (!callFilter) {
+    callFilter = ctx.createBiquadFilter()
+    callFilter.type = 'lowpass'
+    callFilter.frequency.value = 2500
+    callFilter.connect(alertOutput(ctx))
+  } else {
+    alertOutput(ctx) // 지금 저장된 알림음 크기로 맞춘다
+  }
+  for (const [offset, freq] of CALL_NOTES) {
+    scheduleTone(ctx, callFilter, 'square', freq, start + offset, CALL_PEAK, 0.005, CALL_PULSE)
+  }
+  return CALL_NOTES[CALL_NOTES.length - 1][0] + CALL_PULSE
+}
+
+/** 새 주문 합성음 — 장3화음을 한 옥타브 타고 오르는 벨 소리 "띠 → 디 → 리 → 링↗". 음 사이 0.1초에 앞 음이
+ * 0.45초 울려 뒤 음과 겹치며 이어진다(끊긴 "띠링 · 띠링"이 아니라 한 줄기). 마지막 "링"은 1.5초 끌어 끝맺는다 */
+function synthOrderAlert(ctx: AudioContext, start: number): number {
+  let end = 0
+  for (const [offset, freq, decay, peak] of ORDER_NOTES) {
+    ringChime(ctx, start + offset, freq, peak, decay)
+    end = Math.max(end, offset + decay)
+  }
+  return end
+}
+
+/** 실제 음원 재생을 예약한다 — 알림음 크기(alertOutput)를 그대로 타서 볼륨 설정이 똑같이 적용된다 */
+function scheduleClip(ctx: AudioContext, buffer: AudioBuffer, at: number): number {
+  const src = ctx.createBufferSource()
+  src.buffer = buffer
+  src.connect(alertOutput(ctx))
+  scheduledSources.add(src)
+  src.onended = () => scheduledSources.delete(src)
+  src.start(at)
+  return buffer.duration
 }
 
 /**
+ * 실제 음원 + 합성음 폴백을 묶은 알림 하나 — 새 주문·직원호출이 같은 모양이라(2026-09-29 파일럿 피드백으로
+ * 직원호출도 실제 음원을 쓰게 되면서) 공통으로 뺐다. 음원을 못 받거나 디코딩에 실패해도(축제장 와이파이 등)
+ * synth로 조용히 대신한다 — 알림음 하나 때문에 주문현황이 죽거나 무음이 되면 안 된다는 원칙을 그대로 따른다.
+ */
+function createClipAlert(url: string, synth: (ctx: AudioContext, start: number) => number) {
+  let buffer: AudioBuffer | null = null
+  let loadPromise: Promise<void> | null = null
+
+  // 바이트는 AudioContext 없이도 받을 수 있다 — 페이지가 뜨는 즉시(모듈을 불러오는 시점) 미리 받아 둔다.
+  // "알림 켜기"를 누른 순간까지 기다리지 않아, 실제로 쓸 때는(그 사이 몇 초~몇 분은 지나므로) 거의 항상
+  // 이미 받아져 있다 — 디코딩(컨텍스트 필요)만 나중에 하면 되니 그만큼 준비가 빨라진다(2026-09-29 실측:
+  // "알림 켜기" 직후 확인음이 합성음으로 나가 실제 음원이 반영 안 된 줄 착각했던 문제의 근본 대책)
+  const bytesPromise: Promise<ArrayBuffer | null> =
+    typeof fetch === 'function'
+      ? fetch(url).then((res) => res.arrayBuffer()).catch(() => null)
+      : Promise.resolve(null)
+
+  /** 미리 받아둔 바이트를 디코딩해 둔다 — AudioContext가 생긴 뒤(알림을 켤 때 등) 한 번, 실패하면 다음
+   * 알림음을 낼 때 다시 시도한다. 반환하는 프로미스는 {@link playWhenReady}가 "잠깐 기다렸다 재생"할 때 쓴다 */
+  function ensureLoaded(ctx: AudioContext): Promise<void> {
+    if (buffer) return Promise.resolve()
+    if (loadPromise) return loadPromise
+    loadPromise = bytesPromise
+      .then((data) => {
+        if (!data) throw new Error('음원을 못 받았다')
+        return ctx.decodeAudioData(data)
+      })
+      .then((decoded) => { buffer = decoded })
+      .catch(() => {
+        // 무시 — 다음 play() 호출이 다시 시도하고, 그때까지는 합성음이 대신 울린다
+      })
+      .finally(() => { loadPromise = null })
+    return loadPromise
+  }
+
+  /** 음원이 준비돼 있으면 그걸, 아직이면(첫 알림 등) 합성음으로 울리면서 다음 알림을 위해 음원을 마저 받아 둔다.
+   * 오디오가 잠겨 있으면 소리 없이 넘어간다(진동·탭 제목은 그대로) */
+  function play() {
+    if (!audioContext) unlockAudio()
+    const ctx = audioContext
+    if (ctx && !buffer) void ensureLoaded(ctx)
+    const loaded = buffer
+    if (loaded) {
+      playPattern((c, start) => scheduleClip(c, loaded, start))
+      return
+    }
+    playPattern(synth)
+  }
+
+  /**
+   * 확인음("알림 켜기" 클릭 직후)처럼 실제 음원이 준비될 때까지 잠깐(timeoutMs) 기다렸다가 재생한다 —
+   * 안 기다리면 켜는 순간엔 아직 못 받아온 음원 대신 합성음이 나가, 운영자가 그걸 "실제 알림음"으로
+   * 착각하고 보내준 음원과 다르다고 느낀다(2026-09-29 실측). 시간 안에 못 받으면 그냥 합성음으로 넘어간다
+   */
+  async function playWhenReady(timeoutMs: number) {
+    if (!audioContext) unlockAudio()
+    const ctx = audioContext
+    if (ctx && !buffer) {
+      await Promise.race([ensureLoaded(ctx), new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))])
+    }
+    play()
+  }
+
+  return { ensureLoaded, play, playWhenReady }
+}
+
+const orderAlert = createClipAlert(orderAlertClipUrl, synthOrderAlert)
+const callAlert = createClipAlert(callAlertClipUrl, synthCallAlert)
+
+/** 새 주문 알림음(약 1초, 실제 음원) — 준비 전이면 합성음 "띠디리링↗"(약 1.8초)으로 대신한다 */
+export function playOrderAlert() {
+  orderAlert.play()
+}
+
+/** 직원 호출 알림음(약 1초, 실제 음원) — {@link playOrderAlert}와 다른 클립이라 소음 속에서도 헷갈리지 않는다.
+ * 준비 전이면 합성음 "딩동 · 딩동"(약 0.7초)으로 대신한다 */
+export function playCallAlert() {
+  callAlert.play()
+}
+
+// 확인음이 실제 음원을 기다려 줄 최대 시간 — 이보다 오래 걸리면(못 받았거나 아주 느리면) 포기하고 합성음으로 넘어간다.
+// 로컬·같은 도메인에서 받는 수십 KB 파일이라 보통은 훨씬 빨리 끝난다
+const PREVIEW_LOAD_TIMEOUT_MS = 900
+
+/**
  * 알림을 켤 때 확인음 — 소리 크기를 확인하게 주문 알림음을 한 번 낸다. 버튼을 누른 직후엔 resume()이 아직
- * 끝나지 않아 suspended라, 폴링용 규칙(running만)으로는 안 울린다 — 풀린 뒤에 낸다
+ * 끝나지 않아 suspended라, 폴링용 규칙(running만)으로는 안 울린다 — 풀린 뒤에 낸다.
+ *
+ * <p>실제 음원이 아직 안 실렸으면(켜는 바로 그 순간) 잠깐 기다렸다가 재생한다({@link createClipAlert.playWhenReady}) —
+ * 안 기다리면 확인음은 항상 합성음으로 나가서, 운영자가 그걸 "실제 알림음"으로 착각하고 보내준 음원과 다르다고
+ * 느낀다(2026-09-29 실측 — 확인음만 듣고 "음원이 반영 안 됐다"고 판단했었다). 실제 주문·호출 알림음(playOrderAlert·
+ * playCallAlert)은 폴링 중 울리는 것이라 이 시각차를 기다릴 필요가 없다 — 이미 몇 초~몇 분 전에 켜 둔 뒤라 대부분
+ * 그때 이미 음원이 실려 있다
  */
 export function previewOrderAlert() {
   const ctx = audioContext
   if (!ctx || ctx.state === 'closed') return
+  const generation = stopGeneration
+  const play = () => { if (generation === stopGeneration) void orderAlert.playWhenReady(PREVIEW_LOAD_TIMEOUT_MS) }
   if (ctx.state === 'running') {
-    playOrderAlert()
+    play()
     return
   }
-  const generation = stopGeneration
   try {
-    void ctx.resume().then(() => { if (generation === stopGeneration) playOrderAlert() }).catch(() => {})
+    void ctx.resume().then(play).catch(() => {})
   } catch {
     // 무시
   }
@@ -346,15 +449,15 @@ export function previewOrderAlert() {
  * 남아 있다가 다음에 켤 때 한꺼번에 터지지 않게. 화면 이동에는 부르지 않는다 — 이미 들어온 알림의 소리는 끝까지 울린다
  */
 export function stopAlertSounds() {
-  for (const osc of scheduledOscillators) {
+  for (const source of scheduledSources) {
     try {
-      osc.disconnect()
-      osc.stop()
+      source.disconnect()
+      source.stop()
     } catch {
       // 이미 끝난 소리 — 무시
     }
   }
-  scheduledOscillators.clear()
+  scheduledSources.clear()
   nextFreeAt = 0
   stopGeneration += 1
 }
