@@ -94,26 +94,49 @@ export function listenForAudioUnlock(): () => void {
   return stop
 }
 
-/** 짧은 "띵-띵" 두 번. 한 번도 풀지 않았으면(사용자 동작 전) 소리 없이 넘어간다.
- * suspended여도 예약은 해 둔다 — 버튼을 누른 직후엔 resume()이 아직 끝나지 않아, 막으면 켤 때 확인음이 안 난다 */
+// 종소리 배음비(기본음 대비) — 완전한 정수배가 아니라 실제 종처럼 약간 어긋난 배음이 "쨍한 비프음"이 아니라
+// "종이 울리는" 느낌을 낸다. 두 번째·세 번째 배음은 더 작게 섞는다
+const BELL_PARTIALS = [
+  { ratio: 1, gain: 1 },
+  { ratio: 2.4, gain: 0.35 },
+  { ratio: 3.8, gain: 0.18 },
+]
+
+/** 종 하나를 울린다 — 배음을 섞은 사인파에 지수 감쇠(빠른 어택·느린 감쇠)를 입혀 "땡" 소리를 만든다 */
+function ringBell(ctx: AudioContext, at: number, freq: number, peakGain: number, decaySeconds: number) {
+  for (const partial of BELL_PARTIALS) {
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.value = freq * partial.ratio
+    const partialPeak = peakGain * partial.gain
+    // 0에서 바로 올리면(setValueAtTime) 딸깍 소리가 나서, 아주 작은 값에서 지수적으로 올린다
+    gain.gain.setValueAtTime(0.0001, at)
+    gain.gain.exponentialRampToValueAtTime(partialPeak, at + 0.01)
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + decaySeconds)
+    osc.connect(gain).connect(ctx.destination)
+    osc.start(at)
+    osc.stop(at + decaySeconds + 0.05)
+  }
+}
+
+/**
+ * 종이 두 번 울리는 알림음("땡-땡"). 한 번도 풀지 않았으면(사용자 동작 전) 소리 없이 넘어간다.
+ *
+ * audioContext가 아직 없으면(알림을 켠 뒤 한 번도 화면을 만지기 전에 첫 주문이 온 경우 등) 여기서도
+ * unlockAudio를 한 번 시도한다 — 사용자 동작 밖이라 대부분 막히지만, 이미 다른 경로로 한 번이라도
+ * 풀린 적이 있다면(예: 다른 오디오 재생) 그 컨텍스트를 그대로 쓸 수 있어 손해 볼 게 없다.
+ * suspended여도 예약은 해 둔다 — 버튼을 누른 직후엔 resume()이 아직 끝나지 않아, 막으면 켤 때 확인음이 안 난다.
+ * 축제장 소음 속에서도 들리도록 기존(짧은 사인파 비프)보다 크고 길게, 배음을 섞어 종소리에 가깝게 만든다
+ */
 export function playBeep() {
+  if (!audioContext) unlockAudio()
   const ctx = audioContext
   if (!ctx || ctx.state === 'closed') return
   try {
     const start = ctx.currentTime
-    for (const offset of [0, 0.25]) {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.value = 880
-      // 딸깍 소리 없이 짧게 올렸다 내린다
-      gain.gain.setValueAtTime(0.0001, start + offset)
-      gain.gain.exponentialRampToValueAtTime(0.4, start + offset + 0.02)
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.18)
-      osc.connect(gain).connect(ctx.destination)
-      osc.start(start + offset)
-      osc.stop(start + offset + 0.2)
-    }
+    ringBell(ctx, start, 880, 0.7, 0.55)
+    ringBell(ctx, start + 0.35, 880, 0.7, 0.55)
   } catch {
     // 무시 — 소리 한 번 못 낸 것으로 화면이 멈추면 안 된다
   }
