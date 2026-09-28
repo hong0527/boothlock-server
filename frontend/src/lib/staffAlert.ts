@@ -21,12 +21,83 @@ let wakeLock: WakeLockSentinel | null = null
 let wakeLockWanted = false
 let wakeLockInFlight = false
 
+// 알림 켜고 끔은 이 저장값 하나만 쓴다 — 설정 화면과 주문현황의 빠른 전환이 같은 값을 보고, 바뀌면 서로 알린다
+const prefListeners = new Set<(on: boolean) => void>()
+
 export function isAlertPreferred(): boolean {
   return readStored(PREF_KEY) === 'on'
 }
 
 export function setAlertPreferred(on: boolean) {
   writeStored(PREF_KEY, on ? 'on' : 'off')
+  prefListeners.forEach((listener) => listener(on))
+}
+
+/**
+ * 알림 켜고 끔이 바뀌면 알려 준다 — 같은 탭의 다른 화면(설정 ↔ 주문현황)은 setAlertPreferred가, 같은 브라우저의
+ * 다른 탭은 storage 이벤트가 알린다. 설정은 기기(브라우저)마다 따로다 — 다른 기기의 설정은 바꾸지 않는다. 반환값은 해제 함수
+ */
+export function subscribeAlertPreference(listener: (on: boolean) => void): () => void {
+  prefListeners.add(listener)
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === PREF_KEY) listener(event.newValue === 'on')
+  }
+  const target = typeof window === 'undefined' ? null : window
+  target?.addEventListener?.('storage', onStorage)
+  return () => {
+    prefListeners.delete(listener)
+    target?.removeEventListener?.('storage', onStorage)
+  }
+}
+
+/** 알림 켜기 — 사용자 동작(클릭) 안에서 불러야 iOS에서 소리가 풀린다. 켜는 순간 확인음을 한 번 내 소리 크기도 확인하게 한다 */
+export function turnAlertsOn() {
+  unlockAudio()
+  previewOrderAlert()
+  setAlertPreferred(true)
+}
+
+/** 알림 끄기 — 예약된 소리를 끊고 오디오를 재운다(켜 둔 채면 iOS가 백그라운드에서도 오디오 세션을 붙잡는다) */
+export function turnAlertsOff() {
+  stopAlertSounds()
+  suspendAudio()
+  setAlertPreferred(false)
+}
+
+const VOLUME_KEY = 'boothlock_staff_alert_volume'
+/** 알림음 크기 기본값(%) — 이 값에서 예전(볼륨 설정이 없던 때)과 같은 크기로 들린다 */
+export const DEFAULT_ALERT_VOLUME = 70
+
+/** 알림음 크기(0~100%) — 이 웹앱이 내는 알림음에만 곱한다. 기기·브라우저 자체 볼륨은 건드리지 않는다 */
+export function getAlertVolume(): number {
+  const raw = readStored(VOLUME_KEY)
+  const value = raw === null ? NaN : Number(raw)
+  return Number.isFinite(value) ? clampVolume(value) : DEFAULT_ALERT_VOLUME
+}
+
+/** 알림을 꺼도 값은 남는다. 바꾸면 다음 알림음부터(이미 울리는 소리도 부드럽게) 바로 반영된다 */
+export function setAlertVolume(volume: number) {
+  const value = clampVolume(volume)
+  writeStored(VOLUME_KEY, String(value))
+  const ctx = audioContext
+  if (!ctx || !masterGain) return
+  try {
+    masterGain.gain.setTargetAtTime(volumeToGain(value), ctx.currentTime, 0.02)
+  } catch {
+    // 무시
+  }
+}
+
+function clampVolume(volume: number): number {
+  return Math.min(100, Math.max(0, Math.round(volume)))
+}
+
+/**
+ * % → 곱할 크기. 귀는 크기를 로그로 느껴서 직선으로 두면 아래쪽 절반이 거의 무음처럼 들린다 — 1.5제곱으로 완만하게 한다.
+ * 기본값(70%)이 1(예전 크기)이 되게 맞춘다. 100%는 약 1.7배라 한계를 넘는 부분은 아래 리미터가 눌러 찢어지지 않게 한다
+ */
+function volumeToGain(volume: number): number {
+  return Math.pow(volume / DEFAULT_ALERT_VOLUME, 1.5)
 }
 
 /** 사용자 동작(클릭·터치) 안에서 불러야 iOS에서 소리가 풀린다 */
@@ -96,8 +167,12 @@ export function listenForAudioUnlock(): () => void {
 
 /*
  * 알림음 두 가지 — 소리만 듣고 무엇인지 알 수 있게 음색·리듬·음높이를 모두 다르게 한다.
- * - 새 주문: 배음을 섞은 종소리로 같은 음을 두 번 "땡-땡"(약 0.9초). 여운이 남아 소음 속에서도 놓치지 않는다.
- * - 직원호출: 여운 없는 짧은 전자음으로 두 음을 번갈아 "딩동 · 딩동"(약 0.7초).
+ * 음원 파일은 쓰지 않고 여기서 음을 직접 만든다(저작권·라이선스 걱정이 없고, 다른 서비스의 소리를 흉내 내지 않는다).
+ * - 새 주문: 맑은 마림바·벨 음색으로 위로 올라가는 두 음 "띠링↗"을 한 번 더 "띠링↗ · 띠링↗"(약 0.8초).
+ *   1.3~1.8kHz라 낮은 소리가 많은 축제장 소음 위로 뚫고 나오고, 올라가는 음형은 "새 것이 왔다"로 들린다.
+ * - 직원호출: 여운 없는 짧은 전자음으로 내려가는 두 음 "딩동 · 딩동"(약 0.7초).
+ * 음높이 방향(올라감↔내려감)·음색(울리는 벨↔마른 전자음)·음역(높음↔중간)이 모두 달라 소음 속에서도 갈린다.
+ * 둘 다 알림음 크기(마스터 게인)를 함께 탄다.
  *
  * 폴링에서 부르는 알림음은 오디오가 실제로 돌고 있을(running) 때만 예약한다. 잠긴(suspended·interrupted) 동안에는
  * currentTime이 멈춰 있어 예약한 소리가 그대로 쌓였다가, 나중에 화면을 누르는 순간 한꺼번에 겹쳐 터진다.
@@ -112,6 +187,28 @@ const PATTERN_GAP = 0.15
 const scheduledOscillators = new Set<OscillatorNode>()
 // 직원호출 음색용 저역통과 필터 — 컨텍스트가 하나뿐이라 한 번 만들어 재사용한다
 let callFilter: BiquadFilterNode | null = null
+// 모든 알림음이 지나는 출구 — 알림음 크기(마스터 게인) → 리미터 → 스피커. 컨텍스트가 하나뿐이라 한 번 만든다
+let masterGain: GainNode | null = null
+
+/**
+ * 알림음 출구를 돌려준다(처음이면 만든다). 소리마다 지금 저장된 크기로 맞춘다 — 다른 탭(설정)에서 바꾼 크기도 따라간다.
+ * 리미터(DynamicsCompressor)는 큰 볼륨에서 여러 배음이 겹쳐 1을 넘을 때 찢어지는 대신 눌러 준다
+ */
+function alertOutput(ctx: AudioContext): AudioNode {
+  if (!masterGain) {
+    const gain = ctx.createGain()
+    const limiter = ctx.createDynamicsCompressor()
+    limiter.threshold.value = -3
+    limiter.knee.value = 3
+    limiter.ratio.value = 20
+    limiter.attack.value = 0.002
+    limiter.release.value = 0.1
+    gain.connect(limiter).connect(ctx.destination)
+    masterGain = gain
+  }
+  masterGain.gain.setValueAtTime(volumeToGain(getAlertVolume()), ctx.currentTime)
+  return masterGain
+}
 // stopAlertSounds를 부를 때마다 올린다 — resume()을 기다리던 확인음이 그 사이 알림을 끈 뒤에 울리지 않게
 let stopGeneration = 0
 
@@ -156,33 +253,36 @@ function playPattern(build: (ctx: AudioContext, start: number) => number) {
   }
 }
 
-// 종소리 배음비(기본음 대비) — 완전한 정수배가 아니라 실제 종처럼 약간 어긋난 배음이 "쨍한 비프음"이 아니라
-// "종이 울리는" 느낌을 낸다. 두 번째·세 번째 배음은 더 작게 섞는다
-const BELL_PARTIALS = [
+// 주문음 음색 — 정수배 배음(2·3배)을 옅게 섞은 사인파. 어긋난 배음의 "종"보다 맑고 또렷하게 끊겨 마림바·벨처럼 들린다
+const CHIME_PARTIALS = [
   { ratio: 1, gain: 1 },
-  { ratio: 2.4, gain: 0.35 },
-  { ratio: 3.8, gain: 0.18 },
+  { ratio: 2, gain: 0.3 },
+  { ratio: 3, gain: 0.12 },
 ]
 
-/** 종 하나를 울린다 — 배음을 섞은 사인파에 지수 감쇠(빠른 어택·느린 감쇠)를 입혀 "땡" 소리를 만든다 */
-function ringBell(ctx: AudioContext, at: number, freq: number, peakGain: number, decaySeconds: number) {
-  for (const partial of BELL_PARTIALS) {
-    scheduleTone(ctx, ctx.destination, 'sine', freq * partial.ratio, at, peakGain * partial.gain, 0.01, decaySeconds)
+/** 맑은 음 하나 — 5ms 만에 올라 0.25초에 걸쳐 사라지는 짧은 "띵" */
+function ringChime(ctx: AudioContext, at: number, freq: number, peakGain: number, decaySeconds: number) {
+  const output = alertOutput(ctx)
+  for (const partial of CHIME_PARTIALS) {
+    scheduleTone(ctx, output, 'sine', freq * partial.ratio, at, peakGain * partial.gain, 0.005, decaySeconds)
   }
 }
 
-const ORDER_FREQ = 880
-// 배음까지 더한 최고 음량이 0.45 × (1 + 0.35 + 0.18) ≈ 0.69 — 1을 넘으면 기기에 따라 소리가 찢어진다
-const ORDER_PEAK = 0.45
-const ORDER_BELL_GAP = 0.35
-const ORDER_BELL_DECAY = 0.55
+const ORDER_LOW = 1318.51 // E6
+const ORDER_HIGH = 1760 // A6 — 완전4도 위로 올라간다
+// 배음까지 더한 최고 음량 0.49 × (1 + 0.3 + 0.12) ≈ 0.7 — 기본 크기(70%)에서 예전 주문음과 비슷한 크기
+const ORDER_PEAK = 0.49
+const ORDER_NOTE_DECAY = 0.25
+// "띠링↗ · 띠링↗" — [시작(초), 음높이]. 한 번만 울리면 놓치기 쉬워 같은 음형을 한 번 더 들려준다
+const ORDER_NOTES: [number, number][] = [[0, ORDER_LOW], [0.11, ORDER_HIGH], [0.45, ORDER_LOW], [0.56, ORDER_HIGH]]
 
-/** 새 주문 알림음 — 같은 음(880Hz)이 두 번 울리는 "땡-땡". 오디오가 잠겨 있으면 소리 없이 넘어간다(진동·탭 제목은 그대로) */
+/** 새 주문 알림음 — 올라가는 두 음 "띠링↗ · 띠링↗". 오디오가 잠겨 있으면 소리 없이 넘어간다(진동·탭 제목은 그대로) */
 export function playOrderAlert() {
   playPattern((ctx, start) => {
-    ringBell(ctx, start, ORDER_FREQ, ORDER_PEAK, ORDER_BELL_DECAY)
-    ringBell(ctx, start + ORDER_BELL_GAP, ORDER_FREQ, ORDER_PEAK, ORDER_BELL_DECAY)
-    return ORDER_BELL_GAP + ORDER_BELL_DECAY
+    for (const [offset, freq] of ORDER_NOTES) {
+      ringChime(ctx, start + offset, freq, ORDER_PEAK, ORDER_NOTE_DECAY)
+    }
+    return ORDER_NOTES[ORDER_NOTES.length - 1][0] + ORDER_NOTE_DECAY
   })
 }
 
@@ -205,7 +305,9 @@ export function playCallAlert() {
       callFilter = ctx.createBiquadFilter()
       callFilter.type = 'lowpass'
       callFilter.frequency.value = 2500
-      callFilter.connect(ctx.destination)
+      callFilter.connect(alertOutput(ctx))
+    } else {
+      alertOutput(ctx) // 지금 저장된 알림음 크기로 맞춘다
     }
     for (const [offset, freq] of CALL_NOTES) {
       scheduleTone(ctx, callFilter, 'square', freq, start + offset, CALL_PEAK, 0.005, CALL_PULSE)

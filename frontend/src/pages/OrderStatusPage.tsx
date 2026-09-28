@@ -4,7 +4,7 @@ import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
 import { getAuthToken, getStaff } from '../lib/auth'
 import { additionalOrderIds, orderedForActive, orderedForTab } from '../lib/dashboardOrders'
-import { alertTitle, diffArrivals, snapshotOf, type ArrivalSnapshot } from '../lib/newArrivals'
+import { alertTitle } from '../lib/newArrivals'
 import { createPollGuard } from '../lib/pollGuard'
 import {
   ackCall,
@@ -24,21 +24,8 @@ import {
   type OrderSummary,
 } from '../types/dashboard'
 import { onResume } from '../lib/onResume'
-import {
-  acquireWakeLock,
-  isAlertPreferred,
-  listenForAudioUnlock,
-  playCallAlert,
-  playOrderAlert,
-  previewOrderAlert,
-  releaseWakeLock,
-  resumeAudio,
-  setAlertPreferred,
-  stopAlertSounds,
-  suspendAudio,
-  unlockAudio,
-  vibrate,
-} from '../lib/staffAlert'
+import { isAlertPreferred, subscribeAlertPreference, turnAlertsOff, turnAlertsOn } from '../lib/staffAlert'
+import AlertSwitch from '../components/AlertSwitch'
 
 // 서버(O10)에서 읽어 오는 상태 — 승인대기를 맨 앞에 둔다(첫 응답의 calls·새 주문 알림 기준, 아래 refetchAll)
 const TABS: { status: OrderStatus; label: string }[] = [
@@ -90,16 +77,12 @@ export default function OrderStatusPage() {
 
   const pollGuard = useRef(createPollGuard())
 
-  // 새 주문·호출 알림 — 직전 성공 조회의 스냅샷과 비교한다(첫 조회는 null이라 알리지 않는다, lib/newArrivals)
-  const arrivalsRef = useRef<ArrivalSnapshot | null>(null)
-  // 알림 켜기(소리·화면 꺼짐 방지) — 설정은 safeStorage에 남겨 새로고침해도 유지한다
+  // 알림 빠른 켜고 끔 — 설정은 safeStorage에 남겨 새로고침해도 유지한다(설정 화면의 알림 설정과 같은 값 하나).
+  // 새 주문·호출 감시와 알림음은 이 화면이 아니라 앱 공통 StaffAlertWatcher가 한다 — 어느 직원 화면에서든 울리게
   const [alertOn, setAlertOn] = useState(() => isAlertPreferred())
-  // refetchAll은 deps가 []인 useCallback이라 alertOn 상태를 직접 읽으면 마운트 시점 값에 갇힌다 — ref로 최신 값을 본다.
-  // alertOn은 toggleAlert에서만 바뀌므로 거기서 같이 맞춘다
-  const alertOnRef = useRef(alertOn)
   // 탭 제목을 되돌릴 원래 값 — 마운트 시점 제목
   const baseTitleRef = useRef(typeof document === 'undefined' ? '' : document.title)
-  // 화면을 떠난 뒤 늦게 도착한 폴링 응답이 탭 제목을 "(3) 승인대기"로 되돌리거나 소리를 내지 않게 한다
+  // 화면을 떠난 뒤 늦게 도착한 폴링 응답이 탭 제목을 "(3) 승인대기"로 되돌리지 않게 한다
   const mountedRef = useRef(false)
 
   useEffect(() => {
@@ -122,18 +105,8 @@ export default function OrderStatusPage() {
       const nextCalls = results[0].calls ?? []
       setCalls(nextCalls)
       setError(null)
-      // 주문이 들어와도 아무 표시가 없으면 바쁜 운영자가 못 본다 — 새로 생긴 승인대기·호출이 있으면 소리·진동으로 알린다
-      const snapshot = snapshotOf(results[0].orders, nextCalls)
-      const arrivals = diffArrivals(arrivalsRef.current, snapshot)
-      arrivalsRef.current = snapshot
-      // 알림을 꺼 두었으면 소리·진동은 내지 않는다 — 탭 제목의 승인대기 수는 켜고 끔과 무관하게 갱신한다.
-      // 새 주문·직원호출은 서로 다른 음으로 울려 소음 속에서도 구분되게 한다(playOrderAlert vs playCallAlert).
-      // 둘 다 새로 생겼으면 staffAlert가 주문 알림음이 끝난 뒤에 호출 알림음을 이어 붙인다(겹치지 않게)
-      if (alertOnRef.current) {
-        if (arrivals.newPendingOrders > 0) playOrderAlert()
-        if (arrivals.newCalls > 0) playCallAlert()
-        if (arrivals.newPendingOrders + arrivals.newCalls > 0) vibrate()
-      }
+      // 새 주문·호출의 소리·진동은 앱 공통 StaffAlertWatcher가 낸다 — 여기서도 내면 주문현황에서만 두 번 울린다.
+      // 탭 제목의 승인대기 수는 알림 켜고 끔과 무관하게 이 화면이 갱신한다
       if (typeof document !== 'undefined') {
         document.title = alertTitle(results[0].orders.length, baseTitleRef.current)
       }
@@ -166,40 +139,17 @@ export default function OrderStatusPage() {
     }
   }, [])
 
-  // 알림이 켜져 있으면 화면 꺼짐 방지를 잡고, 탭 전환·잠금 해제로 돌아올 때마다 다시 잡는다(브라우저가 자동으로 풀어서).
-  // 새로고침 뒤에는 오디오가 다시 잠겨 있으므로 화면을 누르는 순간 풀어 준다(iOS 자동재생 정책, listenForAudioUnlock).
-  // 돌아올 때는 오디오도 다시 깨운다 — iOS는 전화 등으로 끊긴('interrupted') 오디오를 스스로 되살리지 않는다
-  useEffect(() => {
-    if (!alertOn || typeof document === 'undefined') return
-    void acquireWakeLock()
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
-      void acquireWakeLock()
-      resumeAudio()
-    }
-    document.addEventListener('visibilitychange', onVisible)
-    const stopUnlock = listenForAudioUnlock()
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible)
-      stopUnlock()
-      releaseWakeLock()
-    }
-  }, [alertOn])
+  // 화면 꺼짐 방지·오디오 풀기(한 번 누르면)·다른 탭에서 끈 경우의 소리 정리는 앱 공통 StaffAlertWatcher가 한다.
+  // 여기서는 설정 화면(알림 설정)·다른 탭에서 켜고 끈 것을 스위치 표시에만 따라간다 — 알림 상태는 staffAlert의 저장값 하나뿐이다
+  useEffect(() => subscribeAlertPreference(setAlertOn), [])
 
-  // 버튼 클릭(사용자 동작) 안에서 오디오를 풀어야 iOS에서 소리가 난다 — 켜는 순간 한 번 울려 소리 크기도 확인하게 한다
+  // 버튼 클릭(사용자 동작) 안에서 오디오를 풀어야 iOS에서 소리가 난다 — 켜는 순간 한 번 울려 소리 크기도 확인하게 한다.
+  // 끄면 예약된 소리도 끊는다 — 멈춘 오디오에 남겨 두면 다음에 켤 때 한꺼번에 울린다(turnAlertsOff).
+  // 화면을 떠날 때는 끊지 않는다 — 이미 들어온 주문·호출의 소리는 끝까지 울려야 한다
   const toggleAlert = () => {
     const next = !alertOn
-    if (next) {
-      unlockAudio()
-      previewOrderAlert()
-    } else {
-      // 끄면 예약된 소리도 끊는다 — 멈춘 오디오에 남겨 두면 다음에 켤 때 한꺼번에 울린다.
-      // 화면을 떠날 때는 끊지 않는다 — 이미 들어온 주문·호출의 소리는 끝까지 울려야 한다
-      stopAlertSounds()
-      suspendAudio()
-    }
-    alertOnRef.current = next
-    setAlertPreferred(next)
+    if (next) turnAlertsOn()
+    else turnAlertsOff()
     setAlertOn(next)
   }
 
@@ -343,18 +293,15 @@ export default function OrderStatusPage() {
         ))}
       </div>
 
-      {/* 알림 켜기 — 소리는 사용자 동작 안에서만 풀린다(iOS). 켜 두면 화면 꺼짐도 막는다 */}
+      {/* 알림 빠른 켜고 끔 — 알림음 크기 등 세부 설정은 설정 화면(알림 설정)에서. 소리는 사용자 동작 안에서만 풀린다(iOS).
+          켜 두면 화면 꺼짐도 막는다. 예전 버튼은 꺼짐일 때가 초록이라 켜진 것처럼 보였다 — 색·글자·손잡이로 지금 상태를 보여 준다 */}
       <div className="flex justify-end px-10 pt-4">
-        <button
-          type="button"
-          onClick={toggleAlert}
-          aria-pressed={alertOn}
-          className={`rounded-xl px-4 py-2 text-base leading-[1.2] font-semibold tracking-[-0.04em] ${
-            alertOn ? 'bg-neutral-200 text-neutral-700' : 'bg-primary-300 text-neutral-50'
-          }`}
-        >
-          {alertOn ? '🔔 알림 켜짐' : '🔔 알림 켜기'}
-        </button>
+        <AlertSwitch
+          on={alertOn}
+          onToggle={toggleAlert}
+          label={alertOn ? '🔔 알림 ON' : '🔕 알림 OFF'}
+          ariaLabel="알림"
+        />
       </div>
 
       {actionError && (

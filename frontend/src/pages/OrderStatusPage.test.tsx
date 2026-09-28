@@ -2,7 +2,7 @@ import { Children, isValidElement, type ReactNode } from 'react'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFetch } from '../lib/apiFetch'
 import { approveOrder, cancelOrder, completeOrder, confirmOrderPayment, refundDone, restoreOrder } from '../lib/orderActions'
-import { playCallAlert, playOrderAlert, previewOrderAlert, stopAlertSounds, vibrate } from '../lib/staffAlert'
+import { playCallAlert, playOrderAlert, stopAlertSounds, turnAlertsOff, turnAlertsOn, vibrate } from '../lib/staffAlert'
 import OrderStatusPage from './OrderStatusPage'
 import type { OrderStatus, OrderSummary } from '../types/dashboard'
 
@@ -14,6 +14,7 @@ const hooks = vi.hoisted(() => ({
   // 효과가 돌려준 정리 함수 — unmount()가 한꺼번에 부른다
   cleanups: [] as (() => void)[],
   alertPreferred: false,
+  prefListener: null as ((on: boolean) => void) | null,
 }))
 vi.mock('react', async () => ({
   ...await vi.importActual<typeof import('react')>('react'),
@@ -53,13 +54,17 @@ vi.mock('../lib/staffAlert', () => ({
   listenForAudioUnlock: vi.fn(() => () => {}),
   playOrderAlert: vi.fn(),
   playCallAlert: vi.fn(),
-  previewOrderAlert: vi.fn(),
   releaseWakeLock: vi.fn(),
   resumeAudio: vi.fn(),
-  setAlertPreferred: vi.fn(),
   stopAlertSounds: vi.fn(),
+  // 설정 화면·다른 탭에서 켜고 끈 것을 흉내내려고 구독한 함수를 잡아 둔다
+  subscribeAlertPreference: vi.fn((listener: (on: boolean) => void) => {
+    hooks.prefListener = listener
+    return () => {}
+  }),
   suspendAudio: vi.fn(),
-  unlockAudio: vi.fn(),
+  turnAlertsOff: vi.fn(),
+  turnAlertsOn: vi.fn(),
   vibrate: vi.fn(),
 }))
 
@@ -75,6 +80,15 @@ type Props = {
   onConfirmPayment?: (orderId: number) => void
   order?: OrderSummary
   additionalOrder?: boolean
+  // 알림 빠른 전환(AlertSwitch)
+  on?: boolean
+  onToggle?: () => void
+  label?: string
+}
+
+/** 알림 빠른 전환 스위치 — 주문현황에는 하나뿐이다 */
+function alertSwitch() {
+  return collect(render(), p => !!p.onToggle)[0]
 }
 
 function render() {
@@ -370,101 +384,76 @@ async function pollWith(pending: OrderSummary[], calls: { callId: number; tableL
   await new Promise((resolve) => setTimeout(resolve, 10))
 }
 
-describe('새 주문·호출 알림', () => {
+describe('알림 — 주문현황의 몫(빠른 켜고 끔·탭 제목). 새 주문·호출 감시와 소리는 앱 공통 StaffAlertWatcher', () => {
   // 알림 켜기를 눌러 둔 운영자 기준 — 꺼져 있을 때는 아래 [알림 끔] 테스트가 본다
   beforeEach(() => { hooks.alertPreferred = true })
 
-  it('첫 조회는 이미 쌓여 있던 승인대기로 울리지 않는다', async () => {
-    await load()
-    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
-    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
-    expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
-  })
-
-  it('다음 폴링에 새 승인대기 주문이 생기면 주문 알림음·진동으로 알린다 — 호출 알림음은 울리지 않는다', async () => {
-    await load()
-    vi.mocked(apiFetch).mockClear()
-    await pollWith([order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL], [])
-    expect(vi.mocked(playOrderAlert)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
-    expect(vi.mocked(vibrate)).toHaveBeenCalledTimes(1)
-  })
-
-  it('새 직원호출은 호출 알림음으로 알린다 — 주문 알림음과는 다른 소리다', async () => {
-    await load()
-    vi.mocked(apiFetch).mockClear()
-    await pollWith(PENDING_APPROVAL, [{ callId: 9, tableLabel: 'A-1', reason: 'HELP', createdAt: '2026-09-21T19:00:00' }])
-    await vi.waitFor(() => expect(vi.mocked(playCallAlert)).toHaveBeenCalledTimes(1))
-    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
-  })
-
-  it('새 주문과 새 호출이 동시에 오면 두 소리를 모두 내고 진동은 한 번만 한다 — 겹치지 않게 잇는 건 staffAlert 몫', async () => {
+  it('새 주문·호출이 생겨도 주문현황은 직접 소리·진동을 내지 않는다 — 공통 감시와 겹쳐 두 번 울리지 않게', async () => {
     await load()
     vi.mocked(apiFetch).mockClear()
     await pollWith(
       [order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL],
       [{ callId: 9, tableLabel: 'A-1', reason: 'HELP', createdAt: '2026-09-21T19:00:00' }],
     )
-    expect(vi.mocked(playOrderAlert)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(playCallAlert)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(vibrate)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
+    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
+    expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
+    // 화면 표시(탭 제목의 승인대기 수)는 그대로 이 화면이 갱신한다
+    expect(fakeDocument.title).toContain('3')
   })
 
   it('화면을 떠나도 이미 예약된 알림음은 끊지 않는다 — 들어온 주문·호출의 소리는 끝까지 울린다', async () => {
     await load()
     unmount()
     expect(vi.mocked(stopAlertSounds)).not.toHaveBeenCalled()
+    expect(vi.mocked(turnAlertsOff)).not.toHaveBeenCalled()
   })
 
-  it('알림을 끄면 예약된 알림음을 끊는다', async () => {
+  it('알림을 끄면 예약된 알림음을 끊는다 — 끄기는 설정 화면과 같은 turnAlertsOff 한 곳', async () => {
     await load()
-    const toggle = collect(render(), p => !!p.onClick && Children.toArray(p.children).some(k => k === '🔔 알림 켜짐'))[0]
-    toggle!.onClick!()
-    expect(vi.mocked(stopAlertSounds)).toHaveBeenCalled()
+    alertSwitch()!.onToggle!()
+    expect(vi.mocked(turnAlertsOff)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(turnAlertsOn)).not.toHaveBeenCalled()
   })
 
-  it('알림을 켜면 확인음을 낸다 — 폴링용 주문 알림음이 아니라 오디오가 풀린 뒤 울리는 확인음', async () => {
+  it('알림을 켜면 확인음을 내는 turnAlertsOn — 폴링용 주문 알림음을 바로 부르지 않는다', async () => {
     hooks.alertPreferred = false
     await load()
-    const toggle = collect(render(), p => !!p.onClick && Children.toArray(p.children).some(k => k === '🔔 알림 켜기'))[0]
-    toggle!.onClick!()
-    expect(vi.mocked(previewOrderAlert)).toHaveBeenCalledTimes(1)
+    alertSwitch()!.onToggle!()
+    expect(vi.mocked(turnAlertsOn)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
   })
 
-  it('목록이 그대로면 울리지 않는다', async () => {
+  it('빠른 전환은 지금 상태를 글자로도 보여 준다 — 켜짐 "🔔 알림 ON", 꺼짐 "🔕 알림 OFF"', async () => {
     await load()
-    vi.mocked(apiFetch).mockClear()
-    await pollWith(PENDING_APPROVAL, [])
-    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
-    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
+    expect(alertSwitch()).toMatchObject({ on: true, label: '🔔 알림 ON' })
+    alertSwitch()!.onToggle!()
+    expect(alertSwitch()).toMatchObject({ on: false, label: '🔕 알림 OFF' })
   })
 
-  it('알림을 끄면 새 주문이 와도 소리·진동을 내지 않는다 — 탭 제목 숫자는 그대로 갱신한다', async () => {
+  it('설정 화면·다른 탭에서 끄면 스위치가 따라서 꺼진다 — 소리 정리는 공통 감시(StaffAlertWatcher) 몫', async () => {
     await load()
-    // 버튼으로 끈다 — refetchAll은 마운트 때 만든 함수라 상태가 아니라 ref로 최신 값을 봐야 한다
-    const toggle = collect(render(), p => !!p.onClick && Children.toArray(p.children).some(k => k === '🔔 알림 켜짐'))[0]
-    toggle!.onClick!()
+    hooks.prefListener!(false)
+    expect(alertSwitch()).toMatchObject({ on: false, label: '🔕 알림 OFF' })
+    expect(vi.mocked(stopAlertSounds)).not.toHaveBeenCalled()
+  })
+
+  it('설정 화면·다른 탭에서 켜면 스위치가 따라서 켜진다', async () => {
+    hooks.alertPreferred = false
+    await load()
+    hooks.prefListener!(true)
+    expect(alertSwitch()).toMatchObject({ on: true, label: '🔔 알림 ON' })
+  })
+
+  it('알림을 꺼도 탭 제목 숫자는 그대로 갱신한다', async () => {
+    await load()
+    alertSwitch()!.onToggle!()
     vi.mocked(apiFetch).mockClear()
-    vi.mocked(playOrderAlert).mockClear()
     await pollWith([order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL], [])
-    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
-    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
-    expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
     expect(fakeDocument.title).toContain('3')
   })
 
-  it('처음부터 알림이 꺼져 있으면 새 주문에도 울리지 않는다', async () => {
-    hooks.alertPreferred = false
-    await load()
-    vi.mocked(apiFetch).mockClear()
-    await pollWith([order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL], [])
-    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
-    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
-    expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
-  })
-
-  it('화면을 떠난 뒤 도착한 폴링 응답은 탭 제목을 바꾸지도, 울리지도 않는다', async () => {
+  it('화면을 떠난 뒤 도착한 폴링 응답은 탭 제목을 바꾸지 않는다', async () => {
     await load()
     vi.mocked(apiFetch).mockClear()
     // 응답을 붙잡아 두고, 요청이 나간 상태에서 화면을 떠난다

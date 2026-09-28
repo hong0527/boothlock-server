@@ -62,18 +62,40 @@ describe('acquireWakeLock', () => {
 })
 
 // 알림음 — 실제 소리 대신 "무엇을 언제 예약했는가"만 보는 최소 가짜 AudioContext
-type FakeOsc = { type: string; startAt: number; stopAt: number; disconnect: ReturnType<typeof vi.fn> }
+type FakeOsc = {
+  type: string; frequency: { value: number }; startAt: number; stopAt: number; disconnect: ReturnType<typeof vi.fn>
+}
+/** 게인 노드 — 마지막으로 정해진 값만 기억한다(마스터 게인 = 알림음 크기 확인용) */
+type FakeGain = { gain: { value: number } }
 
 function fakeAudio(state: 'running' | 'suspended') {
   const oscillators: FakeOsc[] = []
+  const gains: FakeGain[] = []
   const passThrough = (node: unknown) => node
+  const param = () => ({ value: 0 })
   const ctx = {
     state: state as string,
     currentTime: 0,
     destination: {},
     // 사용자 동작 밖의 resume()처럼 기본은 아무것도 풀지 않는다
     resume: vi.fn(() => Promise.resolve()),
-    createGain: () => ({ gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect: passThrough, disconnect() {} }),
+    suspend: vi.fn(() => Promise.resolve()),
+    createGain: () => {
+      const node = {
+        gain: {
+          value: 1,
+          setValueAtTime(v: number) { node.gain.value = v },
+          setTargetAtTime(v: number) { node.gain.value = v },
+          exponentialRampToValueAtTime() {},
+        },
+        connect: passThrough, disconnect() {},
+      }
+      gains.push(node)
+      return node
+    },
+    createDynamicsCompressor: () => ({
+      threshold: param(), knee: param(), ratio: param(), attack: param(), release: param(), connect: passThrough,
+    }),
     createBiquadFilter: () => ({ type: '', frequency: { value: 0 }, connect: passThrough }),
     createOscillator: () => {
       const osc = {
@@ -87,7 +109,18 @@ function fakeAudio(state: 'running' | 'suspended') {
     },
   }
   vi.stubGlobal('window', { AudioContext: function FakeAudioContext() { return ctx } })
-  return { ctx, oscillators }
+  return { ctx, oscillators, gains }
+}
+
+/** 새로고침을 흉내내는 localStorage — 모듈을 다시 불러와도(load) 값이 남는다 */
+function fakeLocalStorage() {
+  const store = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => { store.set(k, v) },
+    removeItem: (k: string) => { store.delete(k) },
+  })
+  return store
 }
 
 describe('알림음', () => {
@@ -142,5 +175,115 @@ describe('알림음', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(ctx.state).toBe('running')
     expect(oscillators).toHaveLength(0)
+  })
+
+  it('주문음은 올라가는 두 음을 두 번 — "띠링↗ · 띠링↗"(1초 안), 호출음은 내려가는 사각파라 음높이 방향부터 다르다', async () => {
+    const { oscillators } = fakeAudio('running')
+    const { playCallAlert, playOrderAlert } = await load()
+    playOrderAlert()
+    // 기음만(배음 제외) 시작 순서대로 — 배음은 기음의 2·3배라 가장 낮은 것만 남긴다
+    const fundamentals = (list: FakeOsc[]) => {
+      const byStart = new Map<number, number>()
+      for (const o of list) byStart.set(o.startAt, Math.min(byStart.get(o.startAt) ?? Infinity, o.frequency.value))
+      return [...byStart.entries()].sort((a, b) => a[0] - b[0]).map(([, f]) => f)
+    }
+    const order = oscillators.filter(o => o.type === 'sine')
+    const orderNotes = fundamentals(order)
+    expect(orderNotes).toHaveLength(4)
+    expect(orderNotes[1]).toBeGreaterThan(orderNotes[0])
+    expect(orderNotes[3]).toBeGreaterThan(orderNotes[2])
+    expect(Math.max(...order.map(o => o.stopAt))).toBeLessThan(1)
+
+    oscillators.length = 0
+    playCallAlert()
+    const callNotes = fundamentals(oscillators.filter(o => o.type === 'square'))
+    expect(callNotes[1]).toBeLessThan(callNotes[0])
+    expect(Math.max(...callNotes)).toBeLessThan(Math.min(...orderNotes))
+  })
+})
+
+describe('알림음 크기', () => {
+  it('기본값은 70%이고, 그때 마스터 게인은 1(예전 크기)', async () => {
+    const { gains } = fakeAudio('running')
+    const { DEFAULT_ALERT_VOLUME, getAlertVolume, playOrderAlert } = await load()
+    expect(getAlertVolume()).toBe(70)
+    expect(DEFAULT_ALERT_VOLUME).toBe(70)
+    playOrderAlert()
+    // 처음 만든 게인이 마스터(출구)다 — 그 뒤 것들은 음 하나하나의 봉투
+    expect(gains[0].gain.value).toBeCloseTo(1)
+  })
+
+  it('크기를 바꾸면 다음 알림음부터 반영되고, 주문음·호출음이 같은 크기를 탄다', async () => {
+    const { gains } = fakeAudio('running')
+    const { playCallAlert, playOrderAlert, setAlertVolume } = await load()
+    playOrderAlert()
+    const master = gains[0]
+    setAlertVolume(35)
+    expect(master.gain.value).toBeCloseTo(Math.pow(35 / 70, 1.5))
+    playCallAlert()
+    expect(master.gain.value).toBeCloseTo(Math.pow(35 / 70, 1.5))
+    setAlertVolume(0)
+    playOrderAlert()
+    expect(master.gain.value).toBe(0)
+  })
+
+  it('크기는 0~100으로 자르고 저장해 새로고침 뒤에도 남는다 — 알림을 꺼도 그대로', async () => {
+    fakeLocalStorage()
+    fakeAudio('running')
+    const first = await load()
+    first.setAlertVolume(150)
+    expect(first.getAlertVolume()).toBe(100)
+    first.setAlertVolume(-5)
+    expect(first.getAlertVolume()).toBe(0)
+    first.setAlertVolume(40)
+    first.turnAlertsOff()
+    const reloaded = await load()
+    expect(reloaded.getAlertVolume()).toBe(40)
+    expect(reloaded.isAlertPreferred()).toBe(false)
+  })
+
+  it('저장값이 망가져 있으면 기본값', async () => {
+    const store = fakeLocalStorage()
+    store.set('boothlock_staff_alert_volume', 'abc')
+    const { getAlertVolume } = await load()
+    expect(getAlertVolume()).toBe(70)
+  })
+})
+
+describe('알림 켜고 끔 — 설정 화면과 주문현황이 같은 값 하나를 쓴다', () => {
+  it('turnAlertsOn은 오디오를 풀고 확인음을 내며 켜짐으로 저장, turnAlertsOff는 소리를 끊고 재우며 꺼짐으로 저장', async () => {
+    const { ctx, oscillators } = fakeAudio('running')
+    const { isAlertPreferred, turnAlertsOff, turnAlertsOn } = await load()
+    turnAlertsOn()
+    expect(isAlertPreferred()).toBe(true)
+    expect(oscillators.length).toBeGreaterThan(0)
+    turnAlertsOff()
+    expect(isAlertPreferred()).toBe(false)
+    expect(oscillators.every(o => o.disconnect.mock.calls.length > 0)).toBe(true)
+    expect(ctx.suspend).toHaveBeenCalledTimes(1)
+  })
+
+  it('한 화면에서 바꾸면 구독한 다른 화면이 바로 안다 — 해제하면 더는 안 알린다', async () => {
+    fakeAudio('running')
+    const { subscribeAlertPreference, turnAlertsOff, turnAlertsOn } = await load()
+    const seen: boolean[] = []
+    const stop = subscribeAlertPreference(on => seen.push(on))
+    turnAlertsOn()
+    turnAlertsOff()
+    stop()
+    turnAlertsOn()
+    expect(seen).toEqual([true, false])
+  })
+
+  it('다른 탭에서 바꾸면 storage 이벤트로 안다(알림 키만)', async () => {
+    const listeners: ((e: { key: string; newValue: string | null }) => void)[] = []
+    vi.stubGlobal('window', { addEventListener: (_t: string, l: never) => listeners.push(l), removeEventListener() {} })
+    const { subscribeAlertPreference } = await load()
+    const seen: boolean[] = []
+    subscribeAlertPreference(on => seen.push(on))
+    listeners.forEach(l => l({ key: 'boothlock_staff_alert_volume', newValue: '10' }))
+    listeners.forEach(l => l({ key: 'boothlock_staff_alert', newValue: 'off' }))
+    listeners.forEach(l => l({ key: 'boothlock_staff_alert', newValue: 'on' }))
+    expect(seen).toEqual([false, true])
   })
 })
