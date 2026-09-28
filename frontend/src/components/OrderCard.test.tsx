@@ -103,3 +103,17 @@ describe('주문 카드 머리', () => {
     expect(buttonsOf(order('RECEIVED', 'UNPAID'), true)).toContain('미결제')
   })
 })
+
+describe('추가주문 배지', () => {
+  it('additionalOrder가 true면 배지를 그린다', () => {
+    const tree = OrderCard({
+      order: order('RECEIVED', 'UNPAID'), now: Date.parse('2026-09-21T18:10:00'), pending: false,
+      onComplete: vi.fn(), onCancel: vi.fn(), onRestore: vi.fn(), additionalOrder: true,
+    })
+    expect(labels(tree)).toContain('추가주문')
+  })
+
+  it('additionalOrder를 안 주면(기본값) 배지가 없다', () => {
+    expect(buttonsOf(order('RECEIVED', 'UNPAID'), true)).not.toContain('추가주문')
+  })
+})

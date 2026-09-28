@@ -3,7 +3,7 @@ import OrderCard from '../components/OrderCard'
 import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
 import { getAuthToken, getStaff } from '../lib/auth'
-import { orderedForActive, orderedForTab } from '../lib/dashboardOrders'
+import { additionalOrderIds, orderedForActive, orderedForTab } from '../lib/dashboardOrders'
 import { alertTitle, diffArrivals, snapshotOf, type ArrivalSnapshot } from '../lib/newArrivals'
 import { createPollGuard } from '../lib/pollGuard'
 import {
@@ -211,6 +211,13 @@ export default function OrderStatusPage() {
   const tabCount = (tab: ViewTab) =>
     tab === 'ACTIVE' ? counts.PENDING_APPROVAL + counts.RECEIVED : counts[tab]
 
+  // "추가 주문" 배지 — 지금 불러온 4개 상태 전체를 합쳐서 판정한다(activeTab 안에서만 보면 같은 세션의
+  // 첫 주문이 다른 탭에 있을 때 놓친다). 근거는 additionalOrderIds 주석 참고
+  const additionalIds = useMemo(
+    () => additionalOrderIds(Object.values(ordersByStatus).flat()),
+    [ordersByStatus],
+  )
+
   // O15 호출 확인 — 성공하면 서버 calls에서 빠진다. 폴링을 기다리지 않고 바로 지운다(멱등이라 중복 눌림도 안전)
   const acknowledgeCall = async (callId: number) => {
     try {
@@ -391,6 +398,7 @@ export default function OrderStatusPage() {
             onCancel={cancelOrder}
             onRestore={restoreOrder}
             onRefundDone={isAdmin ? refundDone : undefined}
+            additionalOrder={additionalIds.has(order.orderId)}
           />
         ))}
         {visibleOrders.length === 0 && !error && (

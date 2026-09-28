@@ -32,6 +32,32 @@ export function orderedForActive(pending: OrderSummary[], received: OrderSummary
   return [...orderedForTab('PENDING_APPROVAL', pending), ...orderedForTab('RECEIVED', received)]
 }
 
+/**
+ * 같은 테이블 세션(sessionId)에서 두 번째 이후 주문의 orderId 집합 — "추가 주문" 배지용.
+ *
+ * 자릿세(부스별 설정, 명세서 밖)가 세션의 첫 메뉴 주문에만 붙어서, 같은 테이블인데 한 카드엔 자릿세가
+ * 있고 다른 카드엔 없어 서로 무관한 주문처럼 보일 수 있다 — 그중 나중 주문임을 표시해 헷갈리지 않게 한다.
+ *
+ * 판정은 지금 화면에 불러온 주문들(주문현황의 진행·완료·취소 전체) 안에서만 이뤄진다. sessionId가 없는
+ * 수기 주문은 제외한다.
+ */
+export function additionalOrderIds(orders: readonly OrderSummary[]): ReadonlySet<number> {
+  const bySession = new Map<number, OrderSummary[]>()
+  for (const order of orders) {
+    if (order.sessionId == null) continue
+    const group = bySession.get(order.sessionId)
+    if (group) group.push(order)
+    else bySession.set(order.sessionId, [order])
+  }
+  const result = new Set<number>()
+  for (const group of bySession.values()) {
+    if (group.length < 2) continue
+    const sorted = [...group].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    for (const order of sorted.slice(1)) result.add(order.orderId)
+  }
+  return result
+}
+
 /** 주문 금액 표시 — "12,000원". 운영자가 은행 앱 입금액과 바로 대조하는 숫자라 카드·확인창이 같은 형식을 쓴다 */
 export function formatWon(amount: number): string {
   return `${amount.toLocaleString('ko-KR')}원`

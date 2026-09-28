@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { confirmPaymentMessage, formatWon, orderedForTab } from './dashboardOrders'
+import { additionalOrderIds, confirmPaymentMessage, formatWon, orderedForTab } from './dashboardOrders'
 import type { OrderStatus, OrderSummary } from '../types/dashboard'
 
 /** 서버(O10)가 주는 순서를 흉내낸다 — 최신 주문이 먼저 */
-function order(orderNo: string, createdAt: string, status: OrderStatus = 'RECEIVED'): OrderSummary {
+function order(
+  orderNo: string,
+  createdAt: string,
+  status: OrderStatus = 'RECEIVED',
+  sessionId: number | null = 1,
+): OrderSummary {
   return {
     orderId: Number(orderNo.replace(/\D/g, '')),
     orderNo,
@@ -15,7 +20,7 @@ function order(orderNo: string, createdAt: string, status: OrderStatus = 'RECEIV
     createdAt,
     tableLabel: 'A-1',
     manual: false,
-    sessionId: 1,
+    sessionId,
   }
 }
 
@@ -58,6 +63,56 @@ describe('orderedForTab', () => {
     const one = [order('A-1', '2026-09-21T18:10:00')]
     expect(orderedForTab('RECEIVED', one).map((o) => o.orderNo)).toEqual(['A-1'])
     expect(orderedForTab('DONE', one).map((o) => o.orderNo)).toEqual(['A-1'])
+  })
+})
+
+describe('additionalOrderIds', () => {
+  it('같은 세션에 주문이 하나뿐이면 추가 주문이 아니다', () => {
+    const orders = [order('A-1', '2026-09-21T18:10:00', 'RECEIVED', 1)]
+    expect(additionalOrderIds(orders).size).toBe(0)
+  })
+
+  it('같은 세션의 두 번째 이후 주문만 추가 주문으로 잡는다 — 응답 순서와 무관하게 생성 시각으로 판정', () => {
+    const orders = [
+      order('A-2', '2026-09-21T18:20:00', 'RECEIVED', 1), // 나중 주문이 응답에서 먼저 와도
+      order('A-1', '2026-09-21T18:10:00', 'RECEIVED', 1), // 생성 시각 기준으로 이게 첫 주문
+    ]
+    const ids = additionalOrderIds(orders)
+    expect(ids.has(2)).toBe(true)
+    expect(ids.has(1)).toBe(false)
+  })
+
+  it('탭이 갈려 있어도(진행+완료 합친 배열) 같은 세션이면 잡는다', () => {
+    const orders = [
+      order('A-1', '2026-09-21T17:00:00', 'DONE', 1),
+      order('A-2', '2026-09-21T18:00:00', 'RECEIVED', 1),
+    ]
+    expect([...additionalOrderIds(orders)]).toEqual([2])
+  })
+
+  it('서로 다른 세션이면 각자 첫 주문이라 아무도 추가 주문이 아니다', () => {
+    const orders = [
+      order('A-1', '2026-09-21T18:10:00', 'RECEIVED', 1),
+      order('B-1', '2026-09-21T18:15:00', 'RECEIVED', 2),
+    ]
+    expect(additionalOrderIds(orders).size).toBe(0)
+  })
+
+  it('수기 주문(sessionId 없음)은 여러 건이어도 대상에서 빠진다', () => {
+    const orders = [
+      order('M-1', '2026-09-21T18:10:00', 'RECEIVED', null),
+      order('M-2', '2026-09-21T18:20:00', 'RECEIVED', null),
+    ]
+    expect(additionalOrderIds(orders).size).toBe(0)
+  })
+
+  it('세 번째 주문도 잡는다', () => {
+    const orders = [
+      order('A-1', '2026-09-21T18:00:00', 'RECEIVED', 1),
+      order('A-2', '2026-09-21T18:10:00', 'RECEIVED', 1),
+      order('A-3', '2026-09-21T18:20:00', 'RECEIVED', 1),
+    ]
+    expect([...additionalOrderIds(orders)].sort()).toEqual([2, 3])
   })
 })
 
