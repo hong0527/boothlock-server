@@ -2,7 +2,7 @@ import { Children, isValidElement, type ReactNode } from 'react'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFetch } from '../lib/apiFetch'
 import { approveOrder, cancelOrder, completeOrder, confirmOrderPayment, refundDone, restoreOrder } from '../lib/orderActions'
-import { playBeep, vibrate } from '../lib/staffAlert'
+import { playCallAlert, playOrderAlert, previewOrderAlert, stopAlertSounds, vibrate } from '../lib/staffAlert'
 import OrderStatusPage from './OrderStatusPage'
 import type { OrderStatus, OrderSummary } from '../types/dashboard'
 
@@ -51,10 +51,13 @@ vi.mock('../lib/staffAlert', () => ({
   acquireWakeLock: vi.fn(),
   isAlertPreferred: () => hooks.alertPreferred,
   listenForAudioUnlock: vi.fn(() => () => {}),
-  playBeep: vi.fn(),
+  playOrderAlert: vi.fn(),
+  playCallAlert: vi.fn(),
+  previewOrderAlert: vi.fn(),
   releaseWakeLock: vi.fn(),
   resumeAudio: vi.fn(),
   setAlertPreferred: vi.fn(),
+  stopAlertSounds: vi.fn(),
   suspendAudio: vi.fn(),
   unlockAudio: vi.fn(),
   vibrate: vi.fn(),
@@ -370,30 +373,68 @@ describe('새 주문·호출 알림', () => {
 
   it('첫 조회는 이미 쌓여 있던 승인대기로 울리지 않는다', async () => {
     await load()
-    expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
+    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
     expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
   })
 
-  it('다음 폴링에 새 승인대기 주문이 생기면 소리·진동으로 알린다', async () => {
+  it('다음 폴링에 새 승인대기 주문이 생기면 주문 알림음·진동으로 알린다 — 호출 알림음은 울리지 않는다', async () => {
     await load()
     vi.mocked(apiFetch).mockClear()
     await pollWith([order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL], [])
-    expect(vi.mocked(playBeep)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(playOrderAlert)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
     expect(vi.mocked(vibrate)).toHaveBeenCalledTimes(1)
   })
 
-  it('새 직원호출도 알린다', async () => {
+  it('새 직원호출은 호출 알림음으로 알린다 — 주문 알림음과는 다른 소리다', async () => {
     await load()
     vi.mocked(apiFetch).mockClear()
     await pollWith(PENDING_APPROVAL, [{ callId: 9, tableLabel: 'A-1', reason: 'HELP', createdAt: '2026-09-21T19:00:00' }])
-    await vi.waitFor(() => expect(vi.mocked(playBeep)).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(vi.mocked(playCallAlert)).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
+  })
+
+  it('새 주문과 새 호출이 동시에 오면 두 소리를 모두 내고 진동은 한 번만 한다 — 겹치지 않게 잇는 건 staffAlert 몫', async () => {
+    await load()
+    vi.mocked(apiFetch).mockClear()
+    await pollWith(
+      [order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL],
+      [{ callId: 9, tableLabel: 'A-1', reason: 'HELP', createdAt: '2026-09-21T19:00:00' }],
+    )
+    expect(vi.mocked(playOrderAlert)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(playCallAlert)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(vibrate)).toHaveBeenCalledTimes(1)
+  })
+
+  it('화면을 떠나도 이미 예약된 알림음은 끊지 않는다 — 들어온 주문·호출의 소리는 끝까지 울린다', async () => {
+    await load()
+    unmount()
+    expect(vi.mocked(stopAlertSounds)).not.toHaveBeenCalled()
+  })
+
+  it('알림을 끄면 예약된 알림음을 끊는다', async () => {
+    await load()
+    const toggle = collect(render(), p => !!p.onClick && Children.toArray(p.children).some(k => k === '🔔 알림 켜짐'))[0]
+    toggle!.onClick!()
+    expect(vi.mocked(stopAlertSounds)).toHaveBeenCalled()
+  })
+
+  it('알림을 켜면 확인음을 낸다 — 폴링용 주문 알림음이 아니라 오디오가 풀린 뒤 울리는 확인음', async () => {
+    hooks.alertPreferred = false
+    await load()
+    const toggle = collect(render(), p => !!p.onClick && Children.toArray(p.children).some(k => k === '🔔 알림 켜기'))[0]
+    toggle!.onClick!()
+    expect(vi.mocked(previewOrderAlert)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
   })
 
   it('목록이 그대로면 울리지 않는다', async () => {
     await load()
     vi.mocked(apiFetch).mockClear()
     await pollWith(PENDING_APPROVAL, [])
-    expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
+    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
   })
 
   it('알림을 끄면 새 주문이 와도 소리·진동을 내지 않는다 — 탭 제목 숫자는 그대로 갱신한다', async () => {
@@ -402,9 +443,10 @@ describe('새 주문·호출 알림', () => {
     const toggle = collect(render(), p => !!p.onClick && Children.toArray(p.children).some(k => k === '🔔 알림 켜짐'))[0]
     toggle!.onClick!()
     vi.mocked(apiFetch).mockClear()
-    vi.mocked(playBeep).mockClear()
+    vi.mocked(playOrderAlert).mockClear()
     await pollWith([order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL], [])
-    expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
+    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
     expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
     expect(fakeDocument.title).toContain('3')
   })
@@ -414,7 +456,8 @@ describe('새 주문·호출 알림', () => {
     await load()
     vi.mocked(apiFetch).mockClear()
     await pollWith([order('P-3', '2026-09-21T19:00:00', 'PENDING_APPROVAL'), ...PENDING_APPROVAL], [])
-    expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
+    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
     expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
   })
 
@@ -439,7 +482,8 @@ describe('새 주문·호출 알림', () => {
     release()
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(fakeDocument.title).toBe('부스락')
-    expect(vi.mocked(playBeep)).not.toHaveBeenCalled()
+    expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
+    expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
     expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
   })
 })
