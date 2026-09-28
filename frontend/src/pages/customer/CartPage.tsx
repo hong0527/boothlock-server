@@ -1,18 +1,32 @@
 import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
+import { PersonIcon } from '../../components/customer/icons'
+import StaffCallConfirmModal from '../../components/customer/StaffCallConfirmModal'
 import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { useCart } from '../../context/CartContext'
 import { assetUrl } from '../../lib/apiBase'
+import { useStaffCallModal } from '../../lib/useStaffCallModal'
 
 export default function CartPage() {
   const navigate = useNavigate()
   const { items, totalAmount, updateQty, removeItem } = useCart()
+  const { callMessage, showCallConfirm, openCallConfirm, closeCallConfirm, handleCallStaff } = useStaffCallModal('HELP')
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-neutral-50">
-      <div className="flex h-[114px] items-center bg-primary-50 px-4">
-        <BackButton />
-        <h1 className="ml-3 text-heading-1 text-neutral-900">장바구니</h1>
+      <div className="flex h-[114px] items-center justify-between bg-primary-50 px-4">
+        <div className="flex items-center">
+          <BackButton />
+          <h1 className="ml-3 text-heading-1 text-neutral-900">장바구니</h1>
+        </div>
+        <button
+          type="button"
+          onClick={openCallConfirm}
+          className="flex flex-col items-center gap-0.5 px-2 text-[13px] leading-[1.2] font-medium tracking-[-0.52px] text-neutral-900"
+        >
+          <PersonIcon className="size-[24px]" />
+          직원 호출
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-6">
@@ -65,6 +79,7 @@ export default function CartPage() {
         {items.length === 0 && (
           <p className="py-20 text-center text-body-1 text-neutral-400">장바구니가 비어있어요.</p>
         )}
+        {callMessage && <p className="pt-4 text-center text-body-3 text-neutral-400">{callMessage}</p>}
       </div>
 
       <div className="border-t border-neutral-200 bg-neutral-50 px-6 pt-5 pb-8">
@@ -81,6 +96,10 @@ export default function CartPage() {
           주문하기
         </button>
       </div>
+
+      {showCallConfirm && (
+        <StaffCallConfirmModal onConfirm={handleCallStaff} onCancel={closeCallConfirm} />
+      )}
     </div>
   )
 }

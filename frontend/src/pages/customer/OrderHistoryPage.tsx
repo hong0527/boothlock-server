@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
+import { PersonIcon } from '../../components/customer/icons'
+import StaffCallConfirmModal from '../../components/customer/StaffCallConfirmModal'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { createPollGuard } from '../../lib/pollGuard'
 import { customerOrderBadge, type CustomerOrderBadge } from '../../lib/customerOrderStatus'
 import { getSessionInfo } from '../../lib/customerSession'
 import { displayTableLabel } from '../../lib/tableLabel'
 import { formatClockTime } from '../../lib/time'
+import { useStaffCallModal } from '../../lib/useStaffCallModal'
 import type { OrderSummary } from '../../types/customer'
 import { onResume } from '../../lib/onResume'
 
@@ -25,6 +28,7 @@ export default function OrderHistoryPage() {
   const sessionInfo = getSessionInfo()
   const [orders, setOrders] = useState<OrderSummary[]>([])
   const [error, setError] = useState<string | null>(null)
+  const { callMessage, showCallConfirm, openCallConfirm, closeCallConfirm, handleCallStaff } = useStaffCallModal('HELP')
 
   const pollGuard = useRef(createPollGuard())
 
@@ -58,13 +62,24 @@ export default function OrderHistoryPage() {
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-neutral-50">
-      <div className="flex h-[114px] items-center bg-primary-50 px-4">
-        <BackButton />
-        <h1 className="ml-3 text-heading-1 text-neutral-900">주문내역</h1>
+      <div className="flex h-[114px] items-center justify-between bg-primary-50 px-4">
+        <div className="flex items-center">
+          <BackButton />
+          <h1 className="ml-3 text-heading-1 text-neutral-900">주문내역</h1>
+        </div>
+        <button
+          type="button"
+          onClick={openCallConfirm}
+          className="flex flex-col items-center gap-0.5 px-2 text-[13px] leading-[1.2] font-medium tracking-[-0.52px] text-neutral-900"
+        >
+          <PersonIcon className="size-[24px]" />
+          직원 호출
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-[18px] py-6">
         {error && <p className="pb-4 text-body-3 text-red-600">{error}</p>}
+        {callMessage && <p className="pb-4 text-center text-body-3 text-neutral-400">{callMessage}</p>}
 
         <div className="flex flex-col gap-4">
           {orders.map((order) => {
@@ -127,6 +142,10 @@ export default function OrderHistoryPage() {
           확인
         </button>
       </div>
+
+      {showCallConfirm && (
+        <StaffCallConfirmModal onConfirm={handleCallStaff} onCancel={closeCallConfirm} />
+      )}
     </div>
   )
 }
