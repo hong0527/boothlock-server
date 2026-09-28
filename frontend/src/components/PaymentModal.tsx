@@ -214,13 +214,29 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 로컬 취소 대기(adjustments)는 반영하지 않는다: 확인 때 어느 줄이 먼저 서버에 가는지 모르므로 서버 현재 상태로 본다
   const ordersWithMenu = new Set(rawItems.filter((i) => i.itemType === 'MENU').map((i) => i.orderId))
 
-  // 아직 서버에 반영 안 된 로컬 변경(adjustments)을 화면 표시용으로만 얹는다 — 실제 서버 값(rawItems)은 안 바뀐다
-  const items: FlatItem[] = rawItems.flatMap((item) => {
+  // 아직 서버에 반영 안 된 로컬 변경(adjustments)을 화면 표시용으로만 얹는다 — 실제 서버 값(rawItems)은 안 바뀐다.
+  // 취소 대기도 줄을 지우지 않고 수량 0으로 남긴다 — 줄이 사라지면 뭘 지웠는지가 화면에서 증발해 되돌릴 단서가 없다
+  const items: FlatItem[] = rawItems.map((item) => {
     const adj = adjustments[itemKey(item.orderId, item.itemId)]
-    if (!adj) return [item]
-    if ('canceled' in adj) return []
-    return [{ ...item, qty: adj.qty }]
+    if (!adj) return item
+    return { ...item, qty: 'canceled' in adj ? 0 : adj.qty }
   })
+
+  /** 변경 전 서버 수량 — "+"가 방금 줄인 만큼을 되돌릴 때 어디까지 올릴 수 있는지의 상한 */
+  const serverQtyOf = (orderId: number, itemId: number) =>
+    rawItems.find((i) => i.orderId === orderId && i.itemId === itemId)?.qty ?? 0
+
+  // 다른 운영자가 그 주문을 취소·거절해 항목이 목록에서 사라지면 그 항목의 변경은 갈 곳이 없다 — 칩도 안 뜨는데
+  // 확인 때 404·409로 커밋 전체가 막혀 X로 다 버리는 수밖에 없어진다. 사라진 항목의 변경은 여기서 버린다
+  useEffect(() => {
+    setAdjustments((prev) => {
+      const live = Object.fromEntries(
+        Object.entries(prev).filter(([key]) => rawItems.some((i) => itemKey(i.orderId, i.itemId) === key)),
+      )
+      return Object.keys(live).length === Object.keys(prev).length ? prev : live
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders])
 
   // 같은 메뉴가 서로 다른 주문에 나뉘어 있어도(수기 확인을 여러 번 눌렀거나 손님이 추가 주문) 화면엔 한 줄
   // 합계로 보여준다. orders(→ items)는 findBySessionIdOrderByCreatedAtDescIdDesc라 최신 주문이 먼저 온다 —
@@ -262,6 +278,18 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   const visibleMenus = menus.filter(
     (m) => m.visible && (category === 'ALL' ? m.category !== 'ETC' : m.category === category),
   )
+
+  // 확인 전 변경(adjustments)을 담은 메뉴(draft)와 같은 줄에 칩으로 보여준다 — "+"만 칩으로 보이고 "-"는
+  // 숫자만 조용히 줄던 비대칭을 없앤다. 주문내역 줄(groupedItems)을 그대로 따라가므로 칩의 증감이 그 줄의
+  // 수량 변화와 항상 같다. ×는 그 줄의 변경을 통째로 되돌린다
+  const adjustmentChips = groupedItems.flatMap((group) => {
+    const keys = group.entries.map((e) => itemKey(e.orderId, e.itemId)).filter((key) => adjustments[key] != null)
+    if (keys.length === 0) return []
+    const serverQty = group.entries.reduce((sum, e) => sum + serverQtyOf(e.orderId, e.itemId), 0)
+    const delta = group.qty - serverQty
+    if (delta === 0) return []
+    return [{ id: group.key, name: group.menuName, delta, gone: group.qty === 0, keys }]
+  })
 
   // 응답을 못 받은 경우(인터넷 끊김·제한 시간 초과) — 서버에는 반영됐을 수도 있어서 목록을 새로 읽고 확인을 부탁한다.
   // 로그인 만료(apiFetch가 이미 로그인 화면으로 보내는 중)면 문구를 띄우지 않는다
@@ -353,16 +381,57 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     return true
   }
 
-  // 주문내역 줄의 "+"는 메뉴 버튼을 다시 누르는 것과 완전히 같다 — 기존 주문 수량을 늘리는 게 아니라
-  // draft(담은 메뉴)에 1개 더 담는다. 그래야 "담은 메뉴"에 바로 보여서 확인 전에 뭘 더 시켰는지 한눈에
-  // 보이고, 이미 등록된 주문은 건드리지 않아 카드가 하나로 뭉개지지 않는다(위 handleAddMenu와 같은 이유).
-  // 품절됐으면 메뉴 버튼처럼 막는다.
+  /**
+   * "+"가 되돌릴 대상 — "-"로 줄여둔(취소 대기 포함) 항목. 늘려둔 항목(자릿세 인원 +)은 제외한다:
+   * 포함하면 자릿세를 2에서 3으로 올린 뒤 한 번 더 누를 때 "되돌리기"로 잡혀 다시 2로 내려가, 3 이상으로는
+   * 영영 못 올리고 자릿세를 덜 받게 된다
+   */
+  const reducedEntryOf = (group: GroupedItem) =>
+    group.entries.find((e) => {
+      const adj = adjustments[itemKey(e.orderId, e.itemId)]
+      return adj != null && ('canceled' in adj || adj.qty < serverQtyOf(e.orderId, e.itemId))
+    })
+
+  /** 아직 남아 있는(0이 아닌) 가장 최근 항목 — 취소 대기로 0이 된 줄을 또 줄이려 들지 않게 한다 */
+  const reducibleEntryOf = (group: GroupedItem) => group.entries.find((e) => e.qty > 0) ?? group.entries[0]
+
+  const putAdjustment = (key: string, adj: Adjustment) => setAdjustments((prev) => ({ ...prev, [key]: adj }))
+
+  /**
+   * 수량을 바꾸되, 서버 수량과 똑같아지면 변경 기록 자체를 지운다 — 안 지우면 확인 때 의미 없는 요청이 나가고
+   * 칩도 안 뜬다(증감 0). 비교가 `>=`가 아니라 `===`인 이유: 자릿세를 2에서 4로 올려둔 뒤 한 번 내리면 3인데,
+   * `>=`면 3도 "되돌아왔다"로 보고 지워 버려 4에서 2로 건너뛴다
+   */
+  const setQty = (key: string, qty: number, serverQty: number) =>
+    setAdjustments((prev) => {
+      const next = { ...prev }
+      if (qty === serverQty) delete next[key]
+      else next[key] = { qty }
+      return next
+    })
+
+  const undoAdjustments = (keys: string[]) =>
+    setAdjustments((prev) => {
+      const next = { ...prev }
+      for (const key of keys) delete next[key]
+      return next
+    })
+
+  // "+"는 "-"의 거울이다 — 방금 "-"로 줄여둔 게 있으면 그것부터 한 칸 되돌리고, 되돌릴 게 없을 때만
+  // draft(담은 메뉴)에 1개 담는다. 담기는 기존 주문을 건드리지 않아 주문보드 카드가 뭉개지지 않는다
+  // (위 handleAddMenu와 같은 이유). 품절됐으면 메뉴 버튼처럼 막는다.
   const incrementGroup = (group: GroupedItem) => {
+    const reduced = reducedEntryOf(group)
+    if (reduced) {
+      const serverQty = serverQtyOf(reduced.orderId, reduced.itemId)
+      setQty(itemKey(reduced.orderId, reduced.itemId), Math.min(reduced.qty + 1, serverQty), serverQty)
+      return
+    }
     // 자릿세는 담을 "메뉴"가 없어 새 주문이 아니라 기존 줄의 인원(수량)을 늘린다 — "-"와 같이 확인을 눌러야 반영된다
     if (group.itemType === 'SEAT_FEE') {
-      const latest = group.entries[0]
+      const latest = reducibleEntryOf(group)
       if (latest.qty >= MAX_ITEM_QTY) return
-      setAdjustments((prev) => ({ ...prev, [itemKey(latest.orderId, latest.itemId)]: { qty: latest.qty + 1 } }))
+      putAdjustment(itemKey(latest.orderId, latest.itemId), { qty: latest.qty + 1 })
       return
     }
     if (group.menuId == null) return
@@ -371,10 +440,10 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     addToDraft(group.menuId, group.menuName, group.unitPrice)
   }
 
-  // "-"는 방금 "+"로 담은아둔 draft부터 줄인다 — +2 해놓고 바로 -1 하면 아직 등록도 안 한 기존 주문을
+  // "-"는 방금 "+"로 담아둔 draft부터 줄인다 — +2 해놓고 바로 -1 하면 아직 등록도 안 한 기존 주문을
   // 건드릴 게 아니라 담아둔 2개 중 1개를 빼는 게 맞다(안 헷갈리게). 담아둔 게 없을 때만 진짜 기존 주문
   // (adjustments)으로 넘어간다 — 서버에 바로 반영하지 않고 확인·비우기·결제완료 때 커밋, X면 사라진다.
-  // 가장 최근 주문의 항목(entries[0])부터 건드린다 — 어느 주문을 조정할지 매번 고를 필요가 없다.
+  // 가장 최근 주문의 항목부터 건드린다 — 어느 주문을 조정할지 매번 고를 필요가 없다.
   // 최근 항목이 1개뿐이면 0개로 줄이는 게 아니라 그 항목 자체를 취소 대기 상태로 표시한다 —
   // updateItemQty는 qty 1 미만을 허용하지 않는다
   const decrementGroup = (group: GroupedItem) => {
@@ -382,13 +451,14 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       adjustDraftQty(group.menuId, -1)
       return
     }
-    const latest = group.entries[0]
+    const latest = reducibleEntryOf(group)
+    if (latest.qty === 0) return
     const key = itemKey(latest.orderId, latest.itemId)
-    if (latest.qty > 1) {
-      setAdjustments((prev) => ({ ...prev, [key]: { qty: latest.qty - 1 } }))
-    } else {
-      setAdjustments((prev) => ({ ...prev, [key]: { canceled: true } }))
-    }
+    // setQty를 거치는 이유: 자릿세를 +1 했다가 다시 -1 하면 원래 수량으로 돌아온 것이므로 변경 기록을
+    // 지워야 한다. 남겨두면 칩은 안 뜨는데(증감 0) 확인 때 무의미한 updateItemQty가 나가고, 그 사이 주문이
+    // 수정 불가 상태가 됐으면 409로 확인·비우기·결제가 통째로 막힌다
+    if (latest.qty > 1) setQty(key, latest.qty - 1, serverQtyOf(latest.orderId, latest.itemId))
+    else putAdjustment(key, { canceled: true })
   }
 
   // 이 메뉴 줄 전체를 취소한다 — 담아둔 draft가 있으면 그것도 같이 비운다. 실제 주문 항목은 그 줄이
@@ -710,6 +780,50 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
 
         {(error ?? loadError) && <p className="px-6 pt-3 text-sm text-red-600">{error ?? loadError}</p>}
 
+        {/* 확인을 눌러야 서버로 나가는 변경을 한 자리에 모아 보여준다 — 새로 담은 메뉴(draft)와 기존 주문의
+            수량 변경·취소(adjustments)가 서로 다른 요청으로 나가므로 칩 색으로 구분한다 */}
+        {(draft.length > 0 || adjustmentChips.length > 0) && (
+          // 칩이 늘어도 주문 내역·메뉴판 높이를 빼앗지 않게 한다 — 모달 높이가 h-[85vh]로 고정이라 이 줄이
+          // 여러 겹 쌓이면 아래 두 영역이 0에 수렴한다
+          <div className="flex max-h-24 flex-wrap items-center gap-2 overflow-y-auto border-b border-neutral-200 bg-neutral-100 px-6 py-3">
+            <span className="text-sm font-semibold text-neutral-500">확인 전 변경</span>
+            {draft.map((d) => (
+              <span
+                key={`draft-${d.menuId}`}
+                className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-neutral-900 shadow-sm"
+              >
+                담기 · {d.name} x{d.qty} · {(d.price * d.qty).toLocaleString()}원
+                <button type="button" onClick={() => adjustDraftQty(d.menuId, -1)} className="text-neutral-400" aria-label="수량 감소">
+                  -
+                </button>
+                <button type="button" onClick={() => adjustDraftQty(d.menuId, 1)} className="text-neutral-400" aria-label="수량 증가">
+                  +
+                </button>
+                <button type="button" onClick={() => removeDraftItem(d.menuId)} className="text-red-500" aria-label="빼기">
+                  ×
+                </button>
+              </span>
+            ))}
+            {adjustmentChips.map((chip) => (
+              <span
+                key={`adj-${chip.id}`}
+                className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-red-600 shadow-sm"
+              >
+                {chip.name} {chip.delta > 0 ? `+${chip.delta}` : chip.delta}
+                {chip.gone && ' · 취소'}
+                <button
+                  type="button"
+                  onClick={() => undoAdjustments(chip.keys)}
+                  className="text-neutral-400"
+                  aria-label="변경 되돌리기"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
           {/* 왼쪽: 주문 내역 */}
           <div className="flex w-full flex-col lg:w-[380px] lg:shrink-0 lg:border-r lg:border-neutral-200">
@@ -822,28 +936,6 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
             </div>
 
             {menusError && <p className="px-6 pt-3 text-sm text-red-600">{menusError}</p>}
-
-            {draft.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 border-b border-neutral-200 bg-neutral-100 px-6 py-3">
-                {draft.map((d) => (
-                  <span
-                    key={d.menuId}
-                    className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-neutral-900 shadow-sm"
-                  >
-                    {d.name} x{d.qty} · {(d.price * d.qty).toLocaleString()}원
-                    <button type="button" onClick={() => adjustDraftQty(d.menuId, -1)} className="text-neutral-400" aria-label="수량 감소">
-                      -
-                    </button>
-                    <button type="button" onClick={() => adjustDraftQty(d.menuId, 1)} className="text-neutral-400" aria-label="수량 증가">
-                      +
-                    </button>
-                    <button type="button" onClick={() => removeDraftItem(d.menuId)} className="text-red-500" aria-label="빼기">
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
 
             <div className="flex-1 overflow-y-auto p-6">
               <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
