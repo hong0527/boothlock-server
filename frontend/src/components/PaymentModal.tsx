@@ -40,7 +40,7 @@ type FlatItem = {
   qty: number
   status: OrderStatus
   paymentStatus: PaymentStatus
-  itemType: 'MENU' | 'SEAT_FEE'
+  itemType: 'MENU' | 'SEAT_FEE' | 'EXTRA'
 }
 
 // 주문내역은 "이 테이블이 지금 뭘 시켰나"를 보여주는 계산서라 같은 메뉴가 서로 다른 주문(수기 확인을 여러 번
@@ -56,9 +56,25 @@ type GroupedItem = {
   status: OrderStatus
   paymentStatus: PaymentStatus
   entries: { orderId: number; itemId: number; qty: number }[]
-  /** 'SEAT_FEE'(자릿세, 명세서 밖)면 스태프가 수정·취소할 수 없다 — 서버(OrderEntity.requireEditableItem)가 이미 막지만 여기서도 버튼을 비활성화한다 */
-  itemType: 'MENU' | 'SEAT_FEE'
+  /** 'SEAT_FEE'(자릿세, 명세서 밖)는 메뉴가 없어 +가 새 주문이 아니라 기존 줄 인원을 늘린다. 취소는 면제(다시 청구 안 됨) */
+  itemType: 'MENU' | 'SEAT_FEE' | 'EXTRA'
 }
+
+// 서버 OrderEntity.canEditItems와 같은 기준 — 미결제이면서 접수 중이거나, 완료여도 그 주문에 메뉴가 하나도 안 남았으면
+// (자릿세·기타 항목만 든 주문 — 조리할 것이 없어 완료로 시작한다) 고칠 수 있다. 메뉴와 쿠폰을 같이 넣은 주문이 조리 완료되면
+// 서버가 409로 막으므로 버튼도 막는다. ordersWithMenu = 서버 기준으로 메뉴(MENU) 줄이 남아 있는 주문 id들.
+// 자릿세 +/-는 인원 바로잡기, 취소는 면제다
+function isEditableGroup(
+  group: { itemType: string; status: string; paymentStatus: string; entries: { orderId: number }[] },
+  ordersWithMenu: Set<number>,
+): boolean {
+  if (group.paymentStatus !== 'UNPAID') return false
+  if (group.status === 'RECEIVED') return true
+  return group.status === 'DONE' && group.entries.every((e) => !ordersWithMenu.has(e.orderId))
+}
+
+/** 서버 OrderItemEntity.requireValidQty 상한과 같다 — 자릿세 인원 + 버튼이 넘기지 않게 */
+const MAX_ITEM_QTY = 30
 
 // 수기 주문 담기(제출 전) — 클릭마다 바로 createManualOrder를 부르면 치킨·콜라·감튀를 연달아 눌렀을 때
 // 서로 다른 주문 3건으로 쪼개져 주문보드에 따로 뜬다. 여기 담아뒀다가 "주문 등록"에서 한 번에 보낸다.
@@ -89,11 +105,13 @@ const MANUAL_ADD_409: Record<string, string> = {
   INVALID_STATE: '테이블 상태가 바뀌었어요. 새로고침 후 다시 시도해주세요.',
 }
 
-const MENU_CATEGORY_TABS: { key: 'ALL' | 'MAIN' | 'SIDE' | 'DRINK'; label: string }[] = [
+// 기타(ETC, 명세서 밖) — 설정 "기타 항목 관리"에서 운영자가 만든 추가 자릿세·쿠폰 등. 전체 탭에는 섞지 않는다
+const MENU_CATEGORY_TABS: { key: 'ALL' | 'MAIN' | 'SIDE' | 'DRINK' | 'ETC'; label: string }[] = [
   { key: 'ALL', label: '전체' },
   { key: 'MAIN', label: '메인 메뉴' },
   { key: 'SIDE', label: '사이드 메뉴' },
   { key: 'DRINK', label: '음료' },
+  { key: 'ETC', label: '기타' },
 ]
 
 export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentModalProps) {
@@ -192,6 +210,10 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
       unitPrice: item.unitPrice, qty: item.qty, status: o.status, paymentStatus: o.paymentStatus, itemType: item.itemType })),
   )
 
+  // 서버 기준으로 메뉴 줄이 남아 있는 주문 — 완료 주문의 자릿세·기타 줄을 고칠 수 있는지(isEditableGroup) 가른다.
+  // 로컬 취소 대기(adjustments)는 반영하지 않는다: 확인 때 어느 줄이 먼저 서버에 가는지 모르므로 서버 현재 상태로 본다
+  const ordersWithMenu = new Set(rawItems.filter((i) => i.itemType === 'MENU').map((i) => i.orderId))
+
   // 아직 서버에 반영 안 된 로컬 변경(adjustments)을 화면 표시용으로만 얹는다 — 실제 서버 값(rawItems)은 안 바뀐다
   const items: FlatItem[] = rawItems.flatMap((item) => {
     const adj = adjustments[itemKey(item.orderId, item.itemId)]
@@ -203,7 +225,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 같은 메뉴가 서로 다른 주문에 나뉘어 있어도(수기 확인을 여러 번 눌렀거나 손님이 추가 주문) 화면엔 한 줄
   // 합계로 보여준다. orders(→ items)는 findBySessionIdOrderByCreatedAtDescIdDesc라 최신 주문이 먼저 온다 —
   // 그래서 그룹의 entries[0]이 항상 가장 최근 주문의 항목이 된다.
-  const CATEGORY_ORDER: Record<string, number> = { MAIN: 0, SIDE: 1, DRINK: 2 }
+  const CATEGORY_ORDER: Record<string, number> = { MAIN: 0, SIDE: 1, DRINK: 2, ETC: 3 }
   const groupedItems: GroupedItem[] = (() => {
     const groups = new Map<string, GroupedItem>()
     for (const item of items) {
@@ -237,7 +259,9 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     })
   })()
 
-  const visibleMenus = menus.filter((m) => m.visible && (category === 'ALL' || m.category === category))
+  const visibleMenus = menus.filter(
+    (m) => m.visible && (category === 'ALL' ? m.category !== 'ETC' : m.category === category),
+  )
 
   // 응답을 못 받은 경우(인터넷 끊김·제한 시간 초과) — 서버에는 반영됐을 수도 있어서 목록을 새로 읽고 확인을 부탁한다.
   // 로그인 만료(apiFetch가 이미 로그인 화면으로 보내는 중)면 문구를 띄우지 않는다
@@ -256,8 +280,13 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     try {
       const res = await action()
       if (!res.ok) {
-        const { code } = await readApiError(res)
-        setError(res.status === 409 && code && codeMap[code] ? codeMap[code] : `${failMessage} (${res.status})`)
+        const { code, message } = await readApiError(res)
+        // 기타 항목 할인이 미결제 합계를 넘으면 서버가 한도를 문장으로 알려 준다 — "테이블 상태가 바뀌었어요"로 덮지 않는다
+        const discountLimit = code === 'INVALID_STATE' && message?.startsWith('할인') ? message : null
+        setError(
+          discountLimit ??
+            (res.status === 409 && code && codeMap[code] ? codeMap[code] : `${failMessage} (${res.status})`),
+        )
         await refetch()
         return res
       }
@@ -329,7 +358,14 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 보이고, 이미 등록된 주문은 건드리지 않아 카드가 하나로 뭉개지지 않는다(위 handleAddMenu와 같은 이유).
   // 품절됐으면 메뉴 버튼처럼 막는다.
   const incrementGroup = (group: GroupedItem) => {
-    if (group.menuId == null) return // 자릿세(SEAT_FEE) — 담을 "메뉴"가 없다. 버튼도 항상 비활성이지만 방어적으로 한 번 더 막는다
+    // 자릿세는 담을 "메뉴"가 없어 새 주문이 아니라 기존 줄의 인원(수량)을 늘린다 — "-"와 같이 확인을 눌러야 반영된다
+    if (group.itemType === 'SEAT_FEE') {
+      const latest = group.entries[0]
+      if (latest.qty >= MAX_ITEM_QTY) return
+      setAdjustments((prev) => ({ ...prev, [itemKey(latest.orderId, latest.itemId)]: { qty: latest.qty + 1 } }))
+      return
+    }
+    if (group.menuId == null) return
     const menu = menus.find((m) => m.id === group.menuId)
     if (menu?.soldOut) return
     addToDraft(group.menuId, group.menuName, group.unitPrice)
@@ -360,7 +396,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 거부하므로, draft만 지우면 되는 상황에서 헛되이 에러를 띄우지 않는다.
   const cancelGroup = (group: GroupedItem) => {
     if (group.menuId != null) removeDraftItem(group.menuId)
-    if (group.status !== 'RECEIVED' || group.paymentStatus !== 'UNPAID') return
+    if (!isEditableGroup(group, ordersWithMenu)) return
     setAdjustments((prev) => {
       const next = { ...prev }
       for (const entry of group.entries) {
@@ -691,11 +727,9 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
 
             <div className="flex-1 overflow-y-auto">
               {groupedItems.map((group) => {
-                // 서버(OrderEntity.canEditItems)는 접수+미결제만 수정을 허용한다 — 완료·입금확인 항목은 버튼을 미리 막아 409 헛클릭을 없앤다.
-                // 자릿세(SEAT_FEE)는 상태와 무관하게 항상 수정 불가 — 서버(requireEditableItem)가 이미 404로 막지만
-                // 눌렀을 때 헷갈리는 에러가 뜨지 않도록 여기서도 막는다
+                // 서버(OrderEntity.canEditItems)와 같은 기준(isEditableGroup) — 입금확인·조리 완료된 메뉴 줄은 버튼을 미리 막아 409 헛클릭을 없앤다
                 const isSeatFee = group.itemType === 'SEAT_FEE'
-                const editable = !isSeatFee && group.status === 'RECEIVED' && group.paymentStatus === 'UNPAID'
+                const editable = isEditableGroup(group, ordersWithMenu)
                 // 완료·입금확인된 줄이어도 방금 "+"로 담아둔 draft가 있으면, 그 draft만큼은 되돌릴 수 있어야 한다 —
                 // 안 그러면 눌러놓고 취소할 방법이 담은 메뉴 칩밖에 없어서 헷갈린다
                 const hasDraftForMenu = !isSeatFee && draft.some((d) => d.menuId === group.menuId)
@@ -737,11 +771,14 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
                         </button>
                         <span className="w-6 text-center text-lg font-semibold text-neutral-900">{group.qty}</span>
                         {/* +는 기존 주문을 안 건드리고 draft에 담는 것뿐이라 editable(접수·미결제) 여부와 무관하다 —
-                            품절만 막는다(메뉴 버튼과 동일 기준). 자릿세는 담을 "메뉴"가 없으므로 항상 막는다 */}
+                            품절만 막는다(메뉴 버튼과 동일 기준). 자릿세는 기존 줄 인원을 늘리므로 editable일 때만 된다 */}
                         <button
                           type="button"
                           onClick={() => incrementGroup(group)}
-                          disabled={busy || isSeatFee || (menus.find((m) => m.id === group.menuId)?.soldOut ?? false)}
+                          disabled={
+                            busy ||
+                            (isSeatFee ? !editable : (menus.find((m) => m.id === group.menuId)?.soldOut ?? false))
+                          }
                           className="h-8 w-8 rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
                         >
                           +

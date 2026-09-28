@@ -7,7 +7,7 @@ import { customerApiFetch } from '../../lib/customerApiFetch'
 import { getSessionInfo, getSessionToken } from '../../lib/customerSession'
 import { customerOrderFingerprint, customerOrderKeys } from '../../lib/idempotencyKey'
 import { TimeoutError } from '../../lib/fetchWithTimeout'
-import { pendingSeatFee, SEAT_FEE_PER_PERSON } from '../../lib/seatFee'
+import { DEFAULT_SEAT_FEE_PER_PERSON, pendingSeatFee } from '../../lib/seatFee'
 import { displayTableLabel } from '../../lib/tableLabel'
 import type { OrderSummary } from '../../types/customer'
 
@@ -19,10 +19,11 @@ export default function OrderConfirmPage() {
   const { items, totalAmount, clear } = useCart()
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  // 자릿세 미리보기용 — 이 세션에 이미 청구된 자릿세가 있는지 주문내역(C4)으로 확인한다. undefined = 확인 중(주문 버튼을 잠깐 막는다 —
-  // 자릿세가 빠진 합계를 보고 누르지 않게), null = 못 불러옴(안내 문구로 대신하고 주문은 막지 않는다)
+  // 자릿세는 이 세션 첫 주문 때 서버가 별도 자릿세 주문으로 함께 만든다 — 누르기 전에 금액을 보여 주려고 주문내역(C4)으로
+  // 이미 청구됐는지 본다. undefined = 확인 중(주문 버튼을 잠깐 막는다), null = 못 불러옴(안내 문구로 대신하고 주문은 막지 않는다)
   const [myOrders, setMyOrders] = useState<OrderSummary[] | null | undefined>(undefined)
   const partySize = sessionInfo?.partySize
+  const seatFeePerPerson = sessionInfo?.seatFeePerPerson ?? DEFAULT_SEAT_FEE_PER_PERSON
 
   useEffect(() => {
     customerApiFetch('/api/v1/orders')
@@ -32,7 +33,9 @@ export default function OrderConfirmPage() {
   }, [])
 
   const previewLoading = myOrders === undefined
-  const seatFee = previewLoading ? 0 : pendingSeatFee(partySize, myOrders, sessionInfo?.seatFeeCharged === true)
+  const seatFee = previewLoading
+    ? 0
+    : pendingSeatFee(partySize, seatFeePerPerson, myOrders, sessionInfo?.seatFeeCharged === true)
 
   const handleSubmit = async () => {
     if (loading || items.length === 0) return
@@ -111,7 +114,7 @@ export default function OrderConfirmPage() {
           {seatFee !== null && seatFee > 0 && (
             <div className="flex items-center justify-between border-t border-neutral-100 py-3 text-body-1 text-neutral-900">
               <span>
-                자릿세 {partySize}명 × {SEAT_FEE_PER_PERSON.toLocaleString()}원
+                자릿세 {partySize}명 × {seatFeePerPerson.toLocaleString()}원
               </span>
               <span>{seatFee.toLocaleString()}원</span>
             </div>
@@ -120,9 +123,12 @@ export default function OrderConfirmPage() {
             <span>주문 금액</span>
             <span>{(totalAmount + (seatFee ?? 0)).toLocaleString()}원</span>
           </div>
-          {seatFee === null && (
+          {seatFee !== null && seatFee > 0 && (
+            <p className="pt-2 text-body-3 text-neutral-500">자릿세는 첫 주문에만 별도 주문으로 함께 청구돼요.</p>
+          )}
+          {seatFee === null && seatFeePerPerson > 0 && (
             <p className="pt-2 text-body-3 text-neutral-500">
-              첫 주문에는 자릿세(1인 {SEAT_FEE_PER_PERSON.toLocaleString()}원)가 함께 청구돼요.
+              첫 주문에는 자릿세(1인 {seatFeePerPerson.toLocaleString()}원)가 별도 주문으로 함께 청구돼요.
             </p>
           )}
         </div>

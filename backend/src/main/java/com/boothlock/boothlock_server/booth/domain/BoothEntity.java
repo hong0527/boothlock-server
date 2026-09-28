@@ -53,6 +53,13 @@ public class BoothEntity {
     @Column(name = "next_table_seq", nullable = false, columnDefinition = "integer default 1")
     private int nextTableSeq = 1;
 
+    // 자릿세(명세서 밖, 파일럿) 1인당 금액 — 부스마다 O17로 바꾼다. 0이면 자릿세를 받지 않는다(인원 선택은 그대로 묻는다).
+    // DB 기본값 3000은 이 컬럼이 생기기 전 고정값 — 기존 부스 행이 배포 뒤에도 같은 금액을 받게 한다
+    @Column(name = "seat_fee_per_person", nullable = false, columnDefinition = "integer default 3000")
+    private int seatFeePerPerson = DEFAULT_SEAT_FEE_PER_PERSON;
+
+    public static final int DEFAULT_SEAT_FEE_PER_PERSON = 3000;
+
     protected BoothEntity() {
     }
 
@@ -134,4 +141,8 @@ public class BoothEntity {
     public void updateDepositorName(String depositorName) { this.depositorName = depositorName; }
     public void updateOpen(boolean open) { this.open = open; }
     public void updateOperatingHours(String operatingHours) { this.operatingHours = operatingHours; }
+
+    public int getSeatFeePerPerson() { return seatFeePerPerson; }
+    /** 범위 검사(0~MAX)는 쓰기 경로(O17)가 한다. 바꿔도 이미 청구된 자릿세 항목은 그때 단가 그대로 남는다 */
+    public void updateSeatFeePerPerson(int seatFeePerPerson) { this.seatFeePerPerson = seatFeePerPerson; }
 }

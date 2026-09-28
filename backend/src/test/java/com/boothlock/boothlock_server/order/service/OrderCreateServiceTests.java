@@ -223,33 +223,38 @@ class OrderCreateServiceTests {
 
     // ── 자릿세(명세서 밖, 파일럿 전용) ──────────────────────
 
-    @Test
-    void firstOrderWithPartySizeGetsSeatFeeItem() {
-        OrderCreationResult result = create("idem-1", request(3L, 2), 3);
-
-        OrderCreateResponse response = result.response();
-        assertEquals(2, response.items().size());   // 김치전 1 + 자릿세 1
-        assertEquals(16000 + 3000 * 3, response.totalAmount());
-
-        OrderCreateResponse.OrderItemResponse seatFee = response.items().stream()
-                .filter(item -> item.itemType() == OrderItemType.SEAT_FEE)
-                .findFirst().orElseThrow();
-        assertNull(seatFee.menuId());
-        assertEquals("자릿세", seatFee.menuName());
-        assertEquals(3000, seatFee.unitPrice());
-        assertEquals(3, seatFee.qty());
-        assertEquals(9000, seatFee.subtotal());
+    /** 이 세션의 자릿세 주문(없으면 null) */
+    private OrderEntity seatFeeOrder() {
+        return tx.execute(st -> orderRepository.findBySessionIdOrderByCreatedAtDescIdDesc(mySession).stream()
+                .filter(o -> o.getItems().stream().anyMatch(i -> i.getItemType() == OrderItemType.SEAT_FEE))
+                .findFirst().orElse(null));
     }
 
     @Test
-    void secondOrderOfSameSessionDoesNotGetSeatFeeAgain() {
-        create("idem-1", request(3L, 1), 3);   // 첫 주문 — 자릿세 붙음
+    void menuOrderNeverCarriesSeatFee() {
+        // 자릿세는 첫 주문 때 별도 자릿세 주문으로 생긴다(OrderWriter.save) — 메뉴 주문 자체에는 섞이지 않는다
+        OrderCreationResult result = create("idem-1", request(3L, 2), 3);
 
-        OrderCreationResult second = create("idem-2", request(5L, 1), 3);
+        OrderCreateResponse response = result.response();
+        assertEquals(1, response.items().size());
+        assertTrue(response.items().stream().noneMatch(item -> item.itemType() == OrderItemType.SEAT_FEE));
+        assertEquals(16000, response.totalAmount());
+    }
 
-        OrderCreateResponse response = second.response();
-        assertEquals(1, response.items().size());   // 제로콜라만, 자릿세 없음
-        assertEquals(5000, response.totalAmount());
+    @Test
+    void firstOrderCreatesSeatFeeOrderWithItemSnapshot() {
+        OrderCreationResult first = create("idem-1", request(3L, 1), 3);
+        OrderEntity seatFeeOrder = seatFeeOrder();
+
+        OrderItemEntity seatFee = tx.execute(st -> orderRepository.findById(seatFeeOrder.getId()).orElseThrow().getItems().getFirst());
+        assertEquals(OrderItemType.SEAT_FEE, seatFee.getItemType());
+        assertNull(seatFee.getMenuId());
+        assertEquals("자릿세", seatFee.getMenuName());
+        assertEquals(3000, seatFee.getUnitPrice());
+        assertEquals(3, seatFee.getQty());
+        assertEquals(9000, seatFeeOrder.getTotalAmount());
+        assertEquals("A3-1", seatFeeOrder.getOrderNo(), "메뉴 주문 바로 앞 번호를 쓴다");
+        assertEquals("A3-2", first.response().orderNo());
     }
 
     @Test
@@ -262,7 +267,7 @@ class OrderCreateServiceTests {
 
     @Test
     void partySizeIsNotRequiredOnceSeatFeeWasCharged() {
-        create("idem-1", request(3L, 1), 2);   // 자릿세 청구됨
+        create("idem-0", request(3L, 1), 2);   // 첫 주문 — 자릿세 청구됨
 
         OrderCreationResult later = create("idem-2", request(3L, 1), null);
         assertEquals(8000, later.response().totalAmount());
@@ -277,13 +282,13 @@ class OrderCreateServiceTests {
     }
 
     @Test
-    void idempotentReplayOfFirstOrderDoesNotDuplicateSeatFee() {
+    void idempotentReplayWithPartySizeReturnsSameOrder() {
         OrderCreationResult first = create("idem-1", request(3L, 1), 2);
         OrderCreationResult replay = create("idem-1", request(3L, 1), 2);
 
         assertFalse(replay.created());
         assertEquals(first.response().orderId(), replay.response().orderId());
-        assertEquals(2, replay.response().items().size());   // 재조회라 다시 붙지 않는다(같은 주문 그대로)
+        assertEquals(1, replay.response().items().size());
     }
 
     @Test

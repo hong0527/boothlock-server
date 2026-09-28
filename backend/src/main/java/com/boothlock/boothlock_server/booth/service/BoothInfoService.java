@@ -64,7 +64,8 @@ public class BoothInfoService {
                 booth.isOpen(),
                 booth.getCategory(),
                 booth.getMapX(),
-                booth.getMapY());
+                booth.getMapY(),
+                booth.getSeatFeePerPerson());
     }
 
     public StaffAccountEntity authenticate(Jwt jwt) {

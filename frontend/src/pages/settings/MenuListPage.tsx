@@ -1,16 +1,21 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import PrimaryButton from '../../components/PrimaryButton'
 import SectionHeader from '../../components/SectionHeader'
 import TopNav from '../../components/TopNav'
 import { assetUrl } from '../../lib/apiBase'
 import { apiFetch } from '../../lib/apiFetch'
 import type { MenuItem } from '../../types/menu'
+import SeatFeeSetting from './SeatFeeSetting'
 
 export default function MenuListPage() {
   const [menus, setMenus] = useState<MenuItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
+  // ?type=etc — 설정 "기타 항목 관리": 운영자 전용 항목(ETC)만 보여 준다. 일반 메뉴 목록에는 ETC를 섞지 않는다
+  const [searchParams] = useSearchParams()
+  const etcMode = searchParams.get('type') === 'etc'
+  const shownMenus = menus.filter((m) => (m.category === 'ETC') === etcMode)
 
   useEffect(() => {
     apiFetch('/api/v1/admin/menus')
@@ -25,12 +30,19 @@ export default function MenuListPage() {
   return (
     <div className="min-h-screen w-full bg-[#f4f5f7]">
       <TopNav />
-      <SectionHeader title="메뉴 등록 / 편집" />
+      <SectionHeader title={etcMode ? '자릿세 · 기타 항목 관리' : '메뉴 등록 / 편집'} />
 
       <div className="mx-auto flex w-full max-w-[600px] flex-col gap-4 px-6 py-10">
         {error && <p className="text-sm text-red-600">{error}</p>}
+        {etcMode && <SeatFeeSetting />}
+        {etcMode && (
+          <p className="mt-4 text-sm text-neutral-400">
+            테이블 결제 화면의 기타 탭에서 눌러 추가하는 항목이에요(손님 메뉴판에는 안 보여요). 할인·쿠폰은 금액 앞에 -를
+            붙이세요. 할인은 그 테이블의 미결제 금액까지만 들어가요.
+          </p>
+        )}
 
-        {menus.map((menu) => (
+        {shownMenus.map((menu) => (
           <Link
             key={menu.id}
             to={`/settings/menu/${menu.id}`}
@@ -50,7 +62,7 @@ export default function MenuListPage() {
           </Link>
         ))}
 
-        <PrimaryButton type="button" className="mt-2" onClick={() => navigate('/settings/menu/new')}>
+        <PrimaryButton type="button" className="mt-2" onClick={() => navigate(etcMode ? '/settings/menu/new?category=ETC' : '/settings/menu/new')}>
           신규 등록
         </PrimaryButton>
       </div>

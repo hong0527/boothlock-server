@@ -8,7 +8,6 @@ import com.boothlock.boothlock_server.order.OrderRaceTestFixture;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
 import com.boothlock.boothlock_server.order.domain.OrderItemType;
-import com.boothlock.boothlock_server.order.dto.OrderCreateRequest;
 import com.boothlock.boothlock_server.order.dto.OrderCreateResponse;
 import com.boothlock.boothlock_server.order.service.OrderCreateService;
 import com.boothlock.boothlock_server.order.service.OrderNumberingService;
@@ -26,6 +25,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -370,31 +371,59 @@ class OrderItemEditApiTests {
         assertTrue(fx.reload(another).getItems().stream().noneMatch(OrderItemEntity::isCanceled));
     }
 
-    /**
-     * 자릿세(SEAT_FEE, 명세서 밖) 항목은 접수+미결제 주문이어도 O23/O23b로 못 건드린다 —
-     * OrderEntity.requireEditableItem이 itemType==MENU만 골라 "존재하지 않는 항목"과 같은 404로 막는다(새 예외 없음).
-     */
-    @Test
-    void seatFeeItemCannotBeEditedOrCanceled() throws Exception {
-        Long sessionId = fx.activeSessionId();
-        Long orderId = orderCreateService.create(fx.booth.getId(), sessionId, fx.table.getLabel(),
-                UUID.randomUUID().toString(), new OrderCreateRequest(List.of(item(fx.kimchiId, 1))), 2)
-                .response().orderId();
-        fx.orderRepository.approve(orderId, fx.booth.getId());   // 항목 수정 409가 승인대기 때문이 아니라 자릿세 항목이라 나오게(404)
-        Long seatFeeItemId = fx.reload(orderId).getItems().stream()
+    /** 인원 선택 때 서버가 만드는 자릿세 주문과 같은 모양 — 자릿세만 들고 완료(DONE)·미결제로 시작한다 */
+    private Long seatFeeOnlyOrder(int partySize) {
+        OrderEntity order = new OrderEntity(fx.booth.getId(), fx.activeSessionId(), "A3-900", LocalDate.of(2026, 9, 27), 900,
+                null, 3000 * partySize, false, LocalDateTime.of(2026, 9, 27, 18, 0));
+        order.startAsNoCooking();
+        order.addItem(OrderItemEntity.seatFee(3000, partySize));
+        return fx.orderRepository.saveAndFlush(order).getId();
+    }
+
+    private Long seatFeeItemIdOf(Long orderId) {
+        return fx.reload(orderId).getItems().stream()
                 .filter(i -> i.getItemType() == OrderItemType.SEAT_FEE)
                 .findFirst().orElseThrow().getId();
+    }
+
+    /**
+     * 자릿세(SEAT_FEE, 명세서 밖)는 미결제면 운영자가 결제 모달에서 인원(수량)을 고칠 수 있다 — 완료 상태로 시작하는
+     * 자릿세 주문이어도. 인원 늘리기는 메뉴 주문이 아니라 품절·마감 검사를 타지 않는다(메뉴 id도 없다)
+     */
+    @Test
+    void seatFeeQtyCanBeCorrectedWhileUnpaid() throws Exception {
+        Long orderId = seatFeeOnlyOrder(2);
+        Long seatFeeItemId = seatFeeItemIdOf(orderId);
+
+        mockMvc.perform(qty(fx.staffToken, orderId, seatFeeItemId, "{\"qty\":3}"))
+                .andExpect(status().isOk());
+        assertEquals(3000 * 3, fx.reload(orderId).getTotalAmount());
 
         mockMvc.perform(qty(fx.staffToken, orderId, seatFeeItemId, "{\"qty\":1}"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
-        mockMvc.perform(cancel(fx.staffToken, orderId, seatFeeItemId))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+                .andExpect(status().isOk());
+        assertEquals(3000, fx.reload(orderId).getTotalAmount());
+    }
 
-        OrderEntity reloaded = fx.reload(orderId);
-        assertEquals(8000 + 3000 * 2, reloaded.getTotalAmount());
-        assertTrue(reloaded.getItems().stream().noneMatch(OrderItemEntity::isCanceled));
+    /** 자릿세 줄 취소 = 면제 — 유일한 줄이라 주문도 취소된다(취소된 자릿세는 다시 청구되지 않는다: SeatFeeRaceTests) */
+    @Test
+    void cancelingSeatFeeLineWaivesIt() throws Exception {
+        Long orderId = seatFeeOnlyOrder(2);
+
+        mockMvc.perform(cancel(fx.staffToken, orderId, seatFeeItemIdOf(orderId)))
+                .andExpect(status().isOk());
+
+        assertEquals(OrderStatus.CANCELED, fx.reload(orderId).getStatus());
+    }
+
+    @Test
+    void paidSeatFeeCannotBeEdited() throws Exception {
+        Long orderId = seatFeeOnlyOrder(2);
+        fx.orderRepository.markPaid(orderId, fx.booth.getId(), com.boothlock.boothlock_server.order.domain.PaymentMethod.BANK_TRANSFER,
+                "race-staff", LocalDateTime.now());
+
+        mockMvc.perform(qty(fx.staffToken, orderId, seatFeeItemIdOf(orderId), "{\"qty\":1}"))
+                .andExpect(status().isConflict());
+        assertEquals(3000 * 2, fx.reload(orderId).getTotalAmount());
     }
 
     @Test

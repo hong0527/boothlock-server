@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { customerApiFetch } from '../lib/customerApiFetch'
-import { setSessionPartySize } from '../lib/customerSession'
+import { getSessionInfo, setSessionPartySize } from '../lib/customerSession'
+import { DEFAULT_SEAT_FEE_PER_PERSON } from '../lib/seatFee'
 
 /*
  * 테이블 이용 인원 선택 — Figma fileKey OZSYaIZ3UgdVIAdzmq5R8y, node 289:3672 (결제안내)
@@ -20,7 +21,6 @@ const MINT_CIRCLE_STEP = '#9cdac1'
 const MINT_PANEL_BG = '#e8f9f2'
 const MINT_PANEL_BORDER = '#b8dcd3'
 
-const SEAT_FEE_PER_PERSON = 3000
 const MIN_PARTY_SIZE = 1
 const MAX_PARTY_SIZE = 20
 
@@ -106,8 +106,10 @@ export default function PartySizePage() {
   const [partySize, setPartySize] = useState(2)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 부스가 정한 1인당 자릿세(C1 응답) — 0이면 자릿세 없음
+  const seatFeePerPerson = getSessionInfo()?.seatFeePerPerson ?? DEFAULT_SEAT_FEE_PER_PERSON
 
-  // 인원수는 자릿세(1인당 3,000원, 첫 주문에만 부과) 계산에 쓰인다 — 서버 저장에 실패한 채로 넘어가면
+  // 인원수는 첫 주문 때 서버가 만드는 자릿세 주문(1인당 금액 × 인원수) 계산에 쓰인다 — 저장에 실패한 채로 넘어가면
   // 자릿세가 0원으로 조용히 빠지므로, 실패하면 다음 화면으로 넘어가지 않고 다시 시도하게 한다
   const handleSubmit = async () => {
     if (submitting) return
@@ -151,7 +153,7 @@ export default function PartySizePage() {
         <span className="block leading-[1.2]">선택해주세요.</span>
       </h1>
       <p className="text-body-2 absolute left-1/2 top-[239px] -translate-x-1/2 text-center whitespace-nowrap text-neutral-400">
-        인원수에 따라 자릿세가 추가됩니다.
+        {seatFeePerPerson > 0 ? '첫 주문 때 인원수만큼 자릿세가 함께 청구돼요.' : '이 부스는 자릿세가 없어요.'}
       </p>
 
       {/* 자릿세 안내 카드 — 뷰포트 폭 고정 좌표 대신 패널 내부 flex로 배치(375px 아닌 화면에서도 안 밀림) */}
@@ -169,7 +171,7 @@ export default function PartySizePage() {
           <p className="text-body-2 whitespace-nowrap text-black">자릿세</p>
         </div>
         <p className="text-body-2 whitespace-nowrap text-black">
-          인당 {SEAT_FEE_PER_PERSON.toLocaleString()}원
+          {seatFeePerPerson > 0 ? `인당 ${seatFeePerPerson.toLocaleString()}원` : '없음'}
         </p>
       </div>
 

@@ -4,15 +4,15 @@
  */
 export type OrderStatus = 'PENDING_APPROVAL' | 'RECEIVED' | 'DONE' | 'CANCELED'
 
-/** itemType이 'SEAT_FEE'(자릿세, 명세서 밖)면 menuId는 null — 실제 메뉴가 아니다. 서버가 이미 수정·취소를 막지만
- * 프론트도 결제창 버튼을 미리 비활성화한다(PaymentModal) */
+/** itemType이 'SEAT_FEE'(자릿세, 명세서 밖)면 menuId는 null — 실제 메뉴가 아니다. 미결제면 결제창에서 인원(수량)·취소를 고칠 수 있다 */
 export type OrderItemSummary = {
   itemId: number
   menuId: number | null
   menuName: string
   unitPrice: number
   qty: number
-  itemType: 'MENU' | 'SEAT_FEE'
+  /** EXTRA = 기타 항목(추가 자릿세·쿠폰 등) — 조리 대상이 아니라 완료 주문에서도 미결제면 고칠 수 있다 */
+  itemType: 'MENU' | 'SEAT_FEE' | 'EXTRA'
 }
 
 export type PaymentStatus = 'UNPAID' | 'PAID' | 'REFUND_NEEDED' | 'REFUNDED'

@@ -114,6 +114,25 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
         return existsChargedSeatFee(sessionId, OrderStatus.CANCELED, OrderItemType.SEAT_FEE);
     }
 
+    /**
+     * 이 세션에 자릿세 항목이 한 번이라도 만들어졌는가 — 취소된 것도 센다. 첫 메뉴 주문(OrderWriter.save)이 자릿세 주문을
+     * 새로 만들지 정하는 기준이다: 운영자가 자릿세 주문을 취소한 것은 면제로 보고 다음 주문에 다시 청구하지 않는다
+     */
+    @Query("select count(o) > 0 from OrderEntity o join o.items i where o.sessionId = :sessionId and i.itemType = :seatFee")
+    boolean existsSeatFeeItem(@Param("sessionId") Long sessionId, @Param("seatFee") OrderItemType seatFee);
+
+    default boolean existsSeatFeeItem(Long sessionId) {
+        return existsSeatFeeItem(sessionId, OrderItemType.SEAT_FEE);
+    }
+
+    /**
+     * 세션의 미결제 합계(UnpaidOrderRule — 접수·완료이면서 미입금) — 기타 항목 할인(음수 금액)의 한도.
+     * OrderWriter.save가 세션 행을 잠근 뒤에 부른다
+     */
+    @Query("select coalesce(sum(o.totalAmount), 0) from OrderEntity o where o.sessionId = :sessionId and "
+            + com.boothlock.boothlock_server.global.domain.UnpaidOrderRule.JPQL_CONDITION)
+    long sumUnpaidAmountOfSession(@Param("sessionId") Long sessionId);
+
     /** 유휴 인계 선행 세션까지 거슬러 올라가는 최대 단계 — 한 일행이 한 자리에서 유휴 재스캔을 네 번 넘게 겪을 일은 없다 */
     int IDLE_HANDOFF_MAX_HOPS = 3;
 
@@ -127,19 +146,20 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
             + "where c.id in :sessionIds and p.table = c.table and p.endedAt = c.startedAt and p.id <> c.id")
     List<Long> findIdleHandoffPredecessorIds(@Param("sessionIds") List<Long> sessionIds);
 
-    /** 자릿세 판정의 영업일 한정판 — 선행 세션의 자릿세는 같은 영업일 것만 이어받는다(다음 날 같은 자리는 새로 받는다) */
+    /**
+     * 자릿세 "처리" 판정의 영업일 한정판 — 선행 세션의 자릿세는 같은 영업일 것만 이어받는다(다음 날 같은 자리는 새로 받는다).
+     * 취소된 자릿세(운영자 면제)도 센다 — existsSeatFeeItem과 같은 기준
+     */
     @Query("select count(o) > 0 from OrderEntity o join o.items i "
-            + "where o.sessionId in :sessionIds and o.businessDate = :businessDate "
-            + "and o.status <> :canceled and i.itemType = :seatFee and i.canceled = false")
-    boolean existsChargedSeatFeeOn(@Param("sessionIds") List<Long> sessionIds,
-                                   @Param("businessDate") LocalDate businessDate,
-                                   @Param("canceled") OrderStatus canceled,
-                                   @Param("seatFee") OrderItemType seatFee);
+            + "where o.sessionId in :sessionIds and o.businessDate = :businessDate and i.itemType = :seatFee")
+    boolean existsSeatFeeItemOn(@Param("sessionIds") List<Long> sessionIds,
+                                @Param("businessDate") LocalDate businessDate,
+                                @Param("seatFee") OrderItemType seatFee);
 
     /**
-     * 유휴 인계로 이어진 앞 세션(최대 IDLE_HANDOFF_MAX_HOPS단계)에 이 영업일의 살아 있는 자릿세가 있는가 — sessionId 자신은 보지 않는다.
+     * 유휴 인계로 이어진 앞 세션(최대 IDLE_HANDOFF_MAX_HOPS단계)이 이 영업일에 자릿세를 냈거나 면제받았는가 — sessionId 자신은 보지 않는다.
      * 결제를 다 끝내고 폰을 안 만진 채 임계(120~180분)를 넘긴 일행이 QR을 다시 찍으면 세션이 바뀌어 자릿세가 한 번 더 붙었다(이중 청구).
-     * 취소된 주문·개별 취소된 자릿세 항목은 existsChargedSeatFee와 같은 이유로 청구된 것으로 보지 않는다
+     * 운영자가 취소한 자릿세(면제)도 이어받는다 — 면제받은 일행이 유휴 뒤 다시 찍었다고 다시 청구하지 않는다
      */
     default boolean inheritsSeatFeeFromIdleHandoff(Long sessionId, LocalDate businessDate) {
         List<Long> frontier = List.of(sessionId);
@@ -148,7 +168,7 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
             if (frontier.isEmpty()) {
                 return false;
             }
-            if (existsChargedSeatFeeOn(frontier, businessDate, OrderStatus.CANCELED, OrderItemType.SEAT_FEE)) {
+            if (existsSeatFeeItemOn(frontier, businessDate, OrderItemType.SEAT_FEE)) {
                 return true;
             }
         }

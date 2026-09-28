@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import cameraIcon from '../../assets/icons/camera.svg'
 import PrimaryButton from '../../components/PrimaryButton'
 import SectionHeader from '../../components/SectionHeader'
@@ -8,13 +8,20 @@ import TopNav from '../../components/TopNav'
 import { apiFetch } from '../../lib/apiFetch'
 import type { MenuItem } from '../../types/menu'
 
-type MenuCategory = 'MAIN' | 'SIDE' | 'DRINK'
+type MenuCategory = 'MAIN' | 'SIDE' | 'DRINK' | 'ETC'
 
+// 기타(ETC) — 운영자 전용 항목(추가 자릿세·쿠폰 등). 손님 메뉴판에 안 나오고, 금액 앞에 -를 붙이면 할인이다
 const CATEGORIES: { key: MenuCategory; label: string }[] = [
   { key: 'MAIN', label: '메인메뉴' },
   { key: 'SIDE', label: '사이드' },
   { key: 'DRINK', label: '음료' },
+  { key: 'ETC', label: '기타' },
 ]
+
+/** 입력값을 정수로 — 기타 항목만 맨 앞 -(할인)를 허용한다. "-"만 있거나 비었으면 NaN */
+function parsePrice(raw: string): number {
+  return raw === '' || raw === '-' ? NaN : Number(raw)
+}
 
 export default function MenuEditPage() {
   const { id } = useParams()
@@ -23,7 +30,13 @@ export default function MenuEditPage() {
 
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
-  const [category, setCategory] = useState<MenuCategory | null>('MAIN')
+  // 설정 "기타 항목 관리"의 신규 등록(?category=ETC)이면 기타로 시작한다
+  const [searchParams] = useSearchParams()
+  const [category, setCategory] = useState<MenuCategory | null>(
+    searchParams.get('category') === 'ETC' ? 'ETC' : 'MAIN',
+  )
+  const isEtc = category === 'ETC'
+  const listPath = isEtc ? '/settings/menu?type=etc' : '/settings/menu'
   const [soldOut, setSoldOut] = useState(false)
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined)
   const [previewUrl, setPreviewUrl] = useState<string | undefined>(undefined)
@@ -117,6 +130,16 @@ export default function MenuEditPage() {
     e.preventDefault()
     if (saving || uploading) return
     setError(null)
+    const priceValue = parsePrice(price)
+    if (!Number.isInteger(priceValue)) {
+      setError('금액을 입력해주세요.')
+      return
+    }
+    // 서버도 400으로 막지만 이유를 바로 알려 준다 — 음수 항목을 일반 분류로 두면 손님 메뉴판에 음수 가격이 뜬다
+    if (priceValue < 0 && !isEtc) {
+      setError('할인(- 금액)은 기타 분류에서만 쓸 수 있어요.')
+      return
+    }
     setSaving(true)
 
     try {
@@ -126,14 +149,14 @@ export default function MenuEditPage() {
         const res = await apiFetch(`/api/v1/admin/menus/${targetId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, price: Number(price) || 0, category, soldOut, imageUrl: imageUrl ?? null }),
+          body: JSON.stringify({ name, price: priceValue, category, soldOut, imageUrl: imageUrl ?? null }),
         })
         if (!res.ok) throw new Error(`저장에 실패했어요 (${res.status})`)
       } else {
         const res = await apiFetch('/api/v1/admin/menus', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, price: Number(price) || 0, category, imageUrl }),
+          body: JSON.stringify({ name, price: priceValue, category, imageUrl }),
         })
         if (!res.ok) throw new Error(`등록에 실패했어요 (${res.status})`)
         const created: MenuItem = await res.json()
@@ -148,7 +171,7 @@ export default function MenuEditPage() {
           if (!patchRes.ok) throw new Error(`품절 반영에 실패했어요 (${patchRes.status})`)
         }
       }
-      navigate('/settings/menu')
+      navigate(listPath)
     } catch (err) {
       setError(err instanceof Error ? err.message : '저장에 실패했어요.')
     } finally {
@@ -180,11 +203,15 @@ export default function MenuEditPage() {
         <div className="flex w-full flex-col gap-6">
           <TextField label="메뉴명" placeholder="메뉴명 입력" value={name} onChange={(e) => setName(e.target.value)} />
           <TextField
-            label="가격"
-            placeholder="가격 입력"
-            inputMode="numeric"
+            label={isEtc ? '금액 (할인·쿠폰은 앞에 -)' : '가격'}
+            placeholder={isEtc ? '예: 3000 또는 -2000' : '가격 입력'}
+            inputMode={isEtc ? 'text' : 'numeric'}
             value={price}
-            onChange={(e) => setPrice(e.target.value.replace(/[^0-9]/g, ''))}
+            onChange={(e) => {
+              const digits = e.target.value.replace(/[^0-9]/g, '')
+              // 기타 항목만 맨 앞 -를 남긴다(할인). 일반 메뉴는 지금처럼 숫자만
+              setPrice(isEtc && e.target.value.trimStart().startsWith('-') ? '-' + digits : digits)
+            }}
           />
 
           <div>
