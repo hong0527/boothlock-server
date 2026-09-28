@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import chevronRight from '../assets/icons/chevron-right.svg'
+import AlertSettingsPanel from '../components/AlertSettingsPanel'
 import TopNav from '../components/TopNav'
 import { clearAuth, getStaff } from '../lib/auth'
 
@@ -12,7 +14,12 @@ const BASE_MENU_ITEMS = [
   { label: '계좌 등록', to: '/settings/account' },
 ]
 
-const LOGOUT_ITEM = { label: '로그아웃', to: null }
+// 알림 설정은 하위 화면으로 넘어가지 않고 이 목록 안에서 펼친다 — 다른 항목과 같은 줄로 두고, 누르면 바로 아래에 열린다
+const ALERT_ITEM = { label: '알림 설정', to: null, kind: 'alert' as const }
+const LOGOUT_ITEM = { label: '로그아웃', to: null, kind: 'logout' as const }
+
+const ROW_CLASS =
+  'flex h-[60px] w-full items-center justify-between border-b border-neutral-100 text-left text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -22,8 +29,10 @@ export default function SettingsPage() {
   const menuItems = [
     ...BASE_MENU_ITEMS,
     ...(isAdmin ? [{ label: '정산 엑셀 다운로드', to: '/settings/settlement' }] : []),
+    ALERT_ITEM,
     LOGOUT_ITEM,
   ]
+  const [alertOpen, setAlertOpen] = useState(false)
 
   const handleLogout = () => {
     clearAuth()
@@ -35,22 +44,41 @@ export default function SettingsPage() {
       <TopNav />
 
       <div className="mx-auto mt-10 flex w-full max-w-[600px] flex-col px-6">
-        {menuItems.map(({ label, to }) => {
-          const rowClassName =
-            'flex h-[60px] items-center justify-between border-b border-neutral-100 text-left text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900'
-          const content = (
-            <>
-              {label}
+        {menuItems.map((item) => {
+          if (item.to) {
+            return (
+              <Link key={item.label} to={item.to} className={ROW_CLASS}>
+                {item.label}
+                <img src={chevronRight} alt="" className="h-6 w-6" />
+              </Link>
+            )
+          }
+          if ('kind' in item && item.kind === 'alert') {
+            return (
+              <div key={item.label}>
+                <button
+                  type="button"
+                  onClick={() => setAlertOpen((open) => !open)}
+                  aria-expanded={alertOpen}
+                  aria-controls="alert-settings-panel"
+                  className={ROW_CLASS}
+                >
+                  {item.label}
+                  {/* 펼침 표시 — 다른 항목의 ">"를 아래로 돌려 "여기서 열린다"를 보여 준다 */}
+                  <img
+                    src={chevronRight}
+                    alt=""
+                    className={`h-6 w-6 transition-transform ${alertOpen ? '-rotate-90' : 'rotate-90'}`}
+                  />
+                </button>
+                {alertOpen && <AlertSettingsPanel id="alert-settings-panel" />}
+              </div>
+            )
+          }
+          return (
+            <button key={item.label} type="button" onClick={handleLogout} className={ROW_CLASS}>
+              {item.label}
               <img src={chevronRight} alt="" className="h-6 w-6" />
-            </>
-          )
-          return to ? (
-            <Link key={label} to={to} className={rowClassName}>
-              {content}
-            </Link>
-          ) : (
-            <button key={label} type="button" onClick={handleLogout} className={rowClassName}>
-              {content}
             </button>
           )
         })}

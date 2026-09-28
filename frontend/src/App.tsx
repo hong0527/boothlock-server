@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import ConnectionBanner from './components/ConnectionBanner'
+import StaffAlertWatcher from './components/StaffAlertWatcher'
 import { CartProvider } from './context/CartContext'
 import { TableOrderProvider } from './context/TableOrderContext'
 import { SIGNUP_ENABLED } from './lib/featureFlags'
@@ -28,6 +29,8 @@ function App() {
   return (
     <CartProvider>
       <ConnectionBanner />
+      {/* 직원용 앱 공통 알림 감시 — 라우트 바깥에 하나만 둬서 직원 화면끼리 이동해도 끊기거나 두 번 돌지 않는다 */}
+      <StaffAlertWatcher />
       <Routes>
         <Route path="/" element={<LoginPage />} />
         {/* 임시 데모 (Figma 237:344) — 기본 꺼짐, VITE_SIGNUP_ENABLED=true일 때만 노출. SignupPage.tsx 상단 주석 참고.
