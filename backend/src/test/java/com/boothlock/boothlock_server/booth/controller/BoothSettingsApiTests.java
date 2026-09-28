@@ -10,6 +10,8 @@ import com.boothlock.boothlock_server.booth.service.BoothWebhookNotifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -112,6 +114,42 @@ class BoothSettingsApiTests {
                         .content("{\"depositorName\":\"   \"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.depositorName").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void seatFeeDefaultsTo3000AndAdminCanChangeIt() throws Exception {
+        String token = login("admin");
+        mockMvc.perform(get("/api/v1/admin/booth").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seatFeePerPerson").value(3000));   // 컬럼 생기기 전 고정값 그대로
+
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seatFeePerPerson\":5000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seatFeePerPerson").value(5000));
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seatFeePerPerson\":0}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.seatFeePerPerson").value(0));   // 0 = 자릿세 안 받음
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"-1", "100001", "3000.5", "\"3000\"", "null"})
+    void seatFeeMustBeIntegerInRange(String value) throws Exception {
+        String token = login("admin");
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seatFeePerPerson\":" + value + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
+    void staffCannotChangeSeatFee() throws Exception {
+        String token = login("staff");
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seatFeePerPerson\":5000}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
     }
 
     @Test

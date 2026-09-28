@@ -2,8 +2,10 @@ package com.boothlock.boothlock_server.tableqr.controller;
 
 import com.boothlock.boothlock_server.booth.domain.BoothEntity;
 import com.boothlock.boothlock_server.booth.repository.BoothRepository;
+import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.menu.domain.MenuEntity;
 import com.boothlock.boothlock_server.menu.repository.MenuRepository;
+import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.repository.DailyCounterRepository;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
@@ -26,9 +28,12 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -36,7 +41,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * PartySizePage 제출 API(명세서 밖, 자릿세 파일럿 전용) — PATCH /api/v1/table-sessions/party-size.
- * 자릿세가 첫 주문에만 실제로 붙는지도 함께 확인한다(OrderCreateService 통합 확인, HTTP 경계에서).
+ * 자릿세(부스 1인당 금액 × 인원수)가 첫 메뉴 주문 때 별도 자릿세 주문으로 생기는지도 함께 확인한다(OrderWriter.save, HTTP 경계에서).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -115,39 +120,107 @@ class PartySizeApiTests {
                 .andExpect(jsonPath("$.error.code").value("SESSION_EXPIRED"));
     }
 
-    // ── 통합 확인: 자릿세가 실제로 첫 주문에만 붙는지 (HTTP 경계) ──────────────
+    // ── 통합 확인: 자릿세는 첫 메뉴 주문 때 별도 주문으로 생기는지 (HTTP 경계) ──────────────
 
-    @Test
-    void firstOrderAfterSettingPartySizeIncludesSeatFee() throws Exception {
+    private void choosePartySize(int partySize) throws Exception {
         mockMvc.perform(patch("/api/v1/table-sessions/party-size")
                         .header(SESSION_HEADER, MY_TOKEN)
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"partySize\":2}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"partySize\":" + partySize + "}"))
                 .andExpect(status().isOk());
+    }
 
-        mockMvc.perform(post("/api/v1/orders")
-                        .header(SESSION_HEADER, MY_TOKEN)
-                        .header("Idempotency-Key", "idem-1")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"items\":[{\"menuId\":" + kimchiId + ",\"qty\":1}]}"))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.totalAmount").value(8000 + 3000 * 2))
-                .andExpect(jsonPath("$.items.length()").value(2))
-                // 서비스가 메뉴 항목들 뒤에 자릿세를 붙이므로 마지막 인덱스가 자릿세다
-                .andExpect(jsonPath("$.items[1].itemType").value("SEAT_FEE"))
-                .andExpect(jsonPath("$.items[1].menuName").value("자릿세"))
-                .andExpect(jsonPath("$.items[1].menuId").value(Matchers.nullValue()))
-                .andExpect(jsonPath("$.items[1].qty").value(2))
-                .andExpect(jsonPath("$.items[0].itemType").value("MENU"));
+    private org.springframework.test.web.servlet.ResultActions orderKimchi(String idempotencyKey) throws Exception {
+        return mockMvc.perform(post("/api/v1/orders")
+                .header(SESSION_HEADER, MY_TOKEN)
+                .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"items\":[{\"menuId\":" + kimchiId + ",\"qty\":1}]}"));
+    }
 
-        // 두 번째 주문엔 자릿세가 다시 붙지 않는다
-        mockMvc.perform(post("/api/v1/orders")
-                        .header(SESSION_HEADER, MY_TOKEN)
-                        .header("Idempotency-Key", "idem-2")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"items\":[{\"menuId\":" + kimchiId + ",\"qty\":1}]}"))
+    private List<OrderEntity> sessionOrders() {
+        return orderRepository.findAll().stream().filter(o -> sessionId.equals(o.getSessionId())).toList();
+    }
+
+    @Test
+    void choosingPartySizeAloneChargesNothing() throws Exception {
+        // 인원만 고르고 메뉴를 구경하다 간 손님에게는 청구하지 않는다
+        choosePartySize(2);
+
+        assertTrue(sessionOrders().isEmpty());
+    }
+
+    @Test
+    void firstOrderCreatesSeparateSeatFeeOrder() throws Exception {
+        choosePartySize(2);
+
+        orderKimchi("idem-1")
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.totalAmount").value(8000))
+                .andExpect(jsonPath("$.totalAmount").value(8000))   // 메뉴 주문에는 섞이지 않는다
                 .andExpect(jsonPath("$.items.length()").value(1));
+
+        // 손님 주문내역(C4)에 자릿세 주문이 따로 있다 — 조리할 게 없어 완료(DONE)·미결제, 손님은 취소 못 한다
+        mockMvc.perform(get("/api/v1/orders").header(SESSION_HEADER, MY_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orders.length()").value(2))
+                .andExpect(jsonPath("$.orders[?(@.items[0].itemType == 'SEAT_FEE')].status").value(Matchers.contains("DONE")))
+                .andExpect(jsonPath("$.orders[?(@.items[0].itemType == 'SEAT_FEE')].paymentStatus").value(Matchers.contains("UNPAID")))
+                .andExpect(jsonPath("$.orders[?(@.items[0].itemType == 'SEAT_FEE')].totalAmount").value(Matchers.contains(3000 * 2)))
+                .andExpect(jsonPath("$.orders[?(@.items[0].itemType == 'SEAT_FEE')].canCancel").value(Matchers.contains(false)))
+                .andExpect(jsonPath("$.orders[?(@.items[0].itemType == 'SEAT_FEE')].items[0].qty").value(Matchers.contains(2)));
+
+        // 두 번째 주문엔 자릿세 주문이 다시 생기지 않는다
+        orderKimchi("idem-2").andExpect(status().isCreated());
+        assertEquals(3, sessionOrders().size());
+    }
+
+    @Test
+    void seatFeeFollowsBoothSetting() throws Exception {
+        booth.updateSeatFeePerPerson(5000);
+        boothRepository.save(booth);
+        choosePartySize(3);
+
+        orderKimchi("idem-1").andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/v1/orders").header(SESSION_HEADER, MY_TOKEN))
+                .andExpect(jsonPath("$.orders[?(@.items[0].itemType == 'SEAT_FEE')].totalAmount").value(Matchers.contains(5000 * 3)))
+                .andExpect(jsonPath("$.orders[?(@.items[0].itemType == 'SEAT_FEE')].items[0].unitPrice").value(Matchers.contains(5000)));
+    }
+
+    @Test
+    void zeroSeatFeeBoothChargesNothingButStillTakesPartySize() throws Exception {
+        booth.updateSeatFeePerPerson(0);
+        boothRepository.save(booth);
+        choosePartySize(4);
+
+        orderKimchi("idem-1").andExpect(status().isCreated());   // 인원을 골랐으니 PARTY_SIZE_REQUIRED 없이 들어간다
+
+        assertEquals(1, sessionOrders().size(), "자릿세 주문이 없다");
+        assertEquals(4, tableSessionRepository.findById(sessionId).orElseThrow().getPartySize());
+    }
+
+    @Test
+    void closedBoothChargesNoSeatFee() throws Exception {
+        booth.updateOpen(false);
+        boothRepository.save(booth);
+        choosePartySize(2);
+
+        orderKimchi("idem-1").andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("ORDER_CLOSED"));
+
+        assertTrue(sessionOrders().isEmpty(), "마감된 부스 QR을 찍고 인원을 골라도 청구되지 않는다");
+    }
+
+    @Test
+    void staffCanceledSeatFeeIsNotChargedAgain() throws Exception {
+        choosePartySize(2);
+        orderKimchi("idem-1").andExpect(status().isCreated());
+        OrderEntity seatFee = sessionOrders().stream().filter(o -> o.getTotalAmount() == 3000 * 2).findFirst().orElseThrow();
+        // 운영자가 자릿세 주문을 취소 = 면제 — 다음 주문에 새로 만들지 않는다
+        orderRepository.cancelByStaff(seatFee.getId(), booth.getId(), "자릿세 면제", "admin", NOW.plusMinutes(1));
+
+        orderKimchi("idem-2").andExpect(status().isCreated());
+
+        assertEquals(3, sessionOrders().size());
+        assertEquals(OrderStatus.CANCELED, orderRepository.findById(seatFee.getId()).orElseThrow().getStatus());
     }
 
     @Test

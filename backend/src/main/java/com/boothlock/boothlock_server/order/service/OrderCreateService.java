@@ -86,8 +86,8 @@ public class OrderCreateService {
 
     /**
      * C3 손님 주문. 인원수가 없는 세션의 주문은 자릿세가 아직 청구되지 않았다면 409 PARTY_SIZE_REQUIRED로 거절한다 —
-     * 두 번째 폰(restored라 인원 선택을 건너뜀), 응답 유실 뒤 재스캔, 수기 주문이 먼저 연 세션 등에서 인원수 없이 주문이 들어가면
-     * 그 세션의 자릿세가 조용히 0원이 됐다. 프론트는 이 코드를 받으면 인원 선택 화면으로 보낸다
+     * 두 번째 폰(restored라 인원 선택을 건너뜀), 응답 유실 뒤 재스캔, 수기 주문이 먼저 연 세션 등에서 인원을 안 고르면
+     * 자릿세 주문이 안 생겨 그 세션의 자릿세가 조용히 0원이 된다. 프론트는 이 코드를 받으면 인원 선택 화면으로 보낸다
      */
     public OrderCreationResult create(Long boothId, Long sessionId, String tableLabel,
                                       String idempotencyKey, OrderCreateRequest request, Integer partySize) {
@@ -128,15 +128,15 @@ public class OrderCreateService {
                 sessionId, RATE_LIMIT_STATUSES, PaymentStatus.UNPAID) >= MAX_UNPAID_ORDERS) {
             throw new OrderRateLimitedException();
         }
-        Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request);
+        Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request, false);
         // 인원 검사는 멱등 재요청(이미 접수된 주문은 인원수와 무관하게 그대로 돌려준다)과 메뉴 검증(없는 메뉴 400·품절 409) 뒤에 둔다 —
         // 입력 자체가 틀린 주문에 "인원을 고르세요"를 먼저 보여주면, 인원을 고르고 돌아와서야 품절을 알게 된다
         // 컬럼이 timestamp(6)라 마이크로초로 잘라 넣는다 — 리눅스 now()는 나노초까지 나와서, 자르지 않으면
         // 첫 응답(메모리 값)과 멱등 재요청 응답(DB 재조회 값)의 createdAt이 달라진다
         LocalDateTime createdAt = LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS);
-        // "이미 냈다"에는 유휴 인계 앞 세션의 같은 영업일 자릿세도 든다(OrderWriter.isSeatFeeCharged) — 다 먹고 결제까지 끝낸 일행이
-        // 임계를 넘겨 다시 찍었다고 인원을 또 묻지 않는다. 실제 부과는 잠금 아래 save가 같은 기준으로 다시 정한다
-        if (requirePartySize && (partySize == null || partySize <= 0) && !orderWriter.isSeatFeeCharged(sessionId, createdAt)) {
+        // "이미 냈다"에는 유휴 인계 앞 세션의 같은 영업일 자릿세도 든다(OrderWriter.isSeatFeeHandled) — 다 먹고 결제까지 끝낸 일행이
+        // 임계를 넘겨 다시 찍었다고 인원을 또 묻지 않는다. 면제받은 자릿세도 "처리됨"이다(OrderWriter.isSeatFeeHandled)
+        if (requirePartySize && (partySize == null || partySize <= 0) && !orderWriter.isSeatFeeHandled(sessionId, createdAt)) {
             throw new PartySizeRequiredException();
         }
         List<OrderItemEntity> items = new ArrayList<>(request.items().stream()
@@ -148,11 +148,12 @@ public class OrderCreateService {
                 .toList());
         int total = totalAmount(request, menus);
 
-        // 자릿세(명세서 밖, 파일럿 전용)는 여기서 붙이지 않는다 — 인원수만 넘기고, 세션 행을 잠근 저장 트랜잭션(OrderWriter.save)이
-        // "이 세션에 청구된 자릿세가 없을 때" 붙인다. 수기 주문(createManual, O14)은 인원수를 넘기지 않아 붙지 않는다
+        // 자릿세(명세서 밖, 파일럿 전용)는 메뉴 주문에 섞지 않는다 — 이 세션 첫 주문이면 저장 트랜잭션(OrderWriter.save)이 세션 행을
+        // 잠근 뒤 "부스 1인당 금액 × 인원수" 자릿세 주문을 따로 만든다. 인원만 고르고 주문하지 않은 손님·마감된 부스(위 409)는 청구되지 않는다.
+        // 수기 주문(createManual, O14)은 자릿세를 넘기지 않아 만들지 않는다
         OrderWriter.OrderSpec spec = new OrderWriter.OrderSpec(
                 boothId, sessionId, label, tableLabel.trim(), idempotencyKey,
-                total, items, createdAt, false, partySize);
+                total, items, createdAt, false, false, OrderWriter.SeatFee.of(booth.getSeatFeePerPerson(), partySize));
         return saveWithRetry(spec, booth.getBankAccount(), booth.getDepositorName());
     }
 
@@ -211,17 +212,22 @@ public class OrderCreateService {
             throw new OrderClosedException();
         }
 
-        Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request);
+        Map<Long, MenuLookup.MenuInfo> menus = resolveMenus(boothId, request, true);
         List<OrderItemEntity> orderItems = request.items().stream()
                 .map(item -> {
                     MenuLookup.MenuInfo menu = menus.get(item.menuId());
-                    return new OrderItemEntity(menu.menuId(), menu.name(), menu.price(), item.qty());
+                    // 기타 항목(추가 자릿세·쿠폰 등)은 EXTRA로 남긴다 — 조리 대상이 아니라 완료 주문에서도 +/-로 고칠 수 있다
+                    return menu.staffOnly()
+                            ? OrderItemEntity.extra(menu.menuId(), menu.name(), menu.price(), item.qty())
+                            : new OrderItemEntity(menu.menuId(), menu.name(), menu.price(), item.qty());
                 })
                 .toList();
 
         OrderWriter.OrderSpec spec = new OrderWriter.OrderSpec(
                 boothId, sessionId, label, tableLabel, manualIdempotencyKey,
-                totalAmount(request, menus), orderItems, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), true);
+                totalAmount(request, menus), orderItems, LocalDateTime.now(KST_ZONE).truncatedTo(ChronoUnit.MICROS), true,
+                // 기타 항목(추가 자릿세·쿠폰 등)만 든 주문은 조리할 것이 없어 완료로 시작한다 — 주방 대기열에 "쿠폰"이 뜨지 않게
+                menus.values().stream().allMatch(MenuLookup.MenuInfo::staffOnly), null);
         // 멱등키가 없으면 재요청 복구 분기는 타지 않는다 — 채번 충돌 재시도만 의미가 있다
         try {
             return saveWithRetry(spec, booth.getBankAccount(), booth.getDepositorName());
@@ -242,7 +248,7 @@ public class OrderCreateService {
         if (!booth.isOpen()) {
             throw new OrderClosedException();
         }
-        resolveMenus(boothId, new OrderCreateRequest(List.of(new OrderCreateRequest.OrderItemRequest(menuId, 1))));
+        resolveMenus(boothId, new OrderCreateRequest(List.of(new OrderCreateRequest.OrderItemRequest(menuId, 1))), true);
     }
 
     /**
@@ -351,13 +357,19 @@ public class OrderCreateService {
     }
 
     /** 5단계 — 미존재·타 부스는 400, 숨김·품절은 409 SOLD_OUT (부분 주문 없이 전체 실패) */
-    private Map<Long, MenuLookup.MenuInfo> resolveMenus(Long boothId, OrderCreateRequest request) {
+    /**
+     * allowStaffOnly: 운영자 경로(O14 수기 주문·결제 모달 +)만 true — 손님 주문(C3)에는 기타 항목(추가 자릿세·쿠폰 등)이
+     * 없는 메뉴와 같은 400이다. 메뉴판(C2)에 안 보이는 항목의 id를 알아내 넣어도 할인을 스스로 받을 수 없게 한다
+     */
+    private Map<Long, MenuLookup.MenuInfo> resolveMenus(Long boothId, OrderCreateRequest request, boolean allowStaffOnly) {
         List<Long> menuIds = request.items().stream()
                 .map(OrderCreateRequest.OrderItemRequest::menuId)
                 .toList();
         Map<Long, MenuLookup.MenuInfo> found = new LinkedHashMap<>();
         for (MenuLookup.MenuInfo menu : menuLookup.findByBoothIdAndMenuIds(boothId, menuIds)) {
-            found.put(menu.menuId(), menu);
+            if (allowStaffOnly || !menu.staffOnly()) {
+                found.put(menu.menuId(), menu);
+            }
         }
         for (Long menuId : menuIds) {
             if (!found.containsKey(menuId)) {

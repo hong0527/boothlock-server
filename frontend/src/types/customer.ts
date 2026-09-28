@@ -7,6 +7,8 @@ export type CustomerSessionInfo = {
   partySize?: number
   /** C1 스캔 시점에 서버가 본 "자릿세 이미 냄"(유휴 인계로 이어받은 앞 세션 자릿세 포함). 예전에 저장된 세션엔 없다 */
   seatFeeCharged?: boolean
+  /** 부스가 정한 1인당 자릿세(인원 선택 화면 안내용). 0이면 자릿세 없음. 예전에 저장된 세션엔 없다 */
+  seatFeePerPerson?: number
 }
 /** 메뉴 분류 — 백엔드 MenuService 허용값(MAIN·SIDE·DRINK, #53)과 같다. 분류 없는 메뉴는 null */
 export type MenuCategoryCode = 'MAIN' | 'SIDE' | 'DRINK'
@@ -49,7 +51,7 @@ export type OrderSummaryItem = {
   menuName: string
   unitPrice: number
   qty: number
-  itemType: 'MENU' | 'SEAT_FEE'
+  itemType: 'MENU' | 'SEAT_FEE' | 'EXTRA'
 }
 
 /** C4 내 주문 조회 응답의 주문 1건. 주문내역 화면은 status·paymentStatus로 상태 뱃지를 단다(lib/customerOrderStatus) */

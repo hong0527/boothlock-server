@@ -69,7 +69,11 @@ class OrderControllerTests {
 
     @BeforeEach
     void setUp() {
-        booth = boothRepository.save(new BoothEntity("테스트 부스", "카카오뱅크 3333-01-1234567 (홍길동)", "18:00~02:00"));
+        BoothEntity newBooth = new BoothEntity("테스트 부스", "카카오뱅크 3333-01-1234567 (홍길동)", "18:00~02:00");
+        // 자릿세 0원 부스 — 첫 주문에 자릿세 주문이 따로 생기면 주문번호·건수가 한 칸씩 밀려, 이 클래스가 보는 C3·C4 계약과
+        // 무관한 차이가 생긴다(자릿세 주문 자체는 PartySizeApiTests·SeatFeeRaceTests 몫)
+        newBooth.updateSeatFeePerPerson(0);
+        booth = boothRepository.save(newBooth);
         mySessionId = openSession("A-3", "tbl-1", MY_TOKEN);
         otherSessionId = openSession("B-7", "tbl-2", OTHER_TOKEN);
         kimchiId = menuRepository.save(new MenuEntity(booth, "김치전", 8000, null, null, true)).getId();
@@ -121,8 +125,8 @@ class OrderControllerTests {
                 .andExpect(jsonPath("$.orderNo").value("A3-1"))                      // 세션의 테이블 라벨(A-3) 정규화 + 영업일 1번
                 .andExpect(jsonPath("$.status").value("PENDING_APPROVAL"))   // O28(v0.6.10) — 손님 주문은 승인 전까지 대기
                 .andExpect(jsonPath("$.paymentStatus").value("UNPAID"))
-                .andExpect(jsonPath("$.totalAmount").value(21000 + 3000 * PARTY_SIZE)) // 8000×2 + 5000 + 첫 주문 자릿세 — 서버 재계산
-                .andExpect(jsonPath("$.items[2].itemType").value("SEAT_FEE"))
+                .andExpect(jsonPath("$.totalAmount").value(21000)) // 8000×2 + 5000 — 서버 재계산. 자릿세는 인원 선택 때 따로 청구된다
+                .andExpect(jsonPath("$.items.length()").value(2))
                 .andExpect(jsonPath("$.items[0].menuName").value("김치전"))
                 .andExpect(jsonPath("$.items[0].subtotal").value(16000))
                 .andExpect(jsonPath("$.payment.method").value("BANK_TRANSFER"))

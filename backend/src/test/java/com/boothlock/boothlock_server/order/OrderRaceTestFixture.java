@@ -31,6 +31,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -180,9 +181,12 @@ public class OrderRaceTestFixture {
 
     /** 새 활성 세션을 연다 — 이미 열린 세션이 있으면 먼저 닫는다(uq_session_active) */
     public Long openSession() {
-        endActiveSession();
-        return tableSessionRepository.save(
-                new TableSessionEntity(table, "race-session-" + UUID.randomUUID(), LocalDateTime.now(KST))).getId();
+        LocalDateTime endedAt = LocalDateTime.now(KST).truncatedTo(ChronoUnit.MICROS);
+        tx.execute(s -> endSessionIfActive(table.getId(), endedAt));
+        // 새 세션은 앞 세션 종료 1µs 뒤에 연다 — 같은 시각이면 유휴 인계(ended_at == started_at)로 읽혀 앞 세션 자릿세를
+        // 이어받는다. 시계 해상도가 거친 환경(Windows)에서는 두 now()가 실제로 같은 값이 된다
+        return tableSessionRepository.save(new TableSessionEntity(table, "race-session-" + UUID.randomUUID(),
+                endedAt.plus(1, ChronoUnit.MICROS))).getId();
     }
 
     /**

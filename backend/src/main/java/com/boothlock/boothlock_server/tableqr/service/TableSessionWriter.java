@@ -109,11 +109,11 @@ public class TableSessionWriter {
         LocalDateTime startedAt = staffOpened && open.isPresent() ? now.plus(1, ChronoUnit.MICROS) : now;
         TableSessionEntity session = tableSessionRepository.saveAndFlush(
                 new TableSessionEntity(table, sessionToken, startedAt));
-        // 앞 세션이 오늘 자릿세를 이미 냈으면 인원수도 이어받는다 — 그래야 C1 응답에 partySize가 실려 프론트가 인원 선택을
-        // 다시 띄우지 않고, 새 세션 주문에는 자릿세가 붙지 않는다(OrderWriter.isSeatFeeCharged가 앞 세션 자릿세를 본다).
-        // 앞 세션이 자릿세를 안 냈으면(주문 전·취소됨·다른 영업일) 옮기지 않는다 — 옮기면 인원을 묻지 않은 채 옛 인원수로
+        // 앞 세션이 오늘 자릿세를 이미 냈거나 면제받았으면 인원수도 이어받는다 — 그래야 C1 응답에 partySize가 실려 프론트가 인원 선택을
+        // 다시 띄우지 않고, 새 세션 주문에는 자릿세가 붙지 않는다(OrderWriter.isSeatFeeHandled가 앞 세션 자릿세를 본다).
+        // 앞 세션에 자릿세가 없었으면(주문 전·다른 영업일) 옮기지 않는다 — 옮기면 인원을 묻지 않은 채 옛 인원수로
         // 새로 부과해, 실제로 자리를 바꾼 다른 손님에게 앞 손님 인원만큼 청구할 수 있다
-        if (!staffOpened && handoffPartySize != null && orderWriter.isSeatFeeCharged(session.getId(), now)) {
+        if (!staffOpened && handoffPartySize != null && orderWriter.isSeatFeeHandled(session.getId(), now)) {
             session.updatePartySize(handoffPartySize);
         }
         table.occupy();

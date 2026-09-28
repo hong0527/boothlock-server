@@ -66,6 +66,13 @@ public class OrderItemEntity {
         return item;
     }
 
+    /** 기타 항목(추가 자릿세·쿠폰 등, 명세서 밖) — 메뉴 테이블의 ETC 항목 스냅샷. 조리 대상이 아니라는 표시만 MENU와 다르다 */
+    public static OrderItemEntity extra(Long menuId, String menuName, int unitPrice, int qty) {
+        OrderItemEntity item = new OrderItemEntity(menuId, menuName, unitPrice, qty);
+        item.itemType = OrderItemType.EXTRA;
+        return item;
+    }
+
     /** subtotal은 파생값 — 저장하지 않고 계산한다 (DB스키마 §3-3) */
     public int subtotal() {
         return unitPrice * qty;

@@ -103,7 +103,11 @@ class ManualOrderApiTests {
     void setUp() {
         cleanUp();
 
-        BoothEntity booth = boothRepository.save(new BoothEntity("수기 부스", "카카오뱅크 3333-01-1234567 (홍길동)", null));
+        BoothEntity newBooth = new BoothEntity("수기 부스", "카카오뱅크 3333-01-1234567 (홍길동)", null);
+        // 자릿세 0원 부스 — 인원 선택은 그대로 거치지만 자릿세 주문이 생기지 않아, 수기·손님 주문의 번호·금액·건수만 비교한다
+        // (자릿세 주문 자체는 SeatFeeRaceTests·PartySizeApiTests 몫)
+        newBooth.updateSeatFeePerPerson(0);
+        BoothEntity booth = boothRepository.save(newBooth);
         BoothEntity otherBooth = boothRepository.save(new BoothEntity("남의 부스", "국민은행 5678", null));
         boothId = booth.getId();
 
@@ -583,10 +587,9 @@ class ManualOrderApiTests {
                 .andExpect(status().isCreated()).andReturn();
 
         String c = customer.getResponse().getContentAsString();
-        // 손님 첫 주문에는 자릿세(SEAT_FEE)가 붙는다 — 수기 주문엔 없으므로 메뉴 항목과 자릿세를 뺀 금액을 비교한다
-        List<Map<String, Object>> customerMenuItems = ((List<Map<String, Object>>) JsonPath.read(c, "$.items")).stream()
-                .filter(item -> "MENU".equals(item.get("itemType"))).toList();
-        int customerMenuTotal = (Integer) JsonPath.read(c, "$.totalAmount") - 3000 * PARTY_SIZE;
+        // 자릿세는 메뉴 주문에 붙지 않는다(인원 선택 때 별도 자릿세 주문) — 손님·수기 주문의 금액·항목이 그대로 같아야 한다
+        List<Map<String, Object>> customerMenuItems = JsonPath.read(c, "$.items");
+        int customerMenuTotal = (Integer) JsonPath.read(c, "$.totalAmount");
         for (MvcResult m : List.of(manualTable, manualNoTable)) {
             String json = m.getResponse().getContentAsString();
             assertEquals(customerMenuTotal, (Integer) JsonPath.read(json, "$.totalAmount"));
@@ -594,7 +597,7 @@ class ManualOrderApiTests {
             assertEquals((String) JsonPath.read(c, "$.payment.bankAccount"), (String) JsonPath.read(json, "$.payment.bankAccount"));
             assertEquals((String) JsonPath.read(c, "$.payment.method"), (String) JsonPath.read(json, "$.payment.method"));
         }
-        assertEquals(31000 + 3000 * PARTY_SIZE, (Integer) JsonPath.read(c, "$.totalAmount"));
+        assertEquals(31000, (Integer) JsonPath.read(c, "$.totalAmount"));
 
         // 가격이 바뀌면 둘 다 새 가격으로 재계산한다 — 요청에 금액이 없으니 위변조할 자리도 없다
         MenuEntity kimchi = menuRepository.findById(kimchiId).orElseThrow();

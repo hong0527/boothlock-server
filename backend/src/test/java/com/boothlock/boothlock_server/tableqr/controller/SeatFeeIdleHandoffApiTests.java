@@ -1,6 +1,9 @@
 package com.boothlock.boothlock_server.tableqr.controller;
 
+import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.order.OrderRaceTestFixture;
+import com.boothlock.boothlock_server.order.domain.OrderEntity;
+import com.boothlock.boothlock_server.order.domain.OrderItemType;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 
@@ -36,7 +39,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 자릿세 유휴 인계 이어받기(v0.6.13) — HTTP 경계(C1·인원수·C3·O6)에서 끝까지 확인한다.
  *
  * <p>재현된 결함: 자릿세까지 결제를 끝낸 일행이 폰을 안 만진 채 유휴 임계를 넘기고 QR을 다시 찍으면 C1이 세션을 바꿨고,
- * 새 세션은 인원을 다시 묻고 첫 주문에 자릿세를 한 번 더 붙였다(같은 일행 이중 청구).
+ * 새 세션은 인원을 다시 묻고 자릿세를 한 번 더 청구했다(같은 일행 이중 청구).
+ * 자릿세는 인원을 고를 때 자릿세만 든 별도 주문으로 생긴다(PATCH party-size) — 메뉴 주문에는 붙지 않는다.
  * 유휴는 시계를 돌리는 대신 세션 시각을 임계(테스트 기본 180분)보다 과거로 옮겨 만든다.
  */
 @SpringBootTest
@@ -101,6 +105,21 @@ class SeatFeeIdleHandoffApiTests {
         return fx.tableSessionRepository.findBySessionToken(sessionToken).orElseThrow().getId();
     }
 
+    /** 이 세션의 자릿세 주문들(취소된 것 포함) */
+    private List<OrderEntity> seatFeeOrders(String sessionToken) {
+        Long sessionId = sessionIdOf(sessionToken);
+        return fx.tx.execute(st -> fx.orderRepository.findBySessionIdOrderByCreatedAtDescIdDesc(sessionId).stream()
+                .filter(o -> o.getItems().stream().anyMatch(i -> i.getItemType() == OrderItemType.SEAT_FEE))
+                .toList());
+    }
+
+    /** 이 세션에 살아 있는 자릿세 금액 합 */
+    private int chargedSeatFee(String sessionToken) {
+        return seatFeeOrders(sessionToken).stream()
+                .filter(o -> o.getStatus() != OrderStatus.CANCELED)
+                .mapToInt(OrderEntity::getTotalAmount).sum();
+    }
+
     /** 세션을 유휴 임계(180분)보다 오래 방치한 것으로 만든다 */
     private void makeIdle(String sessionToken) {
         LocalDateTime longAgo = LocalDateTime.now(KST).minusMinutes(200);
@@ -108,19 +127,37 @@ class SeatFeeIdleHandoffApiTests {
                 longAgo, longAgo, sessionIdOf(sessionToken));
     }
 
-    /** 첫 일행: 인원 3명으로 자릿세 포함 첫 주문 — 주문 id를 돌려준다 */
-    private Long firstPartyOrdersWithSeatFee(String sessionToken) throws Exception {
-        choosePartySize(sessionToken, 3);
-        ResultActions created = order(sessionToken)
+    /** 인원을 고르고 첫 메뉴 주문을 넣는다 — 자릿세 주문이 따로 생긴다. [자릿세 주문 id, 메뉴 주문 id] */
+    private Long[] choosesAndOrders(String sessionToken, int partySize) throws Exception {
+        choosePartySize(sessionToken, partySize);
+        ResultActions menu = order(sessionToken)
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE + FEE * 3));
-        return orderId(created);
+                .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE));   // 메뉴 주문에는 자릿세가 섞이지 않는다
+        List<OrderEntity> fees = seatFeeOrders(sessionToken);
+        assertEquals(1, fees.size());
+        assertEquals(FEE * partySize, fees.getFirst().getTotalAmount());
+        return new Long[] {fees.getFirst().getId(), orderId(menu)};
+    }
+
+    /**
+     * 첫 일행: 인원 3명 + 첫 주문 — 자릿세 주문 id를 돌려준다. 메뉴 주문은 승인대기로 남는다(승인대기는 미결제가 아니라
+     * 유휴 판정을 막지 않는다 — UnpaidOrderRule)
+     */
+    private Long firstPartyChoosesThree(String sessionToken) throws Exception {
+        return choosesAndOrders(sessionToken, 3)[0];
+    }
+
+    /** 첫 일행: 인원 3명 + 메뉴 주문 후 모두 결제 — 미결제가 없어야 유휴 인계가 일어난다 */
+    private void firstPartyOrdersAndPaysAll(String sessionToken) throws Exception {
+        Long[] ids = choosesAndOrders(sessionToken, 3);
+        approveAndPay(ids[0]);
+        approveAndPay(ids[1]);
     }
 
     @Test
     void idleHandoffInheritsPaidSeatFeeAndPartySize() throws Exception {
         String first = scan().get("sessionToken").asString();
-        approveAndPay(firstPartyOrdersWithSeatFee(first));
+        firstPartyOrdersAndPaysAll(first);
         makeIdle(first);
 
         JsonNode rescan = scan();
@@ -133,20 +170,23 @@ class SeatFeeIdleHandoffApiTests {
         TableSessionEntity next = fx.tableSessionRepository.findBySessionToken(second).orElseThrow();
         assertEquals(prev.getEndedAt(), next.getStartedAt(), "유휴 인계는 옛 ended_at == 새 started_at");
 
-        // 인원수를 다시 보내지 않아도(C1이 준 값 그대로) 409 없이 받고, 자릿세는 다시 붙지 않는다
+        // 인원수를 다시 보내지 않아도(C1이 준 값 그대로) 409 없이 받고, 자릿세는 다시 생기지 않는다
         order(second)
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE))
                 .andExpect(jsonPath("$.items.length()").value(1));
+        // 인원을 다시 보내도(프론트가 혹시 띄웠어도) 이어받은 자릿세가 있어 새로 만들지 않는다
+        choosePartySize(second, 3);
+        assertTrue(seatFeeOrders(second).isEmpty());
     }
 
     @Test
     void c1ReportsSeatFeeChargedOnlyWhenInheritedOrPaid() throws Exception {
-        // 주문 확인 화면의 자릿세 미리보기 근거 — C4는 새 세션 주문만 돌려줘 이어받은 자릿세를 프론트가 볼 수 없다
+        // C4는 새 세션 주문만 돌려줘 이어받은 자릿세를 프론트가 볼 수 없다 — C1이 알려 준다
         JsonNode fresh = scan();
         assertFalse(fresh.get("seatFeeCharged").asBoolean(), "새 세션은 아직 자릿세를 내지 않았다");
         String first = fresh.get("sessionToken").asString();
-        approveAndPay(firstPartyOrdersWithSeatFee(first));
+        firstPartyOrdersAndPaysAll(first);
         makeIdle(first);
 
         JsonNode rescan = scan();
@@ -158,7 +198,7 @@ class SeatFeeIdleHandoffApiTests {
     void manualOrderAfterIdleHandoffStartsNewParty() throws Exception {
         // O14 수기 주문이 유휴 세션을 끝내고 연 자리는 새 일행이다 — 인원수·자릿세를 이어받지 않는다
         String first = scan().get("sessionToken").asString();
-        approveAndPay(firstPartyOrdersWithSeatFee(first));
+        firstPartyOrdersAndPaysAll(first);
         makeIdle(first);
 
         fx.manualOrder(fx.kimchiId, 1);
@@ -176,17 +216,18 @@ class SeatFeeIdleHandoffApiTests {
         order(second)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("PARTY_SIZE_REQUIRED"));
-        choosePartySize(second, 2);
+        choosesAndOrders(second, 2);
+        assertEquals(FEE * 2, chargedSeatFee(second));
         order(second)
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE + FEE * 2));
+                .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE));
     }
 
     @Test
     void idleHandoffWithoutPartySizeCopyIsNotAskedAgain() throws Exception {
         // 인원수 이어받기와 별개로, 인원수가 없는 세션도 앞 세션 자릿세를 보면 PARTY_SIZE_REQUIRED를 내지 않는다
         String first = scan().get("sessionToken").asString();
-        approveAndPay(firstPartyOrdersWithSeatFee(first));
+        firstPartyOrdersAndPaysAll(first);
         makeIdle(first);
         String second = scan().get("sessionToken").asString();
         jdbcTemplate.update("update table_session set party_size = null where id = ?", sessionIdOf(second));
@@ -199,7 +240,7 @@ class SeatFeeIdleHandoffApiTests {
     @Test
     void newPartyAfterCheckoutIsChargedAgain() throws Exception {
         String first = scan().get("sessionToken").asString();
-        approveAndPay(firstPartyOrdersWithSeatFee(first));
+        firstPartyOrdersAndPaysAll(first);
 
         mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", fx.table.getId())
                         .header("Authorization", bearer(fx.staffToken)))
@@ -215,37 +256,35 @@ class SeatFeeIdleHandoffApiTests {
         order(second)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("PARTY_SIZE_REQUIRED"));
-        choosePartySize(second, 2);
-        order(second)
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE + FEE * 2));
+        choosesAndOrders(second, 2);
+        assertEquals(FEE * 2, chargedSeatFee(second));
     }
 
     @Test
-    void canceledPredecessorSeatFeeIsNotInherited() throws Exception {
+    void waivedPredecessorSeatFeeIsInheritedSoIdleRescanDoesNotChargeAgain() throws Exception {
+        // 운영자가 면제(자릿세 주문 취소)한 일행이 유휴 임계를 넘겨 다시 찍어도 면제가 이어진다 — 인원도 다시 묻지 않는다
         String first = scan().get("sessionToken").asString();
-        Long feeOrderId = firstPartyOrdersWithSeatFee(first);
-        assertEquals(1, fx.orderRepository.cancelByStaff(feeOrderId, fx.booth.getId(), "주문 거절", "race-staff",
+        Long feeOrderId = firstPartyChoosesThree(first);
+        assertEquals(1, fx.orderRepository.cancelByStaff(feeOrderId, fx.booth.getId(), "자릿세 면제", "race-staff",
                 LocalDateTime.now(KST)));
         makeIdle(first);
 
         JsonNode rescan = scan();
         String second = rescan.get("sessionToken").asString();
-        assertTrue(!rescan.hasNonNull("partySize"), "앞 세션이 실제로 낸 자릿세가 없으면 인원을 옮기지 않는다");
+        assertNotEquals(first, second);
+        assertEquals(3, rescan.get("partySize").asInt(), "면제도 처리된 자릿세라 인원을 이어받는다");
+        assertTrue(rescan.get("seatFeeCharged").asBoolean());
 
         order(second)
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error.code").value("PARTY_SIZE_REQUIRED"));
-        choosePartySize(second, 2);
-        order(second)
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE + FEE * 2));
+                .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE));
+        assertTrue(seatFeeOrders(second).isEmpty(), "면제받은 자릿세를 다시 청구하지 않는다");
     }
 
     @Test
     void predecessorSeatFeeFromAnotherBusinessDateIsNotInherited() throws Exception {
         String first = scan().get("sessionToken").asString();
-        Long feeOrderId = firstPartyOrdersWithSeatFee(first);
+        Long feeOrderId = firstPartyChoosesThree(first);
         approveAndPay(feeOrderId);
         // 어제 영업일에 낸 자릿세 — 다음 날 같은 자리는 새로 받는다
         java.time.LocalDate charged = jdbcTemplate.queryForObject(
@@ -256,17 +295,15 @@ class SeatFeeIdleHandoffApiTests {
         JsonNode rescan = scan();
         String second = rescan.get("sessionToken").asString();
         assertTrue(!rescan.hasNonNull("partySize"));
-        choosePartySize(second, 4);
-        order(second)
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE + FEE * 4));
+        choosesAndOrders(second, 4);
+        assertEquals(FEE * 4, chargedSeatFee(second));
     }
 
     @Test
     void inheritanceWalksBackThroughConsecutiveIdleHandoffs() throws Exception {
         // 자릿세를 낸 세션 → (주문 없이) 유휴 인계 → 다시 유휴 인계. 두 단계 앞의 자릿세도 이어받는다
         String first = scan().get("sessionToken").asString();
-        approveAndPay(firstPartyOrdersWithSeatFee(first));
+        firstPartyOrdersAndPaysAll(first);
         makeIdle(first);
         String second = scan().get("sessionToken").asString();
         makeIdle(second);
@@ -275,12 +312,17 @@ class SeatFeeIdleHandoffApiTests {
                 sessionIdOf(first), sessionIdOf(second));
 
         JsonNode third = scan();
+        String thirdToken = third.get("sessionToken").asString();
         assertEquals(3, third.get("partySize").asInt());
-        order(third.get("sessionToken").asString())
+        order(thirdToken)
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE));
+        choosePartySize(thirdToken, 3);
 
-        List<Long> orderSessions = fx.orderRepository.findAll().stream().map(o -> o.getSessionId()).toList();
-        assertEquals(2, orderSessions.size());
+        long seatFeeOrders = fx.orderRepository.findAll().stream()
+                .filter(o -> fx.tx.execute(st -> fx.orderRepository.findById(o.getId()).orElseThrow().getItems().stream()
+                        .anyMatch(i -> i.getItemType() == OrderItemType.SEAT_FEE)))
+                .count();
+        assertEquals(1, seatFeeOrders, "자릿세는 첫 세션에서 한 번만");
     }
 }

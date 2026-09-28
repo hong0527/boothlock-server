@@ -13,9 +13,11 @@ import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
+import com.boothlock.boothlock_server.order.domain.OrderItemType;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
 import com.boothlock.boothlock_server.order.service.OrderCreateService;
+import com.boothlock.boothlock_server.order.service.OrderWriter;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,14 +40,17 @@ public class DashboardOrderActionService {
     private final OrderSummaryMapper mapper;
     private final OrderCreateService orderCreateService;
     private final TableSessionRepository tableSessionRepository;
+    private final OrderWriter orderWriter;
 
     public DashboardOrderActionService(OrderRepository orderRepository, BoothStaffAuthenticator staffAuthenticator,
-            OrderSummaryMapper mapper, OrderCreateService orderCreateService, TableSessionRepository tableSessionRepository) {
+            OrderSummaryMapper mapper, OrderCreateService orderCreateService, TableSessionRepository tableSessionRepository,
+            OrderWriter orderWriter) {
         this.orderRepository = orderRepository;
         this.staffAuthenticator = staffAuthenticator;
         this.mapper = mapper;
         this.orderCreateService = orderCreateService;
         this.tableSessionRepository = tableSessionRepository;
+        this.orderWriter = orderWriter;
     }
 
     /** O11 입금 확인 — UNPAID→PAID, 승인자·승인시각 자동 기록 (명세서 O11) */
@@ -146,16 +151,20 @@ public class DashboardOrderActionService {
     public DashboardResponse.OrderSummary updateItemQty(String authorization, Long orderId, Long itemId, int qty) {
         StaffAccountEntity staff = authenticate(authorization);
         Long boothId = staff.getBooth().getId();
+        lockSessionOf(orderId, boothId);   // 할인 한도 합계를 같은 테이블의 다른 수정·저장과 직렬화한다
         OrderEntity order = requireExistingForUpdate(orderId, boothId);
         if (!order.canEditItems()) {
             throw new InvalidStateException("항목을 수정할 수 없는 주문 상태입니다.");
         }
         OrderItemEntity item = order.requireEditableItem(itemId);   // 이 주문의 살아 있는 항목이 아니면 404
         OrderItemEntity.requireValidQty(qty);                       // 1~30 밖이면 품절 검사 전에 400
-        if (qty > item.getQty()) {
+        // 자릿세 인원 늘리기는 메뉴 주문이 아니라 품절·마감과 무관하다(메뉴 id도 없다)
+        if (qty > item.getQty() && item.getItemType() != OrderItemType.SEAT_FEE) {
             orderCreateService.ensureOrderable(boothId, item.getMenuId());   // 마감 409 ORDER_CLOSED, 숨김·품절 409 SOLD_OUT
         }
+        int before = order.getTotalAmount();
         order.updateItemQty(itemId, qty);
+        requireDiscountStillCovered(order, before);
         return mapper.toOrderSummary(order);
     }
 
@@ -168,9 +177,12 @@ public class DashboardOrderActionService {
     public DashboardResponse.OrderSummary cancelItem(String authorization, Long orderId, Long itemId) {
         StaffAccountEntity staff = authenticate(authorization);
         Long boothId = staff.getBooth().getId();
+        lockSessionOf(orderId, boothId);
         OrderEntity order = requireExistingForUpdate(orderId, boothId);
+        int before = order.getTotalAmount();
         boolean lastItem = order.cancelItem(itemId);   // 상태 밖이면 409, 항목 없으면 404
         if (!lastItem) {
+            requireDiscountStillCovered(order, before);
             return mapper.toOrderSummary(order);
         }
 
@@ -182,7 +194,33 @@ public class DashboardOrderActionService {
         if (updated == 0) {
             throw new InvalidStateException("이미 취소된 주문입니다.");   // 행 잠금 아래라 도달하지 않는다 — 방어
         }
-        return mapper.toOrderSummary(requireExistingForUpdate(orderId, boothId));
+        // 마지막 줄 취소로 주문째 빠져도 같은 한도 — 쿠폰만 남기고 메뉴 주문을 빼면 미결제가 음수가 된다. 넘으면 409로 취소째 되돌린다
+        OrderEntity canceled = requireExistingForUpdate(orderId, boothId);
+        if (before > 0 && canceled.getSessionId() != null) {
+            orderWriter.requireUnpaidCovers(canceled.getSessionId(), 0);
+        }
+        return mapper.toOrderSummary(canceled);
+    }
+
+    /**
+     * 결제 모달 수량 변경·항목 취소로 이 주문 합계가 줄었으면(쿠폰 줄 수량 늘리기·메뉴 줄 줄이기) 테이블 미결제 합계가 0 아래로
+     * 내려가지 않는지 본다 — 할인 한도(OrderWriter.save)를 수량 변경으로 우회하지 못하게. 합계 조회가 이 변경을 먼저 flush하므로
+     * 바뀐 금액이 들어간 합계를 보고, 넘으면 409로 트랜잭션째 되돌린다. 세션 행·주문 행 잠금(lockSessionOf) 아래에서 부른다
+     */
+    /**
+     * 주문이 속한 세션 행을 잠근다(FOR UPDATE) — 주문 행보다 먼저. 할인 한도는 세션 미결제 합계를 보므로, 같은 테이블의 다른 주문
+     * 수정·C3 저장(OrderWriter.save도 세션 행을 잠근다)과 엇갈리면 둘 다 한도를 통과할 수 있다. 잠금 순서는 restore·퇴실과 같은
+     * 세션 → 주문이다(세션 id는 엔티티가 아닌 스칼라로 먼저 얻는다 — OrderRepository.findSessionIdByIdAndBoothId 참조)
+     */
+    private void lockSessionOf(Long orderId, Long boothId) {
+        orderRepository.findSessionIdByIdAndBoothId(orderId, boothId)
+                .ifPresent(tableSessionRepository::findByIdForUpdate);
+    }
+
+    private void requireDiscountStillCovered(OrderEntity order, int totalBefore) {
+        if (order.getTotalAmount() < totalBefore && order.getSessionId() != null) {
+            orderWriter.requireUnpaidCovers(order.getSessionId(), 0);
+        }
     }
 
     /** O21 환불 완료 — ADMIN 전용, REFUND_NEEDED만 REFUNDED로 전환 (명세서 O21) */
@@ -236,6 +274,10 @@ public class DashboardOrderActionService {
             order.dropSeatFee();
         }
         order.restore();
+        // 취소했던 쿠폰(음수) 주문을 되살릴 때도 할인 한도 — 그 사이 메뉴 주문이 결제·취소됐으면 미결제가 음수가 된다
+        if (order.getTotalAmount() < 0 && order.getSessionId() != null) {
+            orderWriter.requireUnpaidCovers(order.getSessionId(), 0);
+        }
         return mapper.toOrderSummary(order);
     }
 

@@ -65,15 +65,15 @@ public class TableController {
 
     /**
      * PartySizePage 제출 (명세서 밖, 자릿세 파일럿 전용) — 손님이 고른 인원수를 세션에 저장한다.
-     * 서버는 이 값을 첫 주문 생성 시점에 읽어 자릿세(1인당 3,000원)를 계산한다(OrderCreateService).
+     * 자릿세(부스 1인당 금액 × 인원수)는 이 세션 첫 메뉴 주문 때 별도 자릿세 주문으로 만든다(OrderWriter.save).
      */
     @Operation(summary = "인원수 저장 (자릿세 파일럿 전용)",
-            description = "PartySizePage에서 고른 인원수(1~20)를 세션에 저장한다. 자릿세는 이 값을 이용해 첫 주문에만 자동 부과된다.")
+            description = "PartySizePage에서 고른 인원수(1~20)를 세션에 저장한다. 자릿세는 첫 메뉴 주문 때 자릿세만 든 주문(완료·미결제)으로 따로 청구된다.")
     @PatchMapping("/table-sessions/party-size")
     public void setPartySize(@RequestHeader(SESSION_HEADER) String sessionToken,
                               @RequestBody PartySizeRequest request) {
         AuthenticatedSession session = tableSessionAuthService.authenticate(sessionToken);
-        tableSessionService.setPartySize(session.sessionId(), request == null ? null : request.partySize());
+        tableSessionService.setPartySize(session, request == null ? null : request.partySize());
     }
 
     /** O2 테이블 일괄 등록 (Must) — count≤300, 라벨 정규화 후 6자·단독 M 금지, 토큰 자동 발급 */

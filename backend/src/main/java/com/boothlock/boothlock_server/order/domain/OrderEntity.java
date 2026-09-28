@@ -178,6 +178,16 @@ public class OrderEntity {
         this.status = OrderStatus.PENDING_APPROVAL;
     }
 
+    /**
+     * 조리할 것이 없는 주문은 완료(DONE)로 시작한다 — 인원 선택 때 서버가 만드는 자릿세 주문, 운영자가 결제 모달에서 넣는
+     * 기타 항목(추가 자릿세·쿠폰 등, 명세서 밖)만 든 수기 주문.
+     * 주방 대기열·승인대기에 뜨지 않고, 손님 취소(canCancel)는 RECEIVED 전용이라 막힌다. 항목 수정(canEditItems)은 기타 항목만 된다.
+     * DONE+UNPAID는 미결제(UnpaidOrderRule)라 테이블 합계·결제확인·퇴실 경고에는 그대로 잡힌다. 저장 전에만 부른다
+     */
+    public void startAsNoCooking() {
+        this.status = OrderStatus.DONE;
+    }
+
     /** 취소 가능 판정 — C4 응답의 canCancel과 C5 실행 조건이 같은 곳에서 나오게 한다 (명세서 C4·C5) */
     public boolean canCancel() {
         return status == OrderStatus.RECEIVED && paymentStatus == PaymentStatus.UNPAID;
@@ -199,7 +209,9 @@ public class OrderEntity {
      * 커밋 순서에 따라 이미 지난 상태일 수 있다 (audit2 B1)
      */
     public boolean canEditItems() {
-        return status == OrderStatus.RECEIVED && paymentStatus == PaymentStatus.UNPAID;
+        // 조리할 것 없이 완료로 시작한 주문(자릿세·기타 항목만)도 미입금이면 결제 모달 +/-·취소로 고칠 수 있다 — 주방 진행과 무관하다
+        return paymentStatus == PaymentStatus.UNPAID
+                && (status == OrderStatus.RECEIVED || (status == OrderStatus.DONE && !hasRemainingMenuItems()));
     }
 
     /** O6 결제 모달 수량 +/- — 취소된 항목은 대상에서 제외(못 찾은 것과 동일하게 취급). 증가 시 품절·마감 검사는 호출자 몫 */
@@ -221,10 +233,15 @@ public class OrderEntity {
             throw new InvalidStateException("항목을 수정할 수 없는 주문 상태입니다.");
         }
         requireEditableItem(itemId).cancel();
-        // 메뉴가 하나도 안 남으면 자릿세도 함께 취소한다 — 음식 없는 "자릿세만 있는 접수 주문"이 주방 대기열에 남지 않게.
-        // 주문은 호출자가 CANCELED로 넘기고, 취소된 주문의 자릿세는 청구된 것으로 보지 않으므로 다음 주문에 다시 붙는다
-        if (!hasRemainingMenuItems()) {
+        // 메뉴·기타 항목이 하나도 안 남으면 자릿세도 함께 취소한다 — 음식 없는 "자릿세만 있는 접수 주문"이 주방 대기열에 남지 않게.
+        // 주문은 호출자가 CANCELED로 넘긴다
+        if (items.stream().noneMatch(item -> !item.isCanceled() && item.getItemType() != OrderItemType.SEAT_FEE)) {
             items.stream().filter(item -> !item.isCanceled()).forEach(OrderItemEntity::cancel);
+        }
+        // 메뉴는 다 빠지고 기타 항목(쿠폰 등)만 남은 접수 주문은 조리할 것이 없다 — 처음부터 기타만 넣은 주문처럼 완료로 넘겨
+        // 주방 대기열에 "쿠폰"만 남지 않게 한다(startAsNoCooking과 같은 기준)
+        if (status == OrderStatus.RECEIVED && hasRemainingItems() && !hasRemainingMenuItems()) {
+            this.status = OrderStatus.DONE;
         }
         recalculateTotal();
         return !hasRemainingItems();
@@ -274,20 +291,24 @@ public class OrderEntity {
         if (paymentStatus == PaymentStatus.REFUND_NEEDED || paymentStatus == PaymentStatus.REFUNDED) {
             throw new InvalidStateException("환불 대상이거나 환불 완료된 주문은 되돌릴 수 없습니다. 필요하면 수기 주문으로 다시 입력해주세요.");
         }
-        if (!hasRemainingMenuItems()) {
+        if (!hasRemainingItems()) {
             throw new InvalidStateException("모든 항목이 취소된 주문은 복구할 수 없습니다.");
         }
-        this.status = OrderStatus.RECEIVED;
+        if (status == OrderStatus.DONE && !hasRemainingMenuItems()) {
+            throw new InvalidStateException("조리할 메뉴가 없는 주문(자릿세·기타 항목)은 접수로 되돌릴 수 없습니다.");
+        }
+        // 자릿세·기타 항목만 든 주문은 조리할 것이 없어 접수가 아니라 처음 상태인 완료로 되살린다 (startAsNoCooking)
+        this.status = hasRemainingMenuItems() ? OrderStatus.RECEIVED : OrderStatus.DONE;
     }
 
     /**
      * 수정 대상 항목 — 이 주문의 것이 아니거나 이미 취소된 항목은 404 (남의 주문 항목 id를 끼워 넣어도 같은 응답).
-     * 자릿세(SEAT_FEE) 항목도 같은 404로 걸러진다 — 스태프가 O23/O23b로 자릿세를 고치거나 지울 수 없어야 하므로,
-     * 새 예외를 만들지 않고 "존재하지 않는 항목"과 같은 응답으로 자연스럽게 막는다.
+     * 자릿세(SEAT_FEE)도 고칠 수 있다(명세서 밖) — 운영자가 결제 모달에서 인원(수량)을 바로잡거나 취소(면제)한다.
+     * 취소된 자릿세도 "생겼던 자릿세"라 인원을 다시 골라도 새로 청구하지 않는다(OrderRepository.existsSeatFeeItem)
      */
     public OrderItemEntity requireEditableItem(Long itemId) {
         return items.stream()
-                .filter(item -> item.getId().equals(itemId) && !item.isCanceled() && item.getItemType() == OrderItemType.MENU)
+                .filter(item -> item.getId().equals(itemId) && !item.isCanceled())
                 .findFirst()
                 .orElseThrow(() -> new NotFoundException("주문 항목을 찾을 수 없습니다."));
     }

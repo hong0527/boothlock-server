@@ -6,7 +6,8 @@ import { setCustomerSession } from '../../lib/customerSession'
 
 type TableSessionResponse = {
   sessionToken: string
-  booth: { name: string; isOpen: boolean }
+  /** seatFeePerPerson: 부스 1인당 자릿세(0 = 없음) — 인원 선택 화면 안내용 */
+  booth: { name: string; isOpen: boolean; seatFeePerPerson: number }
   table: { label: string }
   restored: boolean
   /** 세션에 저장된 인원수(자릿세 파일럿) — 없으면 null */
@@ -56,6 +57,7 @@ export default function TableSessionPage() {
           tableLabel: data.table.label,
           ...(data.partySize ? { partySize: data.partySize } : {}),
           seatFeeCharged: data.seatFeeCharged === true,
+          seatFeePerPerson: data.booth.seatFeePerPerson,
         })
         // 명세서 §1.2: 토큰 교환 직후 tableToken을 주소창에서 제거 — replace 네비게이션으로 히스토리에도 안 남긴다
         // 자릿세(1인당 3,000원, 첫 주문에만 부과)가 인원수를 필요로 해서 다시 인원 선택을 거친다(2026-09-23 피드백,

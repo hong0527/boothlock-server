@@ -32,7 +32,14 @@ public class MenuService implements MenuLookup {
 
     private static final Set<String> PATCH_FIELDS =
             Set.of("name", "price", "description", "imageUrl", "visible", "soldOut", "category");
-    private static final Set<String> VALID_CATEGORIES = Set.of("MAIN", "SIDE", "DRINK");
+    /**
+     * 기타(ETC, 명세서 밖) — 운영자가 결제 모달에서만 넣는 항목(추가 자릿세·쿠폰 등). 손님 메뉴판(C2)·손님 주문(C3)에는 나오지 않고,
+     * 음수 가격(할인)을 허용한다. 일반 메뉴 분류(MAIN·SIDE·DRINK)는 지금처럼 0원 이상만 받는다
+     */
+    public static final String ETC_CATEGORY = "ETC";
+    private static final Set<String> VALID_CATEGORIES = Set.of("MAIN", "SIDE", "DRINK", ETC_CATEGORY);
+    /** 기타 항목 금액 절댓값 상한 — 오타(-2000 → -200000) 방지용 */
+    private static final int ETC_PRICE_LIMIT = 1_000_000;
 
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
@@ -62,6 +69,7 @@ public class MenuService implements MenuLookup {
                 .orElseThrow(() -> new NotFoundException("부스를 찾을 수 없습니다."));
         List<MenuBoardResponse.MenuItem> menus = menuRepository
                 .findByBooth_IdAndVisibleTrueOrderByIdAsc(booth.getId()).stream()
+                .filter(menu -> !ETC_CATEGORY.equals(menu.getCategory()))   // 기타 항목은 운영자 전용
                 .map(MenuBoardResponse.MenuItem::from)
                 .toList();
         return new MenuBoardResponse(booth.getName(), booth.isOpen(), menus);
@@ -91,9 +99,7 @@ public class MenuService implements MenuLookup {
         validateOptionalBoolean(request, "soldOut", "soldOut은 boolean이어야 합니다.", errors);
         String category = nullableCategory(request, errors);
 
-        if (price != null && price < 0) {
-            errors.add("price: 가격은 0 이상이어야 합니다.");
-        }
+        validatePrice(price, category, errors);
         throwInvalidIfAny(errors);
         if (menuRepository.existsByBooth_IdAndName(booth.getId(), name)) {
             throw duplicatedMenuName();
@@ -129,9 +135,9 @@ public class MenuService implements MenuLookup {
         Boolean soldOut = request.has("soldOut") ? requiredBoolean(request, "soldOut", "soldOut은 boolean이어야 합니다.", errors) : null;
         String category = request.has("category") ? nullableCategory(request, errors) : null;
 
-        if (price != null && price < 0) {
-            errors.add("price: 가격은 0 이상이어야 합니다.");
-        }
+        // 가격·분류 중 하나만 바꿔도 바뀐 뒤의 조합으로 검사한다 — 할인(음수) 항목을 일반 분류로 옮기면 손님 메뉴판에 음수 가격이 뜬다
+        validatePrice(request.has("price") ? price : Integer.valueOf(menu.getPrice()),
+                request.has("category") ? category : menu.getCategory(), errors);
         throwInvalidIfAny(errors);
         if (name != null && menuRepository.existsByBooth_IdAndNameAndIdNot(booth.getId(), name, menu.getId())) {
             throw duplicatedMenuName();
@@ -159,7 +165,8 @@ public class MenuService implements MenuLookup {
             return List.of();
         }
         return menuRepository.findByBooth_IdAndIdIn(boothId, menuIds).stream()
-                .map(menu -> new MenuInfo(menu.getId(), menu.getName(), menu.getPrice(), menu.isSoldOut(), menu.isVisible()))
+                .map(menu -> new MenuInfo(menu.getId(), menu.getName(), menu.getPrice(), menu.isSoldOut(), menu.isVisible(),
+                        ETC_CATEGORY.equals(menu.getCategory())))
                 .toList();
     }
 
@@ -221,13 +228,27 @@ public class MenuService implements MenuLookup {
         return value;
     }
 
+    /** 일반 메뉴는 0원 이상, 기타(ETC)는 ±ETC_PRICE_LIMIT 안의 음수(할인)도 허용 */
+    private void validatePrice(Integer price, String category, List<String> errors) {
+        if (price == null) {
+            return;
+        }
+        if (ETC_CATEGORY.equals(category)) {
+            if (Math.abs((long) price) > ETC_PRICE_LIMIT) {
+                errors.add("price: 기타 항목 금액은 -" + ETC_PRICE_LIMIT + "~" + ETC_PRICE_LIMIT + " 사이여야 합니다.");
+            }
+        } else if (price < 0) {
+            errors.add("price: 가격은 0 이상이어야 합니다.");
+        }
+    }
+
     private String nullableCategory(JsonNode request, List<String> errors) {
         JsonNode node = request.get("category");
         if (node == null || node.isNull()) {
             return null;
         }
         if (!node.isString() || !VALID_CATEGORIES.contains(node.asText())) {
-            errors.add("category: category는 MAIN, SIDE, DRINK 중 하나여야 합니다.");
+            errors.add("category: category는 MAIN, SIDE, DRINK, ETC 중 하나여야 합니다.");
             return null;
         }
         return node.asText();
