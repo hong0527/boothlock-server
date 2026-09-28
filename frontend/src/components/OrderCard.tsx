@@ -37,6 +37,9 @@ type OrderCardProps = {
   onRestore: (orderId: number) => void
   /** ADMIN이 아니면 넘기지 않는다 — 환불 완료는 ADMIN 전용(백엔드 403) */
   onRefundDone?: (orderId: number) => void
+  /** 같은 테이블 세션에서 두 번째 이후 주문 — 자릿세가 첫 주문에만 붙어서 카드끼리 겉보기가 달라 보일 수 있어
+   * "이 테이블 첫 주문의 후속"이라는 걸 바로 알 수 있게 배지로 표시한다 (dashboardOrders.additionalOrderIds) */
+  additionalOrder?: boolean
 }
 
 export default function OrderCard({
@@ -49,6 +52,7 @@ export default function OrderCard({
   onCancel,
   onRestore,
   onRefundDone,
+  additionalOrder,
 }: OrderCardProps) {
   // 진행 탭에서 승인대기 카드는 주황으로 구분한다(탭의 "대기" 뱃지·범례 체크박스와 같은 색)
   const isPending = order.status === 'PENDING_APPROVAL'
@@ -77,6 +81,9 @@ export default function OrderCard({
             {PAYMENT_STATUS_LABEL[order.paymentStatus]}
           </span>
           {order.manual && <span className="text-xs font-medium text-neutral-400">수기</span>}
+          {additionalOrder && (
+            <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700">추가주문</span>
+          )}
         </span>
         <span className="flex flex-col items-end">
           <span className="text-base leading-[1.5] font-medium tracking-[-0.04em] text-blue-600">

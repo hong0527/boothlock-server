@@ -35,9 +35,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 미결제 정의({@link UnpaidOrderRule})가 다섯 쿼리에서 전부 같은지 — 주문·결제 상태의 모든 조합(3×4)을 한 테이블씩 깔고
- * O3 건수·O6 경고 건수·O24 대상·유휴 예외·E1 좌석 집계가 {@link UnpaidOrderRule#matches}와 조합마다 일치해야 한다.
- * 한 곳만 옛 조건(RECEIVED만)으로 되돌리면 DONE+UNPAID 행에서 그 쿼리만 어긋나 여기서 잡힌다.
+ * 미결제 정의({@link UnpaidOrderRule})가 여섯 쿼리에서 전부 같은지 — 주문·결제 상태의 모든 조합을 한 테이블씩 깔고
+ * O3 건수·O6 경고 건수·O24 대상·유휴 예외(SeatIdlePolicy 활성 조건 2)·E1 좌석 집계가 {@link UnpaidOrderRule#matches}와
+ * 조합마다 일치해야 한다. 한 곳만 옛 조건(RECEIVED만)으로 되돌리면 DONE+UNPAID 행에서 그 쿼리만 어긋나 여기서 잡힌다.
+ *
+ * <p>단, E1(좌석 집계)만은 예외다 — SeatIdlePolicy 활성 조건 3(승인대기 보유, 2026-09-28 피드백)도 같은 쿼리에 함께
+ * 들어 있어서, PENDING_APPROVAL 조합은 결제 상태와 무관하게 항상 활성으로 잡힌다(UnpaidOrderRule과 무관한 별개 조건).
+ * 그래서 E1의 기대 활성 수만 {@code expectedActiveForE1}로 따로 센다 — O3·O6·O24·유휴 예외는 여전히 UnpaidOrderRule만 본다.
  */
 @SpringBootTest
 class UnpaidOrderRuleConsistencyTests {
@@ -122,7 +126,7 @@ class UnpaidOrderRuleConsistencyTests {
     }
 
     @Test
-    void fiveQueriesAgreeWithTheRuleOnEveryStatusCombination() {
+    void allQueriesAgreeWithTheRuleOnEveryStatusCombination() {
         List<Fixture> fixtures = seedAllCombos();
         List<Long> tableIds = fixtures.stream().map(Fixture::tableId).toList();
 
@@ -161,15 +165,29 @@ class UnpaidOrderRuleConsistencyTests {
             if (idle != expected) {
                 wrong.add("SeatIdlePolicy existsUnpaidOrderOn=" + idle);
             }
+            // C1·C3·C4가 실제로 부르는 쿼리 — 미결제 OR 승인대기라, 미결제 조합에 더해 PENDING_APPROVAL이면
+            // 결제 상태와 무관하게 참이어야 한다. 위 단독 쿼리만 검증하면 프로덕션 경로가 무방비로 남는다
+            boolean activeExpected = expected || fx.combo().status() == OrderStatus.PENDING_APPROVAL;
+            boolean active = tableUnpaidOrderRepository
+                    .existsUnpaidOrPendingApprovalOrderOn(fx.sessionId(), booth.getId(), DAY);
+            if (active != activeExpected) {
+                wrong.add("SeatIdlePolicy existsUnpaidOrPendingApprovalOrderOn=" + active);
+            }
             if (!wrong.isEmpty()) {
                 disagreements.put(fx.combo().toString(), wrong);
             }
         }
         assertEquals(Map.of(), disagreements, "정의와 어긋난 쿼리 (조합 → 어긋난 곳)");
 
-        // E1은 테이블별이 아니라 부스 합계로만 나온다 — 활성(=미결제 보유) 테이블 수가 규칙의 참 조합 수와 같아야 한다
+        // E1은 테이블별이 아니라 부스 합계로만 나온다 — 활성 테이블 수가 "미결제 또는 승인대기" 조합 수와 같아야 한다
+        // (PENDING_APPROVAL은 결제 상태와 무관하게 항상 활성 — 클래스 상단 주석 참고)
+        long expectedActiveForE1 = fixtures.stream()
+                .filter(fx -> UnpaidOrderRule.matches(fx.combo().status(), fx.combo().paymentStatus())
+                        || fx.combo().status() == OrderStatus.PENDING_APPROVAL)
+                .count();
         assertEquals(fixtures.size(), e1.getTotalTables());
-        assertEquals(fixtures.size() - expectedActive, e1.getEmptyTables(), "E1 emptyTables");
+        assertEquals(fixtures.size() - expectedActiveForE1, e1.getEmptyTables(), "E1 emptyTables");
         assertEquals(2, expectedActive, "규칙상 미결제 조합 수 (RECEIVED+UNPAID, DONE+UNPAID)");
+        assertEquals(6, expectedActiveForE1, "E1 활성 조합 수 (미결제 2 + PENDING_APPROVAL×결제상태 4)");
     }
 }

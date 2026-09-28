@@ -166,14 +166,17 @@ class SeatIdlePolicyTests {
         assertThat(policy(180).criteria().isActive(session(NOW_KST.minusMinutes(180).minusSeconds(1)), false)).isFalse();
     }
 
+    // 미결제(UnpaidOrderRule)·승인대기(PENDING_APPROVAL)는 hasQualifyingOrderToday 하나로 합쳐 들어온다
+    // (2026-09-28 코드 리뷰) — 여기서는 두 출처를 구분할 수 없으므로 테스트도 하나다. 어느 출처가 true를
+    // 만드는지는 쿼리 수준(UnpaidOrderRuleConsistencyTests)과 API 수준(SeatFeeIdleHandoffApiTests)이 가른다
     @Test
-    @DisplayName("유휴여도 현재 영업일 미결제가 있으면 활성 — §7-9 미결제 세션은 영업일 종료로만 만료")
-    void idleSessionWithUnpaidOrderTodayStaysActive() {
+    @DisplayName("유휴여도 현재 영업일에 살아 있는 주문(미결제 또는 승인대기)이 있으면 활성 — §7-9")
+    void idleSessionWithQualifyingOrderTodayStaysActive() {
         assertThat(policy(180).criteria().isActive(session(NOW_KST.minusHours(10)), true)).isTrue();
     }
 
     @Test
-    @DisplayName("방금 활동했어도 종료된 세션은 활성이 아니다 — 미결제가 있어도 마찬가지")
+    @DisplayName("방금 활동했어도 종료된 세션은 활성이 아니다 — 미결제·승인대기가 있어도 마찬가지")
     void endedSessionIsNeverActive() {
         TableSessionEntity ended = session(NOW_KST.minusMinutes(1));
         ReflectionTestUtils.setField(ended, "id", 7L);   // end()는 저장된 세션에만 허용된다

@@ -2,6 +2,7 @@ package com.boothlock.boothlock_server.event.repository;
 
 import com.boothlock.boothlock_server.booth.domain.BoothEntity;
 import com.boothlock.boothlock_server.global.domain.UnpaidOrderRule;
+import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -31,9 +32,11 @@ public interface BoothSeatRepository extends JpaRepository<BoothEntity, Long> {
      * 테이블당 활성 세션은 최대 1개라(DB 유니크 제약) 조인으로 행이 늘지 않지만,
      * {@code count(distinct t.id)}로 한 번 더 방어한다.
      * <p>활성 세션 조건은 SeatIdlePolicy의 정의를 그대로 옮긴 것이다 — 최근 활동이 있거나, 현재 영업일의 미결제
-     * ({@link UnpaidOrderRule}: RECEIVED·DONE && UNPAID) 주문이 있으면 활성 (명세 §7-9 미결제 세션은 영업일 종료로만 만료).
-     * C1 복원·O3와 같은 정의이므로 한쪽만 바꾸지 말 것 — 미결제 조건은 UnpaidOrderRule.JPQL_CONDITION을 그대로 잇는다.
-     * 미결제 확인은 ON 절의 EXISTS라 쿼리는 여전히 1회다. {@code o.boothId}·{@code o.businessDate}는 orders 인덱스
+     * ({@link UnpaidOrderRule}: RECEIVED·DONE && UNPAID) 주문이 있거나, 현재 영업일의 승인대기(PENDING_APPROVAL) 주문이
+     * 있으면 활성 (명세 §7-9 미결제 세션은 영업일 종료로만 만료 + 2026-09-28 피드백: 승인대기도 마찬가지).
+     * C1 복원·O3와 같은 정의이므로 한쪽만 바꾸지 말 것 — 두 조건 모두 각자의 JPQL 상수(UnpaidOrderRule.JPQL_CONDITION·
+     * SeatIdlePolicy.PENDING_APPROVAL_JPQL_CONDITION)를 그대로 잇는다.
+     * 두 확인 모두 ON 절의 EXISTS라 쿼리는 여전히 1회다. {@code o.boothId}·{@code o.businessDate}는 orders 인덱스
      * (booth_id, business_date, order_no) 앞부분을 태우려고 둔다(orders에는 session_id 인덱스가 없다).
      * {@code s.endedAtKey = 0}은 uq_session_active(table_id, ended_at_key)를 끝까지 태우려고 둔다 — ended_at IS NULL만으로는
      * 종료된 과거 세션을 전부 읽는다(MySQL 8.4 실측 세션 5만 건 27ms → 1ms, 결과 동일).
@@ -58,6 +61,13 @@ public interface BoothSeatRepository extends JpaRepository<BoothEntity, Long> {
                                        and o.businessDate = :businessDate
                                        and o.sessionId = s.id
                                        and """ + UnpaidOrderRule.JPQL_CONDITION + """
+            )
+                         or exists (select o.id
+                                      from com.boothlock.boothlock_server.order.domain.OrderEntity o
+                                     where o.boothId = b.id
+                                       and o.businessDate = :businessDate
+                                       and o.sessionId = s.id
+                                       and """ + SeatIdlePolicy.PENDING_APPROVAL_JPQL_CONDITION + """
             ))
              group by b.id, b.name, b.category, b.open, b.mapX, b.mapY
              order by b.id asc
