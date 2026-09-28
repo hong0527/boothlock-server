@@ -28,10 +28,13 @@ import {
   acquireWakeLock,
   isAlertPreferred,
   listenForAudioUnlock,
-  playBeep,
+  playCallAlert,
+  playOrderAlert,
+  previewOrderAlert,
   releaseWakeLock,
   resumeAudio,
   setAlertPreferred,
+  stopAlertSounds,
   suspendAudio,
   unlockAudio,
   vibrate,
@@ -123,10 +126,13 @@ export default function OrderStatusPage() {
       const snapshot = snapshotOf(results[0].orders, nextCalls)
       const arrivals = diffArrivals(arrivalsRef.current, snapshot)
       arrivalsRef.current = snapshot
-      // 알림을 꺼 두었으면 소리·진동은 내지 않는다 — 탭 제목의 승인대기 수는 켜고 끔과 무관하게 갱신한다
-      if (alertOnRef.current && arrivals.newPendingOrders + arrivals.newCalls > 0) {
-        playBeep()
-        vibrate()
+      // 알림을 꺼 두었으면 소리·진동은 내지 않는다 — 탭 제목의 승인대기 수는 켜고 끔과 무관하게 갱신한다.
+      // 새 주문·직원호출은 서로 다른 음으로 울려 소음 속에서도 구분되게 한다(playOrderAlert vs playCallAlert).
+      // 둘 다 새로 생겼으면 staffAlert가 주문 알림음이 끝난 뒤에 호출 알림음을 이어 붙인다(겹치지 않게)
+      if (alertOnRef.current) {
+        if (arrivals.newPendingOrders > 0) playOrderAlert()
+        if (arrivals.newCalls > 0) playCallAlert()
+        if (arrivals.newPendingOrders + arrivals.newCalls > 0) vibrate()
       }
       if (typeof document !== 'undefined') {
         document.title = alertTitle(results[0].orders.length, baseTitleRef.current)
@@ -185,8 +191,11 @@ export default function OrderStatusPage() {
     const next = !alertOn
     if (next) {
       unlockAudio()
-      playBeep()
+      previewOrderAlert()
     } else {
+      // 끄면 예약된 소리도 끊는다 — 멈춘 오디오에 남겨 두면 다음에 켤 때 한꺼번에 울린다.
+      // 화면을 떠날 때는 끊지 않는다 — 이미 들어온 주문·호출의 소리는 끝까지 울려야 한다
+      stopAlertSounds()
       suspendAudio()
     }
     alertOnRef.current = next
