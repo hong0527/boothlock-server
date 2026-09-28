@@ -115,8 +115,8 @@ export function unlockAudio() {
       audioContext = new Ctor()
     }
     resumeAudio()
-    orderAlert.ensureLoaded(audioContext)
-    callAlert.ensureLoaded(audioContext)
+    void orderAlert.ensureLoaded(audioContext)
+    void callAlert.ensureLoaded(audioContext)
   } catch {
     // 오디오를 못 쓰는 환경 — 진동·탭 제목 알림은 그대로 동작한다
   }
@@ -340,20 +340,22 @@ function scheduleClip(ctx: AudioContext, buffer: AudioBuffer, at: number): numbe
  */
 function createClipAlert(url: string, synth: (ctx: AudioContext, start: number) => number) {
   let buffer: AudioBuffer | null = null
-  let loading = false
+  let loadPromise: Promise<void> | null = null
 
-  /** 음원을 미리 받아 디코딩해 둔다 — 알림을 켤 때(unlockAudio) 한 번, 실패하면 다음 알림음을 낼 때 다시 시도한다 */
-  function ensureLoaded(ctx: AudioContext) {
-    if (buffer || loading) return
-    loading = true
-    fetch(url)
+  /** 음원을 미리 받아 디코딩해 둔다 — 알림을 켤 때(unlockAudio) 한 번, 실패하면 다음 알림음을 낼 때 다시 시도한다.
+   * 반환하는 프로미스는 {@link playWhenReady}가 "잠깐 기다렸다 재생"할 때 쓴다 */
+  function ensureLoaded(ctx: AudioContext): Promise<void> {
+    if (buffer) return Promise.resolve()
+    if (loadPromise) return loadPromise
+    loadPromise = fetch(url)
       .then((res) => res.arrayBuffer())
       .then((data) => ctx.decodeAudioData(data))
       .then((decoded) => { buffer = decoded })
       .catch(() => {
         // 무시 — 다음 play() 호출이 다시 시도하고, 그때까지는 합성음이 대신 울린다
       })
-      .finally(() => { loading = false })
+      .finally(() => { loadPromise = null })
+    return loadPromise
   }
 
   /** 음원이 준비돼 있으면 그걸, 아직이면(첫 알림 등) 합성음으로 울리면서 다음 알림을 위해 음원을 마저 받아 둔다.
@@ -361,7 +363,7 @@ function createClipAlert(url: string, synth: (ctx: AudioContext, start: number) 
   function play() {
     if (!audioContext) unlockAudio()
     const ctx = audioContext
-    if (ctx && !buffer) ensureLoaded(ctx)
+    if (ctx && !buffer) void ensureLoaded(ctx)
     const loaded = buffer
     if (loaded) {
       playPattern((c, start) => scheduleClip(c, loaded, start))
@@ -370,7 +372,21 @@ function createClipAlert(url: string, synth: (ctx: AudioContext, start: number) 
     playPattern(synth)
   }
 
-  return { ensureLoaded, play }
+  /**
+   * 확인음("알림 켜기" 클릭 직후)처럼 실제 음원이 준비될 때까지 잠깐(timeoutMs) 기다렸다가 재생한다 —
+   * 안 기다리면 켜는 순간엔 아직 못 받아온 음원 대신 합성음이 나가, 운영자가 그걸 "실제 알림음"으로
+   * 착각하고 보내준 음원과 다르다고 느낀다(2026-09-29 실측). 시간 안에 못 받으면 그냥 합성음으로 넘어간다
+   */
+  async function playWhenReady(timeoutMs: number) {
+    if (!audioContext) unlockAudio()
+    const ctx = audioContext
+    if (ctx && !buffer) {
+      await Promise.race([ensureLoaded(ctx), new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))])
+    }
+    play()
+  }
+
+  return { ensureLoaded, play, playWhenReady }
 }
 
 const orderAlert = createClipAlert(orderAlertClipUrl, synthOrderAlert)
@@ -387,20 +403,31 @@ export function playCallAlert() {
   callAlert.play()
 }
 
+// 확인음이 실제 음원을 기다려 줄 최대 시간 — 이보다 오래 걸리면(못 받았거나 아주 느리면) 포기하고 합성음으로 넘어간다.
+// 로컬·같은 도메인에서 받는 수십 KB 파일이라 보통은 훨씬 빨리 끝난다
+const PREVIEW_LOAD_TIMEOUT_MS = 900
+
 /**
  * 알림을 켤 때 확인음 — 소리 크기를 확인하게 주문 알림음을 한 번 낸다. 버튼을 누른 직후엔 resume()이 아직
- * 끝나지 않아 suspended라, 폴링용 규칙(running만)으로는 안 울린다 — 풀린 뒤에 낸다
+ * 끝나지 않아 suspended라, 폴링용 규칙(running만)으로는 안 울린다 — 풀린 뒤에 낸다.
+ *
+ * <p>실제 음원이 아직 안 실렸으면(켜는 바로 그 순간) 잠깐 기다렸다가 재생한다({@link createClipAlert.playWhenReady}) —
+ * 안 기다리면 확인음은 항상 합성음으로 나가서, 운영자가 그걸 "실제 알림음"으로 착각하고 보내준 음원과 다르다고
+ * 느낀다(2026-09-29 실측 — 확인음만 듣고 "음원이 반영 안 됐다"고 판단했었다). 실제 주문·호출 알림음(playOrderAlert·
+ * playCallAlert)은 폴링 중 울리는 것이라 이 시각차를 기다릴 필요가 없다 — 이미 몇 초~몇 분 전에 켜 둔 뒤라 대부분
+ * 그때 이미 음원이 실려 있다
  */
 export function previewOrderAlert() {
   const ctx = audioContext
   if (!ctx || ctx.state === 'closed') return
+  const generation = stopGeneration
+  const play = () => { if (generation === stopGeneration) void orderAlert.playWhenReady(PREVIEW_LOAD_TIMEOUT_MS) }
   if (ctx.state === 'running') {
-    playOrderAlert()
+    play()
     return
   }
-  const generation = stopGeneration
   try {
-    void ctx.resume().then(() => { if (generation === stopGeneration) playOrderAlert() }).catch(() => {})
+    void ctx.resume().then(play).catch(() => {})
   } catch {
     // 무시
   }

@@ -267,7 +267,8 @@ describe('알림 켜고 끔 — 설정 화면과 주문현황이 같은 값 하�
     const { isAlertPreferred, turnAlertsOff, turnAlertsOn } = await load()
     turnAlertsOn()
     expect(isAlertPreferred()).toBe(true)
-    expect(oscillators.length).toBeGreaterThan(0)
+    // 확인음이 실제 음원을 잠깐 기다렸다가 나갈 수 있어(playWhenReady) 한 틱 늦게 예약된다
+    await vi.waitFor(() => expect(oscillators.length).toBeGreaterThan(0))
     turnAlertsOff()
     expect(isAlertPreferred()).toBe(false)
     expect(oscillators.every(o => o.disconnect.mock.calls.length > 0)).toBe(true)
