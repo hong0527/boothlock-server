@@ -112,14 +112,20 @@ public class SeatIdlePolicy {
     public record Criteria(LocalDateTime idleSince, LocalDate businessDate) {
 
         /**
-         * @param hasUnpaidOrderToday       이 세션에 {@link #businessDate()} 영업일의 미결제(UnpaidOrderRule) 주문이 있는가
-         * @param hasPendingApprovalOrder   이 세션에 {@link #businessDate()} 영업일의 승인대기(PENDING_APPROVAL) 주문이 있는가
+         * 단일 불리언 하나로 받는다(2026-09-28 코드 리뷰로 두 불리언 파라미터에서 합침) — 이유 둘:
+         * (1) 호출부는 항상 OR로만 쓰므로 따로 받을 이유가 없고, (2) 같은 타입 파라미터 두 개는 순서를
+         * 바꿔 넘겨도 컴파일이 통과해 조용히 잘못된 판정이 나올 수 있었다. 세션 하나짜리 조회는
+         * TableUnpaidOrderRepository.existsUnpaidOrPendingApprovalOrderOn으로 쿼리 한 번에 구하고,
+         * O3 좌석 현황(TableAdminService)처럼 이미 배치 조회 두 번을 따로 하는 곳은 그 결과를 OR로 합쳐 넘긴다.
+         *
+         * @param hasQualifyingOrderToday 이 세션에 {@link #businessDate()} 영업일의 미결제(UnpaidOrderRule) 주문
+         *                                또는 승인대기(PENDING_APPROVAL) 주문이 있는가
          */
-        public boolean isActive(TableSessionEntity session, boolean hasUnpaidOrderToday, boolean hasPendingApprovalOrder) {
+        public boolean isActive(TableSessionEntity session, boolean hasQualifyingOrderToday) {
             if (session == null || session.getEndedAt() != null || session.getEndedAtKey() != 0) {
                 return false;
             }
-            return session.getLastActivityAt().isAfter(idleSince) || hasUnpaidOrderToday || hasPendingApprovalOrder;
+            return session.getLastActivityAt().isAfter(idleSince) || hasQualifyingOrderToday;
         }
     }
 }

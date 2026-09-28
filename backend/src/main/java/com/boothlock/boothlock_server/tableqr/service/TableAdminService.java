@@ -550,8 +550,8 @@ public class TableAdminService {
                     // 테이블당 열린 세션은 최대 1개라 테이블 단위 미결제 수가 곧 그 세션의 미결제 수다
                     TableUnpaidCountRow unpaid = unpaidByTable.get(table.getId());
                     boolean active = criteria.isActive(openSession,
-                            unpaid != null && unpaid.getUnpaidOrderCountToday() > 0,
-                            pendingApprovalTableIds.contains(table.getId()));
+                            (unpaid != null && unpaid.getUnpaidOrderCountToday() > 0)
+                                    || pendingApprovalTableIds.contains(table.getId()));
                     TableStatusResponse.Session session = active
                             ? new TableStatusResponse.Session(
                                     openSession.getStartedAt().atOffset(KST),

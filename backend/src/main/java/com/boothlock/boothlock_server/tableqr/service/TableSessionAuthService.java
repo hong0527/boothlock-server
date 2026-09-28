@@ -62,11 +62,10 @@ public class TableSessionAuthService {
         // 활동 시각을 갱신하기 전에 판정한다 — 갱신 뒤에 보면 방금 쓴 시각 때문에 항상 활성이다.
         // 미결제·승인대기 조회는 유휴일 때만 한다(|| 단축 평가와 같은 결과) — 폴링마다 주문 조회가 붙지 않게
         SeatIdlePolicy.Criteria criteria = seatIdlePolicy.criteria();
-        boolean idle = !criteria.isActive(session, false, false);
+        boolean idle = !criteria.isActive(session, false);
         Long boothId = session.getTable().getBooth().getId();
-        if (idle && !criteria.isActive(session,
-                tableUnpaidOrderRepository.existsUnpaidOrderOn(session.getId(), boothId, criteria.businessDate()),
-                tableUnpaidOrderRepository.existsPendingApprovalOrderOn(session.getId(), boothId, criteria.businessDate()))) {
+        if (idle && !criteria.isActive(session, tableUnpaidOrderRepository.existsUnpaidOrPendingApprovalOrderOn(
+                session.getId(), boothId, criteria.businessDate()))) {
             throw new SessionExpiredException();
         }
 

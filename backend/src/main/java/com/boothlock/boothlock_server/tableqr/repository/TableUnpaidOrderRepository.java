@@ -86,7 +86,10 @@ public interface TableUnpaidOrderRepository extends Repository<OrderEntity, Long
                                 @Param("boothId") Long boothId,
                                 @Param("businessDate") LocalDate businessDate);
 
-    /** C1 세션 복원·인증(C3·C4)·수기 주문 판정 — 이 세션에 해당 영업일의 승인대기 주문이 있는가 (SeatIdlePolicy 활성 조건 3) */
+    /** C1 세션 복원·인증(C3·C4)·수기 주문 판정 — 이 세션에 해당 영업일의 승인대기 주문이 있는가 (SeatIdlePolicy 활성 조건 3).
+     * existsUnpaidOrderOn과 별개로 남겨 둔다 — UnpaidOrderRuleConsistencyTests가 이 메서드 없이 existsUnpaidOrderOn만
+     * UnpaidOrderRule과 정확히 일치하는지 단독으로 확인하므로, 합쳐 버리면 그 교차검증의 의미가 흐려진다.
+     * 세션 복원 판정 자체(SeatIdlePolicy.Criteria#isActive)는 아래 병합 쿼리를 대신 쓴다 */
     @Query("""
             select count(o.id) > 0
               from OrderEntity o
@@ -97,6 +100,22 @@ public interface TableUnpaidOrderRepository extends Repository<OrderEntity, Long
     boolean existsPendingApprovalOrderOn(@Param("sessionId") Long sessionId,
                                          @Param("boothId") Long boothId,
                                          @Param("businessDate") LocalDate businessDate);
+
+    /**
+     * C1 세션 복원·인증(C3·C4)·수기 주문 판정 — SeatIdlePolicy 활성 조건 2·3을 한 번에(미결제 OR 승인대기).
+     * 코드 리뷰 지적(2026-09-28): 이 둘을 따로 불러 왕복 두 번을 쓰던 걸 한 쿼리로 합쳤다 — 세션 인증은
+     * 손님 폰이 폴링할 때마다(3~5초) 타는 경로라 왕복 하나를 줄이는 게 실제 체감 지연에 영향이 있다.
+     */
+    @Query("""
+            select count(o.id) > 0
+              from OrderEntity o
+             where o.boothId = :boothId
+               and o.businessDate = :businessDate
+               and o.sessionId = :sessionId
+               and (""" + UnpaidOrderRule.JPQL_CONDITION + " or " + SeatIdlePolicy.PENDING_APPROVAL_JPQL_CONDITION + ")")
+    boolean existsUnpaidOrPendingApprovalOrderOn(@Param("sessionId") Long sessionId,
+                                                 @Param("boothId") Long boothId,
+                                                 @Param("businessDate") LocalDate businessDate);
 
     /**
      * O3 좌석 판정용 — 열린 세션 중 해당 영업일의 승인대기 주문이 있는 테이블 id (SeatIdlePolicy 활성 조건 3).

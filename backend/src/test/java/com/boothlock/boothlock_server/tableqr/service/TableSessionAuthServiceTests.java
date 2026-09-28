@@ -216,6 +216,6 @@ class TableSessionAuthServiceTests {
         TableSessionEntity reloaded = tableSessionRepository.findById(session.getId()).orElseThrow();
         assertEquals(before, reloaded.getLastActivityAt(), "유휴 세션의 활동 시각이 갱신됐다");
         assertNull(reloaded.getEndedAt(), "인증 계층은 세션을 종료하지 않는다(다음 C1 스캔이 닫는다)");
-        assertFalse(seatIdlePolicy.criteria().isActive(reloaded, false, false), "세션이 다시 활성이 됐다");
+        assertFalse(seatIdlePolicy.criteria().isActive(reloaded, false), "세션이 다시 활성이 됐다");
     }
 }

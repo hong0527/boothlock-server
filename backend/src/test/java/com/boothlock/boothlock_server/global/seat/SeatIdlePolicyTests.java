@@ -151,31 +151,34 @@ class SeatIdlePolicyTests {
     @Test
     @DisplayName("임계 1초 안쪽 활동은 활성")
     void activeOneSecondInsideThreshold() {
-        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusMinutes(180).plusSeconds(1)), false, false)).isTrue();
+        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusMinutes(180).plusSeconds(1)), false)).isTrue();
     }
 
     @Test
     @DisplayName("임계와 정확히 같은 시각의 활동은 유휴 — E1 쿼리의 lastActivityAt > idleSince와 같은 방향")
     void idleExactlyAtThreshold() {
-        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusMinutes(180)), false, false)).isFalse();
+        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusMinutes(180)), false)).isFalse();
     }
 
     @Test
     @DisplayName("임계 1초 바깥 활동은 유휴")
     void idleOneSecondOutsideThreshold() {
-        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusMinutes(180).minusSeconds(1)), false, false)).isFalse();
+        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusMinutes(180).minusSeconds(1)), false)).isFalse();
     }
+
+    // hasQualifyingOrderToday 하나로 합쳤다(2026-09-28 코드 리뷰) — 미결제(UnpaidOrderRule)·승인대기(PENDING_APPROVAL)
+    // 둘 다 이 자리에 true를 전달하는 실제 이유라, 두 출처를 각각 문서화하는 뜻으로 테스트는 나눠 둔다
 
     @Test
     @DisplayName("유휴여도 현재 영업일 미결제가 있으면 활성 — §7-9 미결제 세션은 영업일 종료로만 만료")
     void idleSessionWithUnpaidOrderTodayStaysActive() {
-        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusHours(10)), true, false)).isTrue();
+        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusHours(10)), true)).isTrue();
     }
 
     @Test
     @DisplayName("유휴여도 현재 영업일 승인대기 주문이 있으면 활성 — 2026-09-28 피드백: 주문 직후 자리를 뜬 손님의 승인 대기")
     void idleSessionWithPendingApprovalOrderTodayStaysActive() {
-        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusHours(10)), false, true)).isTrue();
+        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusHours(10)), true)).isTrue();
     }
 
     @Test
@@ -184,9 +187,8 @@ class SeatIdlePolicyTests {
         TableSessionEntity ended = session(NOW_KST.minusMinutes(1));
         ReflectionTestUtils.setField(ended, "id", 7L);   // end()는 저장된 세션에만 허용된다
         ended.end(NOW_KST);
-        assertThat(policy(180).criteria().isActive(ended, false, false)).isFalse();
-        assertThat(policy(180).criteria().isActive(ended, true, false)).isFalse();
-        assertThat(policy(180).criteria().isActive(ended, false, true)).isFalse();
+        assertThat(policy(180).criteria().isActive(ended, false)).isFalse();
+        assertThat(policy(180).criteria().isActive(ended, true)).isFalse();
     }
 
     @Test
@@ -194,13 +196,13 @@ class SeatIdlePolicyTests {
     void sessionWithNonZeroEndedAtKeyIsNotActive() {
         TableSessionEntity inconsistent = session(NOW_KST.minusMinutes(1));
         ReflectionTestUtils.setField(inconsistent, "endedAtKey", 7L);
-        assertThat(policy(180).criteria().isActive(inconsistent, true, true)).isFalse();
+        assertThat(policy(180).criteria().isActive(inconsistent, true)).isFalse();
     }
 
     @Test
     @DisplayName("세션이 없으면 활성이 아니다")
     void nullSessionIsNotActive() {
-        assertThat(policy(180).criteria().isActive(null, true, true)).isFalse();
+        assertThat(policy(180).criteria().isActive(null, true)).isFalse();
     }
 
     private static TableSessionEntity session(LocalDateTime lastActivityAt) {

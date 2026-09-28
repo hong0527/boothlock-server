@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * 세션 생성 + 테이블 사용중 전환만 담당하는 쓰기 경계 — 별도 빈으로 둔 이유가 있다.
@@ -82,10 +81,14 @@ public class TableSessionWriter {
                 .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다."));
         LocalDateTime now = seatIdlePolicy.now();
 
-        Optional<TableSessionEntity> open = tableSessionRepository.findOpenByTableId(tableId);
+        // FOR UPDATE로 읽는다(O6 findOpenByTableIdForUpdate와 같은 이유, 그 메서드 주석 참고) — 일반 조회로 읽으면
+        // 이 순간 막 커밋되려는 주문 저장 트랜잭션(OrderWriter.save의 touchIfSessionActive)의 활동 갱신·승인대기 삽입을
+        // 못 보고 "유휴"로 잘못 판단해, 방금 들어온 주문까지 세션 종료와 함께 자동 거절해 버릴 수 있다(2026-09-28 재현·수정).
+        // 잠금 읽기면 그 커밋을 기다린 뒤에 읽어 최신 상태로 판정한다. 유니크 제약이 깨진 데이터에서 500이 나지 않게 List로 받는다
+        List<TableSessionEntity> openSessions = tableSessionRepository.findOpenByTableIdForUpdate(tableId);
         Integer handoffPartySize = null;
-        if (open.isPresent()) {
-            TableSessionEntity session = open.get();
+        if (!openSessions.isEmpty()) {
+            TableSessionEntity session = openSessions.getFirst();
             if (isActive(table, session) && tableSessionRepository.touchIfActive(session.getId(), now) == 1) {
                 return new Result(session, false);
             }
@@ -106,7 +109,7 @@ public class TableSessionWriter {
         // O14가 연 세션은 1µs 뒤에 시작시켜 그 일치를 일부러 깬다 — 인원수만 안 옮기면 C3의 인원수 검사가 앞 세션 자릿세를
         // "이미 냈음"으로 보고 인원을 묻지 않은 채 자릿세 없이 받는다. 컬럼을 늘리는 대신 표지 자체를 만들지 않는 쪽을 골랐다
         // (started_at은 DATETIME(6)이고 now는 µs로 잘려 있어 1µs 차이가 그대로 남는다. 유휴 판정에는 무시할 만한 차이다)
-        LocalDateTime startedAt = staffOpened && open.isPresent() ? now.plus(1, ChronoUnit.MICROS) : now;
+        LocalDateTime startedAt = staffOpened && !openSessions.isEmpty() ? now.plus(1, ChronoUnit.MICROS) : now;
         TableSessionEntity session = tableSessionRepository.saveAndFlush(
                 new TableSessionEntity(table, sessionToken, startedAt));
         // 앞 세션이 오늘 자릿세를 이미 냈거나 면제받았으면 인원수도 이어받는다 — 그래야 C1 응답에 partySize가 실려 프론트가 인원 선택을
@@ -123,8 +126,7 @@ public class TableSessionWriter {
     private boolean isActive(TableEntity table, TableSessionEntity session) {
         SeatIdlePolicy.Criteria criteria = seatIdlePolicy.criteria();
         Long boothId = table.getBooth().getId();
-        return criteria.isActive(session,
-                tableUnpaidOrderRepository.existsUnpaidOrderOn(session.getId(), boothId, criteria.businessDate()),
-                tableUnpaidOrderRepository.existsPendingApprovalOrderOn(session.getId(), boothId, criteria.businessDate()));
+        return criteria.isActive(session, tableUnpaidOrderRepository.existsUnpaidOrPendingApprovalOrderOn(
+                session.getId(), boothId, criteria.businessDate()));
     }
 }
