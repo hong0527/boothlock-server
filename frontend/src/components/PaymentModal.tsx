@@ -790,16 +790,31 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
             {draft.map((d) => (
               <span
                 key={`draft-${d.menuId}`}
-                className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-neutral-900 shadow-sm"
+                className="flex items-center gap-1 rounded-xl bg-white py-1 pr-1 pl-3 text-sm font-semibold text-neutral-900 shadow-sm"
               >
                 담기 · {d.name} x{d.qty} · {(d.price * d.qty).toLocaleString()}원
-                <button type="button" onClick={() => adjustDraftQty(d.menuId, -1)} className="text-neutral-400" aria-label="수량 감소">
+                <button
+                  type="button"
+                  onClick={() => adjustDraftQty(d.menuId, -1)}
+                  className="flex h-9 w-9 touch-manipulation items-center justify-center text-lg text-neutral-400"
+                  aria-label="수량 감소"
+                >
                   -
                 </button>
-                <button type="button" onClick={() => adjustDraftQty(d.menuId, 1)} className="text-neutral-400" aria-label="수량 증가">
+                <button
+                  type="button"
+                  onClick={() => adjustDraftQty(d.menuId, 1)}
+                  className="flex h-9 w-9 touch-manipulation items-center justify-center text-lg text-neutral-400"
+                  aria-label="수량 증가"
+                >
                   +
                 </button>
-                <button type="button" onClick={() => removeDraftItem(d.menuId)} className="text-red-500" aria-label="빼기">
+                <button
+                  type="button"
+                  onClick={() => removeDraftItem(d.menuId)}
+                  className="flex h-9 w-9 touch-manipulation items-center justify-center text-lg text-red-500"
+                  aria-label="빼기"
+                >
                   ×
                 </button>
               </span>
@@ -807,14 +822,14 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
             {adjustmentChips.map((chip) => (
               <span
                 key={`adj-${chip.id}`}
-                className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-red-600 shadow-sm"
+                className="flex items-center gap-1 rounded-xl bg-white py-1 pr-1 pl-3 text-sm font-semibold text-red-600 shadow-sm"
               >
                 {chip.name} {chip.delta > 0 ? `+${chip.delta}` : chip.delta}
                 {chip.gone && ' · 취소'}
                 <button
                   type="button"
                   onClick={() => undoAdjustments(chip.keys)}
-                  className="text-neutral-400"
+                  className="flex h-9 w-9 touch-manipulation items-center justify-center text-lg text-neutral-400"
                   aria-label="변경 되돌리기"
                 >
                   ×
@@ -879,7 +894,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
                           type="button"
                           onClick={() => decrementGroup(group)}
                           disabled={busy || !canRemove}
-                          className="h-8 w-8 rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
+                          className="h-11 w-11 touch-manipulation rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
                         >
                           -
                         </button>
@@ -893,7 +908,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
                             busy ||
                             (isSeatFee ? !editable : (menus.find((m) => m.id === group.menuId)?.soldOut ?? false))
                           }
-                          className="h-8 w-8 rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
+                          className="h-11 w-11 touch-manipulation rounded-xl border border-neutral-900 text-lg font-semibold text-neutral-900 disabled:opacity-30"
                         >
                           +
                         </button>
@@ -901,7 +916,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
                           type="button"
                           onClick={() => cancelGroup(group)}
                           disabled={busy || !canRemove}
-                          className="rounded-xl border border-neutral-900 px-4 py-2 text-base font-semibold text-neutral-900 disabled:opacity-30"
+                          className="h-11 touch-manipulation rounded-xl border border-neutral-900 px-4 text-base font-semibold text-neutral-900 disabled:opacity-30"
                         >
                           취소
                         </button>
