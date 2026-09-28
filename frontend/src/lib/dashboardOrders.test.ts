@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { confirmPaymentMessage, formatWon, orderedForTab, REJECT_UNPAID_WARNING, rejectConfirmMessage } from './dashboardOrders'
+import { confirmPaymentMessage, formatWon, orderedForTab } from './dashboardOrders'
 import type { OrderStatus, OrderSummary } from '../types/dashboard'
 
 /** 서버(O10)가 주는 순서를 흉내낸다 — 최신 주문이 먼저 */
@@ -58,36 +58,6 @@ describe('orderedForTab', () => {
     const one = [order('A-1', '2026-09-21T18:10:00')]
     expect(orderedForTab('RECEIVED', one).map((o) => o.orderNo)).toEqual(['A-1'])
     expect(orderedForTab('DONE', one).map((o) => o.orderNo)).toEqual(['A-1'])
-  })
-})
-
-describe('거절 확인 문구', () => {
-  const pending = { ...order('T1-7', '2026-09-27T18:00:00', 'PENDING_APPROVAL'), tableLabel: 'T-1' }
-
-  it('미결제 주문 거절은 "먼저 결제 확인" 경고를 붙인다', () => {
-    const message = rejectConfirmMessage(pending, [])
-    expect(message).toContain(REJECT_UNPAID_WARNING)
-    expect(message).not.toContain('⚠️')
-  })
-
-  it('같은 테이블에 미확인 결제확인 호출이 있으면 맨 앞에서 강조한다', () => {
-    const message = rejectConfirmMessage(pending, [
-      { callId: 1, tableLabel: 'T-1', reason: 'PAYMENT', createdAt: '2026-09-27T18:01:00' },
-    ])
-    expect(message.startsWith('⚠️')).toBe(true)
-    expect(message).toContain(REJECT_UNPAID_WARNING)
-  })
-
-  it('다른 테이블의 결제확인 호출이나 일반 호출로는 강조하지 않는다', () => {
-    const message = rejectConfirmMessage(pending, [
-      { callId: 1, tableLabel: 'T-2', reason: 'PAYMENT', createdAt: '2026-09-27T18:01:00' },
-      { callId: 2, tableLabel: 'T-1', reason: 'HELP', createdAt: '2026-09-27T18:01:00' },
-    ])
-    expect(message).not.toContain('⚠️')
-  })
-
-  it('이미 입금확인된 주문은 환불필요로 남는다고만 알린다', () => {
-    expect(rejectConfirmMessage({ ...pending, paymentStatus: 'PAID' }, [])).not.toContain(REJECT_UNPAID_WARNING)
   })
 })
 

@@ -22,22 +22,21 @@ function order(status: OrderStatus, paymentStatus: PaymentStatus): OrderSummary 
   }
 }
 
-function buttonsOf(o: OrderSummary, withRefund: boolean, withConfirmPayment = true) {
+function buttonsOf(o: OrderSummary, withRefund: boolean) {
   const tree = OrderCard({
     order: o, now: Date.parse('2026-09-21T18:10:00'), pending: false,
     onApprove: vi.fn(), onReject: vi.fn(),
     onComplete: vi.fn(), onCancel: vi.fn(), onRestore: vi.fn(),
     ...(withRefund ? { onRefundDone: vi.fn() } : {}),
-    ...(withConfirmPayment ? { onConfirmPayment: vi.fn() } : {}),
   })
   return labels(tree)
 }
 
 describe('주문 카드 버튼', () => {
-  it('승인대기면 거절과 승인 (O28)', () => {
+  it('승인대기면 거절과 주문 승인 (O28)', () => {
     const l = buttonsOf(order('PENDING_APPROVAL', 'UNPAID'), true)
     expect(l).toContain('거절')
-    expect(l).toContain('승인')
+    expect(l).toContain('주문 승인')
     expect(l).not.toContain('취소')
     expect(l).not.toContain('완료')
   })
@@ -47,21 +46,7 @@ describe('주문 카드 버튼', () => {
       order: order('PENDING_APPROVAL', 'UNPAID'), now: Date.parse('2026-09-21T18:10:00'), pending: false,
       onComplete: vi.fn(), onCancel: vi.fn(), onRestore: vi.fn(),
     })
-    expect(labels(tree)).not.toContain('승인')
-  })
-
-  // O11이 PENDING_APPROVAL도 결제확인을 허용하는데(백엔드는 CANCELED만 제외), 승인 전에는 이 버튼이
-  // 유일한 처리 경로였다 — PaymentModal은 승인대기를 일부러 빼고, 승인/거절 버튼은 결제와 무관하기 때문
-  it('승인대기+미결제면 결제 확인 버튼도 같이 보인다', () => {
-    expect(buttonsOf(order('PENDING_APPROVAL', 'UNPAID'), true)).toContain('결제 확인')
-  })
-
-  it('승인대기여도 이미 입금확인됐으면 결제 확인 버튼은 안 보인다', () => {
-    expect(buttonsOf(order('PENDING_APPROVAL', 'PAID'), true)).not.toContain('결제 확인')
-  })
-
-  it('onConfirmPayment이 없으면 승인대기+미결제여도 결제 확인 버튼을 그리지 않는다', () => {
-    expect(buttonsOf(order('PENDING_APPROVAL', 'UNPAID'), true, false)).not.toContain('결제 확인')
+    expect(labels(tree)).not.toContain('주문 승인')
   })
 
   it('진행 중이면 취소와 완료', () => {
@@ -93,30 +78,25 @@ describe('주문 카드 버튼', () => {
     expect(buttonsOf(order('DONE', 'REFUND_NEEDED'), true)).toContain('환불 완료')
   })
 
-  // 승인 뒤에 입금한 손님도 체크아웃(결제창) 없이 기록할 수 있어야 한다 — 예전엔 승인대기 카드에만 있어서 막다른 길이었다
-  it('진행+미결제면 결제 확인 버튼이 보인다', () => {
-    expect(buttonsOf(order('RECEIVED', 'UNPAID'), true)).toContain('결제 확인')
-  })
-
-  it('완료+미결제면 결제 확인 버튼이 보인다', () => {
-    expect(buttonsOf(order('DONE', 'UNPAID'), true)).toContain('결제 확인')
-  })
-
-  it('진행·완료여도 이미 입금확인됐으면 결제 확인 버튼은 안 보인다', () => {
-    expect(buttonsOf(order('RECEIVED', 'PAID'), true)).not.toContain('결제 확인')
-    expect(buttonsOf(order('DONE', 'PAID'), true)).not.toContain('결제 확인')
-  })
-
-  it('취소된 주문에는 결제 확인 버튼이 없다 — 서버가 409로 막는다', () => {
-    expect(buttonsOf(order('CANCELED', 'UNPAID'), true)).not.toContain('결제 확인')
+  // 결제 확인은 카드가 아니라 테이블 화면 결제 모달(O24)에서 한다(2026-09-28 카드 버튼 제거)
+  it('어떤 상태에서도 카드에는 결제 확인 버튼이 없다', () => {
+    for (const status of ['PENDING_APPROVAL', 'RECEIVED', 'DONE'] as const) {
+      expect(buttonsOf(order(status, 'UNPAID'), true)).not.toContain('결제 확인')
+    }
   })
 })
 
 describe('주문 카드 머리', () => {
-  it('주문번호와 금액을 보여준다 — 은행 앱 입금 내역과 대조용', () => {
+  it('진행 탭에서 승인대기와 진행중을 뱃지로 가른다', () => {
+    expect(buttonsOf(order('PENDING_APPROVAL', 'UNPAID'), true)).toContain('승인 대기')
+    expect(buttonsOf(order('RECEIVED', 'UNPAID'), true)).toContain('진행중')
+    expect(buttonsOf(order('DONE', 'UNPAID'), true)).not.toContain('진행중')
+  })
+
+  it('주문번호·금액은 카드에 보이지 않는다', () => {
     const l = buttonsOf({ ...order('RECEIVED', 'UNPAID'), orderNo: 'T1-17', totalAmount: 12000 }, true)
-    expect(l).toContain('T1-17')
-    expect(l).toContain('12,000원')
+    expect(l).not.toContain('T1-17')
+    expect(l).not.toContain('12,000원')
   })
 
   it('결제 상태 뱃지는 그대로 보인다', () => {

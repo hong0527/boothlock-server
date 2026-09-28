@@ -192,7 +192,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
   // 취소된 주문과 승인대기(O28, v0.6.10)는 뺀다. 완료(DONE) 주문은 보인다 — 미결제 합계(O24 대상)에 DONE·UNPAID가
   // 들어가므로 목록에도 있어야 합계와 항목이 맞는다(미결제 정의는 백엔드 UnpaidOrderRule과 같다: RECEIVED·DONE && UNPAID).
   // 승인대기는 운영자가 아직 받아들이지 않은 주문이라 이 테이블의 확정된 주문이 아니다 — 여기 섞이면 운영자가
-  // 승인도 안 한 항목을 결제 대상으로 착각한다. 승인/거절은 주문현황 "승인 대기" 탭에서 한다
+  // 승인도 안 한 항목을 결제 대상으로 착각한다. 승인/거절은 주문현황 "진행" 탭(승인 대기 카드)에서 한다
   const visibleOrders = orders.filter((o) => o.status !== 'CANCELED' && o.status !== 'PENDING_APPROVAL')
   // 전체 취소는 접수(RECEIVED) 주문만 — 완료된 주문은 운영자가 주문 현황에서 개별 취소(O13)한다
   const receivedOrders = visibleOrders.filter((o) => o.status === 'RECEIVED')
@@ -510,7 +510,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
         // 승인대기가 남았다 — 손님은 그 금액까지 이체했을 수 있으니 조용히 거절하지 않고 운영자가 먼저 승인·거절하게 한다
         const count = typeof details?.pendingOrderCount === 'number' ? `${details.pendingOrderCount}건` : ''
         setError(
-          `${paidNote}승인대기 주문${count ? ` ${count}` : ''}이 남아 퇴실하지 않았어요. 주문현황 "승인 대기"에서 먼저 승인하거나 거절한 뒤 "결제 완료"를 다시 눌러주세요.`,
+          `${paidNote}승인대기 주문${count ? ` ${count}` : ''}이 남아 퇴실하지 않았어요. 주문현황 "진행" 탭의 승인 대기 주문을 먼저 승인하거나 거절한 뒤 "결제 완료"를 다시 눌러주세요.`,
         )
       } else {
         setError(`${paidNote}퇴실 처리에 실패했어요 (${res.status}). "결제 완료"를 다시 눌러 퇴실해 주세요.`)
@@ -571,7 +571,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     const freshPending = pendingApprovalSummary(freshOrders)
     if (freshPending.count > 0) {
       setError(
-        `승인대기 ${freshPending.count}건 · ${freshPending.amount.toLocaleString()}원이 남아 있어요. 주문현황 "승인 대기"에서 먼저 승인하거나 거절한 뒤 "결제 완료"를 눌러주세요.`,
+        `승인대기 ${freshPending.count}건 · ${freshPending.amount.toLocaleString()}원이 남아 있어요. 주문현황 "진행" 탭의 승인 대기 주문을 먼저 승인하거나 거절한 뒤 "결제 완료"를 눌러주세요.`,
       )
       return
     }
@@ -876,7 +876,7 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
             <span className="text-lg font-semibold">{unpaidAmount.toLocaleString()}원</span>
           </div>
           {pending.count > 0 && (
-            // 미결제 합계(O24 대상)에 안 들어간 금액 — 손님 결제 안내에는 포함돼 있다. 승인·거절은 주문현황 "승인 대기"에서
+            // 미결제 합계(O24 대상)에 안 들어간 금액 — 손님 결제 안내에는 포함돼 있다. 승인·거절은 주문현황 "진행" 탭에서
             <div className="flex items-baseline justify-between text-sm tracking-[-0.04em] text-amber-700">
               <span className="font-semibold">
                 승인대기 {pending.count}건 · {pending.amount.toLocaleString()}원
