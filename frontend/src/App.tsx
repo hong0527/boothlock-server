@@ -21,7 +21,6 @@ import SettlementPage from './pages/settings/SettlementPage'
 import TableQrPage from './pages/settings/TableQrPage'
 import SettingsPage from './pages/SettingsPage'
 import TableHomePage from './pages/TableHomePage'
-import OrderConfirmPage from './pages/customer/OrderConfirmPage'
 import PaymentInfoPage from './pages/customer/PaymentInfoPage'
 import OrderHistoryPage from './pages/customer/OrderHistoryPage'
 
@@ -66,7 +65,6 @@ function App() {
         <Route path="/cart" element={<CartPage />} />
         <Route path="/session-expired" element={<SessionExpiredPage />} />
 
-        <Route path="/order-confirm" element={<OrderConfirmPage />} />
         <Route path="/payment-info" element={<PaymentInfoPage />} />
         <Route path="/order-history" element={<OrderHistoryPage />} />
       </Routes>
