@@ -169,9 +169,9 @@ React 19 + TypeScript + Vite + Tailwind v4, client-routed with `react-router-dom
 lists every route — two audiences share one SPA):
 
 - **Customer flow** (no login): `/t/:tableToken` (QR landing) → `/party-size` → `/order` → `/cart` →
-  `/order-confirm` → `/payment-info` → `/order-history`; session expiry has its own route
-  (`/session-expired`). Uses `X-Session-Token`, stored/managed via `lib/customerSession.ts` and
-  fetched via `lib/customerApiFetch.ts`.
+  `/payment-info` → `/order-history`; session expiry has its own route (`/session-expired`). The cart
+  submits the order directly — there is no separate confirm screen. Uses `X-Session-Token`,
+  stored/managed via `lib/customerSession.ts` and fetched via `lib/customerApiFetch.ts`.
 - **Staff flow** (JWT login): `/` (login) → `/home`, `/tables`, `/settings/*` (menu CRUD, account,
   table/QR management). Uses `lib/apiFetch.ts` with `Authorization: Bearer`, managed via `lib/auth.ts`.
 - `lib/idempotencyKey.ts` generates the client-side idempotency key for order submission;
