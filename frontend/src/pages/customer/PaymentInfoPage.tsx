@@ -7,7 +7,7 @@ import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { onResume } from '../../lib/onResume'
 import { createPollGuard } from '../../lib/pollGuard'
-import { requestStaffCall } from '../../lib/staffCall'
+import { useStaffCallModal } from '../../lib/useStaffCallModal'
 import type { OrderSummary } from '../../types/customer'
 
 // 가벼운 폴링 — 운영자가 승인·거절·입금 확인하면 이체할 합계가 바뀐다. 주문내역(7초)보다 느슨하게 둔다
@@ -18,8 +18,8 @@ export default function PaymentInfoPage() {
   const [orders, setOrders] = useState<OrderSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
-  const [callMessage, setCallMessage] = useState<string | null>(null)
-  const [showCallConfirm, setShowCallConfirm] = useState(false)
+  // 결제확인 전용 직원호출(PAYMENT, v0.6.11) — 일반 호출(HELP)과 쿨다운이 분리돼 있어 여기서 눌러도 막히지 않는다
+  const { callMessage, showCallConfirm, openCallConfirm, closeCallConfirm, handleCallStaff } = useStaffCallModal('PAYMENT')
 
   // 예전에는 처음 한 번만 읽어, 화면을 켜 둔 채 운영자가 승인대기를 거절·승인하거나 입금 확인해도 옛 합계를 이체하라고 보여줬다.
   // 다른 손님 화면(주문내역)과 같은 pollGuard(겹침·응답 역전 방지)+onResume(폰 잠금 해제·재연결 즉시 갱신)을 쓴다
@@ -98,13 +98,6 @@ export default function PaymentInfoPage() {
     }
   }
 
-  // 결제확인 전용 직원호출(PAYMENT, v0.6.11) — 일반 호출(HELP)과 쿨다운이 분리돼 있어 여기서 눌러도 막히지 않는다
-  const handleCallStaff = async () => {
-    setShowCallConfirm(false)
-    const message = await requestStaffCall('PAYMENT')
-    if (message) setCallMessage(message)
-  }
-
   return (
     <div className="flex min-h-screen w-full flex-col bg-neutral-50">
       <div className="flex h-[114px] items-center bg-primary-50 px-4">
@@ -172,7 +165,7 @@ export default function PaymentInfoPage() {
         {unpaidOrders.length > 0 && (
           <button
             type="button"
-            onClick={() => setShowCallConfirm(true)}
+            onClick={openCallConfirm}
             className={`${CUSTOMER_BUTTON_BASE} border border-primary-300 bg-white text-heading-3 text-primary-300`}
           >
             입금했어요, 직원 호출
@@ -195,7 +188,7 @@ export default function PaymentInfoPage() {
       </div>
 
       {showCallConfirm && (
-        <StaffCallConfirmModal onConfirm={handleCallStaff} onCancel={() => setShowCallConfirm(false)} />
+        <StaffCallConfirmModal onConfirm={handleCallStaff} onCancel={closeCallConfirm} />
       )}
     </div>
   )

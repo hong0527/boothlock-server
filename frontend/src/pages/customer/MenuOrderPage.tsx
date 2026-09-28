@@ -7,7 +7,7 @@ import StaffCallConfirmModal from '../../components/customer/StaffCallConfirmMod
 import { useCart } from '../../context/CartContext'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { getSessionInfo } from '../../lib/customerSession'
-import { requestStaffCall } from '../../lib/staffCall'
+import { useStaffCallModal } from '../../lib/useStaffCallModal'
 import type { CustomerMenuItem } from '../../types/customer'
 
 type MenuBoardResponse = { boothName: string; isOpen: boolean; menus: CustomerMenuItem[] }
@@ -24,8 +24,7 @@ export default function MenuOrderPage() {
   const [isOpen, setIsOpen] = useState(sessionInfo?.boothIsOpen ?? true)
   const [category, setCategory] = useState<MenuCategory>('ALL')
   const [error, setError] = useState<string | null>(null)
-  const [callMessage, setCallMessage] = useState<string | null>(null)
-  const [showCallConfirm, setShowCallConfirm] = useState(false)
+  const { callMessage, showCallConfirm, openCallConfirm, closeCallConfirm, handleCallStaff } = useStaffCallModal('HELP')
 
   useEffect(() => {
     let cancelled = false
@@ -57,14 +56,6 @@ export default function MenuOrderPage() {
     )
   }, [menus, category])
 
-  // C6 직원 호출 — 세션은 customerApiFetch가 X-Session-Token 헤더로 실어 보낸다 (410이면 거기서 재스캔 화면으로 이동)
-  // 실수로 눌러도 바로 호출되지 않게 재확인 팝업(Figma 289:4115)을 한 번 거친다
-  const handleCallStaff = async () => {
-    setShowCallConfirm(false)
-    const message = await requestStaffCall('HELP')
-    if (message) setCallMessage(message)
-  }
-
   return (
     <div className="min-h-screen w-full bg-neutral-50 pb-[97px]">
       <CustomerTopBar boothName={boothName} tableLabel={sessionInfo?.tableLabel ?? ''} />
@@ -90,10 +81,10 @@ export default function MenuOrderPage() {
         )}
       </div>
 
-      <CustomerBottomNav cartCount={totalQty} onCallStaff={() => setShowCallConfirm(true)} />
+      <CustomerBottomNav cartCount={totalQty} onCallStaff={openCallConfirm} />
 
       {showCallConfirm && (
-        <StaffCallConfirmModal onConfirm={handleCallStaff} onCancel={() => setShowCallConfirm(false)} />
+        <StaffCallConfirmModal onConfirm={handleCallStaff} onCancel={closeCallConfirm} />
       )}
     </div>
   )

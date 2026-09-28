@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BackButton from '../../components/customer/BackButton'
+import { PersonIcon } from '../../components/customer/icons'
+import StaffCallConfirmModal from '../../components/customer/StaffCallConfirmModal'
 import { CUSTOMER_BUTTON_BASE } from '../../components/controlStyles'
 import { useCart } from '../../context/CartContext'
 import { assetUrl } from '../../lib/apiBase'
@@ -9,6 +11,7 @@ import { getSessionInfo, getSessionToken } from '../../lib/customerSession'
 import { customerOrderFingerprint, customerOrderKeys } from '../../lib/idempotencyKey'
 import { TimeoutError } from '../../lib/fetchWithTimeout'
 import { DEFAULT_SEAT_FEE_PER_PERSON, pendingSeatFee } from '../../lib/seatFee'
+import { useStaffCallModal } from '../../lib/useStaffCallModal'
 import type { OrderSummary } from '../../types/customer'
 
 type OrderErrorBody = { error: { code: string; message: string } }
@@ -23,6 +26,7 @@ export default function CartPage() {
   const sessionInfo = getSessionInfo()
   const partySize = sessionInfo?.partySize
   const seatFeePerPerson = sessionInfo?.seatFeePerPerson ?? DEFAULT_SEAT_FEE_PER_PERSON
+  const { callMessage, showCallConfirm, openCallConfirm, closeCallConfirm, handleCallStaff } = useStaffCallModal('HELP')
 
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -110,9 +114,19 @@ export default function CartPage() {
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-neutral-50">
-      <div className="flex h-[114px] items-center bg-primary-50 px-4">
-        <BackButton />
-        <h1 className="ml-3 text-heading-1 text-neutral-900">장바구니</h1>
+      <div className="flex h-[114px] items-center justify-between bg-primary-50 px-4">
+        <div className="flex items-center">
+          <BackButton />
+          <h1 className="ml-3 text-heading-1 text-neutral-900">장바구니</h1>
+        </div>
+        <button
+          type="button"
+          onClick={openCallConfirm}
+          className="flex flex-col items-center gap-0.5 px-2 text-[13px] leading-[1.2] font-medium tracking-[-0.52px] text-neutral-900"
+        >
+          <PersonIcon className="size-[24px]" />
+          직원 호출
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-6">
@@ -187,9 +201,10 @@ export default function CartPage() {
       </div>
 
       <div className="border-t border-neutral-200 bg-neutral-50 px-6 pt-5 pb-8">
-        {/* 실패 문구는 버튼과 같은 고정 영역에 둔다 — 스크롤되는 목록 끝에 있으면 장바구니가 길 때
+        {/* 실패·호출 문구는 버튼과 같은 고정 영역에 둔다 — 스크롤되는 목록 끝에 있으면 장바구니가 길 때
             화면 밖이라, 손님은 아무 일도 안 일어난 줄 알고 다시 누른다 */}
         {error && <p className="mb-3 text-body-3 text-red-600">{error}</p>}
+        {callMessage && <p className="mb-3 text-center text-body-3 text-neutral-400">{callMessage}</p>}
         <div className="mb-2 flex items-center justify-between">
           <span className="text-body-1 text-neutral-900">총 주문금액</span>
           <span className="text-heading-2 text-neutral-900">
@@ -208,6 +223,10 @@ export default function CartPage() {
           {loading ? '주문 중...' : '주문하기'}
         </button>
       </div>
+
+      {showCallConfirm && (
+        <StaffCallConfirmModal onConfirm={handleCallStaff} onCancel={closeCallConfirm} />
+      )}
     </div>
   )
 }
