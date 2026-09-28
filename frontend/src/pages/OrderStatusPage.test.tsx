@@ -123,7 +123,10 @@ function order(orderNo: string, createdAt: string, status: OrderStatus): OrderSu
     orderId: Number(orderNo.replace(/\D/g, '')),
     orderNo, status,
     paymentStatus: 'UNPAID', paymentMethod: null,
-    totalAmount: 1000, items: [], createdAt,
+    // 메뉴 항목이 하나는 있어야 "추가 주문" 배지 대상이 된다 — 자릿세·기타 항목만 든 주문은 세지 않는다
+    totalAmount: 1000,
+    items: [{ itemId: 1, menuId: 1, menuName: '메뉴', unitPrice: 1000, qty: 1, itemType: 'MENU' }],
+    createdAt,
     tableLabel: 'A-1', manual: false, sessionId: nextSessionId++,
   }
 }

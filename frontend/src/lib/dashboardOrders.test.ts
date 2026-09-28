@@ -2,12 +2,17 @@ import { describe, expect, it } from 'vitest'
 import { additionalOrderIds, confirmPaymentMessage, formatWon, orderedForTab } from './dashboardOrders'
 import type { OrderStatus, OrderSummary } from '../types/dashboard'
 
+function item(itemType: 'MENU' | 'SEAT_FEE' | 'EXTRA') {
+  return { itemId: 1, menuId: itemType === 'MENU' ? 1 : null, menuName: itemType, unitPrice: 1000, qty: 1, itemType }
+}
+
 /** 서버(O10)가 주는 순서를 흉내낸다 — 최신 주문이 먼저 */
 function order(
   orderNo: string,
   createdAt: string,
   status: OrderStatus = 'RECEIVED',
   sessionId: number | null = 1,
+  itemType: 'MENU' | 'SEAT_FEE' | 'EXTRA' = 'MENU',
 ): OrderSummary {
   return {
     orderId: Number(orderNo.replace(/\D/g, '')),
@@ -16,7 +21,7 @@ function order(
     paymentStatus: 'UNPAID',
     paymentMethod: null,
     totalAmount: 1000,
-    items: [],
+    items: [item(itemType)],
     createdAt,
     tableLabel: 'A-1',
     manual: false,
@@ -113,6 +118,50 @@ describe('additionalOrderIds', () => {
       order('A-3', '2026-09-21T18:20:00', 'RECEIVED', 1),
     ]
     expect([...additionalOrderIds(orders)].sort()).toEqual([2, 3])
+  })
+
+  // 서버는 자릿세를 첫 메뉴 주문의 항목이 아니라 같은 createdAt을 가진 별도 주문으로 만든다
+  // (OrderWriter.saveSeatFeeOrder) — 세면 자릿세 카드가 "두 번째"로 잡혀 정작 첫 주문에 배지가 붙는다
+  it('세션 첫 주문과 같은 시각에 생기는 자릿세 주문은 세지 않는다', () => {
+    const orders = [
+      order('A-1', '2026-09-21T18:00:00', 'DONE', 1, 'SEAT_FEE'),
+      order('A-2', '2026-09-21T18:00:00', 'PENDING_APPROVAL', 1),
+    ]
+    expect(additionalOrderIds(orders).size).toBe(0)
+  })
+
+  it('결제 모달로 넣는 기타 항목(쿠폰·추가 자릿세) 주문도 세지 않는다', () => {
+    const orders = [
+      order('A-1', '2026-09-21T18:00:00', 'RECEIVED', 1),
+      order('A-2', '2026-09-21T18:10:00', 'DONE', 1, 'EXTRA'),
+    ]
+    expect(additionalOrderIds(orders).size).toBe(0)
+  })
+
+  // 자릿세 취소 = 면제 처리, 거절(O28)도 CANCELED — 그걸 첫 주문으로 세면 진짜 첫 메뉴 주문에 배지가 붙는다
+  it('취소된 주문은 첫 주문으로 세지 않는다', () => {
+    const orders = [
+      order('A-1', '2026-09-21T18:00:00', 'CANCELED', 1),
+      order('A-2', '2026-09-21T18:10:00', 'RECEIVED', 1),
+    ]
+    expect(additionalOrderIds(orders).size).toBe(0)
+  })
+
+  // ICU 정렬은 '.'을 '+'보다 앞에 둬서, 소수점 유무가 갈리면 localeCompare가 순서를 뒤집는다
+  it('소수점 자릿수가 다른 같은 초의 두 주문도 시각 순으로 가른다', () => {
+    const orders = [
+      order('A-2', '2026-09-21T18:10:00.5+09:00', 'RECEIVED', 1),
+      order('A-1', '2026-09-21T18:10:00+09:00', 'RECEIVED', 1),
+    ]
+    expect([...additionalOrderIds(orders)]).toEqual([2])
+  })
+
+  it('생성 시각이 완전히 같으면 orderId가 작은 쪽을 첫 주문으로 본다', () => {
+    const orders = [
+      order('A-2', '2026-09-21T18:10:00', 'RECEIVED', 1),
+      order('A-1', '2026-09-21T18:10:00', 'RECEIVED', 1),
+    ]
+    expect([...additionalOrderIds(orders)]).toEqual([2])
   })
 })
 
