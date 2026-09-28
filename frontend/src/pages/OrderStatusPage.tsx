@@ -3,7 +3,7 @@ import OrderCard from '../components/OrderCard'
 import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
 import { getAuthToken, getStaff } from '../lib/auth'
-import { confirmPaymentMessage, orderedForTab, rejectConfirmMessage } from '../lib/dashboardOrders'
+import { orderedForActive, orderedForTab } from '../lib/dashboardOrders'
 import { alertTitle, diffArrivals, snapshotOf, type ArrivalSnapshot } from '../lib/newArrivals'
 import { createPollGuard } from '../lib/pollGuard'
 import {
@@ -11,7 +11,6 @@ import {
   approveOrder as approveOrderRequest,
   cancelOrder as cancelOrderRequest,
   completeOrder as completeOrderRequest,
-  confirmOrderPayment,
   refundDone as refundDoneRequest,
   restoreOrder as restoreOrderRequest,
 } from '../lib/orderActions'
@@ -38,12 +37,21 @@ import {
   vibrate,
 } from '../lib/staffAlert'
 
-// O28(v0.6.10) — 승인대기를 맨 앞에 둔다(Figma "주문현황-승인대기" 641:1362 탭 순서)
+// 서버(O10)에서 읽어 오는 상태 — 승인대기를 맨 앞에 둔다(첫 응답의 calls·새 주문 알림 기준, 아래 refetchAll)
 const TABS: { status: OrderStatus; label: string }[] = [
   { status: 'PENDING_APPROVAL', label: '승인 대기' },
   { status: 'RECEIVED', label: '진행' },
   { status: 'DONE', label: '완료' },
   { status: 'CANCELED', label: '취소' },
+]
+
+// 화면 탭 — 승인대기와 접수(진행)를 "진행" 한 탭에 합친다. 승인대기는 항상 앞에 두고 색으로 구분한다(orderedForActive).
+// 탭을 나눠 두면 진행 탭을 보던 운영자가 새로 들어온 승인대기를 놓친다
+type ViewTab = 'ACTIVE' | 'DONE' | 'CANCELED'
+const VIEW_TABS: { key: ViewTab; label: string }[] = [
+  { key: 'ACTIVE', label: '진행' },
+  { key: 'DONE', label: '완료' },
+  { key: 'CANCELED', label: '취소' },
 ]
 
 const POLL_INTERVAL_MS = 5000 // 명세서 O10 권장 폴링 주기(3~5초)
@@ -65,8 +73,8 @@ export default function OrderStatusPage() {
     PENDING_APPROVAL: [], RECEIVED: [], DONE: [], CANCELED: [],
   })
   const [calls, setCalls] = useState<CallSummary[]>([])
-  // 기본 진입 탭은 승인대기 — 새로 들어온 주문 중 운영자가 지금 당장 반응해야 할 것부터 보여준다 (Figma 641:1362)
-  const [activeStatus, setActiveStatus] = useState<OrderStatus>('PENDING_APPROVAL')
+  // 기본 진입 탭은 진행(승인대기+접수) — 승인대기가 맨 앞이라 지금 당장 반응해야 할 주문부터 보인다
+  const [activeTab, setActiveTab] = useState<ViewTab>('ACTIVE')
   const [error, setError] = useState<string | null>(null)
   // 버튼 작업(완료·취소·복구·호출확인) 오류는 따로 둔다 — error는 폴링이 성공할 때마다 지워서, 한데 두면
   // "이미 다른 상태로 바뀌었어요" 같은 안내가 5초 안에 사라져 바쁜 운영자가 못 본다. 다음 작업이 성공하면 지운다
@@ -191,11 +199,17 @@ export default function OrderStatusPage() {
     [ordersByStatus],
   )
 
-  // 탭별 표시 순서 — 승인대기·진행 탭만 먼저 들어온 주문이 위로 온다. 근거는 orderedForTab 주석 참고
+  // 탭별 표시 순서 — 진행 탭은 승인대기 먼저, 각 묶음 안에서는 먼저 들어온 주문이 위로. 근거는 orderedForTab 주석 참고
   const visibleOrders = useMemo(
-    () => orderedForTab(activeStatus, ordersByStatus[activeStatus]),
-    [ordersByStatus, activeStatus],
+    () =>
+      activeTab === 'ACTIVE'
+        ? orderedForActive(ordersByStatus.PENDING_APPROVAL, ordersByStatus.RECEIVED)
+        : orderedForTab(activeTab, ordersByStatus[activeTab]),
+    [ordersByStatus, activeTab],
   )
+
+  const tabCount = (tab: ViewTab) =>
+    tab === 'ACTIVE' ? counts.PENDING_APPROVAL + counts.RECEIVED : counts[tab]
 
   // O15 호출 확인 — 성공하면 서버 calls에서 빠진다. 폴링을 기다리지 않고 바로 지운다(멱등이라 중복 눌림도 안전)
   const acknowledgeCall = async (callId: number) => {
@@ -258,24 +272,15 @@ export default function OrderStatusPage() {
     runOrderAction(orderId, () => approveOrderRequest(orderId), '주문을 승인 처리하지 못했어요')
 
   // 거절은 손님에게 바로 영향이 가는 취소와 같은 무게라 취소와 같은 방식으로 한 번 더 묻는다.
-  // 별도 API 없이 기존 취소(O13)를 사유만 다르게 재사용한다(백엔드 DashboardOrderActionService.approve 주석 참조)
-  // 손님은 승인 전에 먼저 이체하라고 안내받는다 — 미결제로 거절하면 이미 들어온 돈이 환불 대상에서 빠지므로 경고한다
+  // 별도 API 없이 기존 취소(O13)를 사유만 다르게 재사용한다(백엔드 DashboardOrderActionService.approve 주석 참조).
+  // 승인 전에 이미 입금한 손님은 운영자에게 직접 말해 운영자가 따로 돌려준다(2026-09-28 결정) — 확인창에 입금 경고를 붙이지 않는다
   const rejectOrder = (orderId: number) => {
-    const order = ordersByStatus.PENDING_APPROVAL.find((o) => o.orderId === orderId)
-    if (!window.confirm(rejectConfirmMessage(order, calls))) return
+    if (!window.confirm('이 주문을 거절할까요?')) return
     return runOrderAction(orderId, () => cancelOrderRequest(orderId, '주문 거절'), '주문을 거절 처리하지 못했어요')
   }
 
   const completeOrder = (orderId: number) =>
     runOrderAction(orderId, () => completeOrderRequest(orderId), '주문을 완료 처리하지 못했어요')
-
-  // O11 결제확인 — 승인대기와 진행·완료의 미결제 카드. 승인 뒤에도 체크아웃 없이 입금을 기록할 수 있어야 한다.
-  // 금액을 확인창에 띄워 은행 앱 입금액과 대조한 뒤 누르게 한다
-  const confirmPayment = (orderId: number) => {
-    const order = TABS.flatMap((tab) => ordersByStatus[tab.status]).find((o) => o.orderId === orderId)
-    if (!window.confirm(confirmPaymentMessage(order))) return
-    return runOrderAction(orderId, () => confirmOrderPayment(orderId), '결제 확인을 처리하지 못했어요')
-  }
 
   // 취소는 손님에게 바로 영향이 가고 되돌리려면 한 단계를 더 거쳐야 한다 — 한 번 더 묻는다(되돌리기와 같은 방식)
   const cancelOrder = (orderId: number) => {
@@ -300,18 +305,24 @@ export default function OrderStatusPage() {
       <TopNav />
 
       <div className="flex justify-center gap-16 border-b border-neutral-100 bg-neutral-50 px-10 py-5">
-        {TABS.map((tab) => (
+        {VIEW_TABS.map((tab) => (
           <button
-            key={tab.status}
+            key={tab.key}
             type="button"
-            onClick={() => setActiveStatus(tab.status)}
-            className={`pb-2 text-[22px] leading-[1.2] font-semibold tracking-[-0.04em] ${
-              activeStatus === tab.status
+            onClick={() => setActiveTab(tab.key)}
+            className={`flex items-center gap-2 pb-2 text-[22px] leading-[1.2] font-semibold tracking-[-0.04em] ${
+              activeTab === tab.key
                 ? 'border-b-2 border-neutral-900 text-neutral-900'
                 : 'text-neutral-400'
             }`}
           >
-            {tab.label} {counts[tab.status]}
+            {tab.label} {tabCount(tab.key)}
+            {/* 진행 탭 안의 승인대기 수 — 다른 탭을 보고 있어도 새로 들어온 승인대기가 눈에 띄게 */}
+            {tab.key === 'ACTIVE' && counts.PENDING_APPROVAL > 0 && (
+              <span className="rounded-full bg-orange-600 px-2 py-0.5 text-sm leading-[1.2] font-semibold text-neutral-50">
+                대기 {counts.PENDING_APPROVAL}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -380,7 +391,6 @@ export default function OrderStatusPage() {
             onCancel={cancelOrder}
             onRestore={restoreOrder}
             onRefundDone={isAdmin ? refundDone : undefined}
-            onConfirmPayment={confirmPayment}
           />
         ))}
         {visibleOrders.length === 0 && !error && (

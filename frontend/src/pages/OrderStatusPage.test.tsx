@@ -202,15 +202,17 @@ beforeEach(() => {
 })
 
 describe('주문현황 탭 정렬', () => {
-  it('기본 진입 탭은 승인대기이고, 먼저 들어온 주문을 맨 위에 그린다 (O28)', async () => {
+  it('기본 진입 탭은 진행(승인대기+접수)이고, 승인대기를 항상 앞에 — 각 묶음은 먼저 들어온 주문이 위 (O28)', async () => {
     await load()
-    expect(renderedOrderNos()).toEqual(['P-1', 'P-2'])
+    expect(renderedOrderNos()).toEqual(['P-1', 'P-2', 'R-1', 'R-2', 'R-3'])
   })
 
-  it('진행 탭도 먼저 들어온 주문을 맨 위에 그린다', async () => {
+  it('승인대기 탭은 따로 없다 — 진행 탭 하나로 합쳤다', async () => {
     await load()
-    clickTab('진행')
-    expect(renderedOrderNos()).toEqual(['R-1', 'R-2', 'R-3'])
+    const tabLabels = collect(render(), p => !!p.onClick)
+      .flatMap(p => Children.toArray(p.children).filter(k => typeof k === 'string'))
+    expect(tabLabels).toEqual(expect.arrayContaining(['진행', '완료', '취소']))
+    expect(tabLabels).not.toContain('승인 대기')
   })
 
   it('완료 탭으로 옮기면 서버 순서(접수 최신 먼저) 그대로 그린다', async () => {
@@ -229,7 +231,7 @@ describe('주문현황 탭 정렬', () => {
     await load()
     clickTab('완료')
     clickTab('진행')
-    expect(renderedOrderNos()).toEqual(['R-1', 'R-2', 'R-3'])
+    expect(renderedOrderNos()).toEqual(['P-1', 'P-2', 'R-1', 'R-2', 'R-3'])
   })
 
   it('폴링으로 목록이 바뀌면 바뀐 목록을 다시 정렬해 그린다', async () => {
@@ -296,8 +298,7 @@ describe('주문 승인·거절 (O28)', () => {
     await cards()[0].onReject!(1)
     expect(confirmMessages).toHaveLength(1)
     expect(confirmMessages[0]).toContain('이 주문을 거절할까요?')
-    // 승인 전 입금한 돈이 환불 대상에서 빠지지 않게 — 거절 전에 '결제 확인'부터 누르라고 알린다
-    expect(confirmMessages[0]).toContain("먼저 '결제 확인'을 누른 뒤 거절하세요")
+    expect(confirmMessages[0]).toBe('이 주문을 거절할까요?')   // 입금 경고는 붙이지 않는다(2026-09-28)
   })
 
   it('거절 확인에서 아니오를 누르면 요청을 보내지 않는다', async () => {
@@ -438,28 +439,10 @@ describe('새 주문·호출 알림', () => {
 })
 
 describe('결제 확인 (O11)', () => {
-  it('금액을 보여주는 확인을 거쳐 요청을 보낸다', async () => {
+  // 카드의 결제 확인 버튼은 없앴다(2026-09-28) — 입금 기록은 테이블 화면 결제 모달(O24)에서 한다
+  it('주문 카드에 결제 확인 수단을 넘기지 않는다', async () => {
     await load()
-    clickTab('진행')
-    await cards()[0].onConfirmPayment!(1)
-    expect(confirmMessages[0]).toContain('1,000원')
-    expect(vi.mocked(confirmOrderPayment)).toHaveBeenCalledWith(1)
-  })
-
-  it('확인에서 아니오면 요청하지 않는다', async () => {
-    await load()
-    confirmAnswer = false
-    await cards()[0].onConfirmPayment!(1)
+    expect(cards().every(c => !c.onConfirmPayment)).toBe(true)
     expect(vi.mocked(confirmOrderPayment)).not.toHaveBeenCalled()
-  })
-})
-
-describe('거절 경고 강조', () => {
-  it('같은 테이블에 미확인 결제확인 호출이 있으면 경고를 강조한다', async () => {
-    await load()
-    vi.mocked(apiFetch).mockClear()
-    await pollWith(PENDING_APPROVAL, [{ callId: 5, tableLabel: 'A-1', reason: 'PAYMENT', createdAt: '2026-09-21T19:00:00' }])
-    await cards()[0].onReject!(1)
-    expect(confirmMessages[0].startsWith('⚠️')).toBe(true)
   })
 })

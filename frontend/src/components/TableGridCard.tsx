@@ -33,8 +33,7 @@ type TableGridCardProps = {
 
 const TIER_CARD_CLASS: Record<TableTier, string> = {
   empty: 'border-neutral-200 bg-neutral-50 text-neutral-900',
-  seated: 'border-primary-100 bg-neutral-50 text-neutral-900',
-  longWait: 'border-transparent bg-primary-100 text-white',
+  occupied: 'border-transparent bg-primary-100 text-white',
 }
 
 /**
@@ -52,7 +51,7 @@ export default function TableGridCard({
   selectMode,
   selected,
 }: TableGridCardProps) {
-  const tier = tableTierOf(table, now)
+  const tier = tableTierOf(table)
   const cardClass = selectMode
     ? selected
       ? 'border-transparent bg-red-500 text-white'
