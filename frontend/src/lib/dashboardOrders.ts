@@ -32,6 +32,47 @@ export function orderedForActive(pending: OrderSummary[], received: OrderSummary
   return [...orderedForTab('PENDING_APPROVAL', pending), ...orderedForTab('RECEIVED', received)]
 }
 
+/**
+ * 같은 테이블 세션(sessionId)에서 두 번째 이후 주문의 orderId 집합 — "추가 주문" 배지용.
+ *
+ * 자릿세(부스별 설정, 명세서 밖)가 세션의 첫 메뉴 주문에만 붙어서, 같은 테이블인데 한 카드엔 자릿세가
+ * 있고 다른 카드엔 없어 서로 무관한 주문처럼 보일 수 있다 — 그중 나중 주문임을 표시해 헷갈리지 않게 한다.
+ *
+ * 판정은 지금 화면에 불러온 주문들(주문현황의 진행·완료·취소 전체) 안에서만 이뤄진다. 서버가 완료·취소를
+ * 최근 500건까지만 주므로(DashboardQueryService), 세션의 첫 주문이 그 밖으로 밀리면 뒤 주문에 배지가
+ * 안 붙는다 — 배지가 없다고 첫 주문이라는 뜻은 아니다.
+ *
+ * 세는 대상은 "손님이 시킨 주문"뿐이다:
+ * - sessionId가 없는 수기 주문 제외.
+ * - 자릿세(SEAT_FEE)·기타(EXTRA) 항목만 든 주문 제외. 자릿세는 첫 주문의 *항목*이 아니라 같은 세션의
+ *   **별도 주문**이고 createdAt까지 메뉴 주문과 똑같다(OrderWriter.saveSeatFeeOrder) — 세면 자릿세 카드가
+ *   "두 번째 주문"으로 잡혀 정작 첫 주문에 배지가 붙는다. 결제 모달로 넣는 기타 항목(추가 자릿세·쿠폰)도 같다.
+ * - 취소된 주문 제외. 자릿세 취소는 면제 처리라(OrderRepository) 그걸 첫 주문으로 세면 손님의 진짜 첫
+ *   메뉴 주문에 배지가 붙는다. 거절(O28)당한 주문 뒤의 재주문도 마찬가지.
+ */
+export function additionalOrderIds(orders: readonly OrderSummary[]): ReadonlySet<number> {
+  const bySession = new Map<number, OrderSummary[]>()
+  for (const order of orders) {
+    if (order.sessionId == null) continue
+    if (order.status === 'CANCELED') continue
+    if (!order.items.some((item) => item.itemType === 'MENU')) continue
+    const group = bySession.get(order.sessionId)
+    if (group) group.push(order)
+    else bySession.set(order.sessionId, [order])
+  }
+  const result = new Set<number>()
+  for (const group of bySession.values()) {
+    if (group.length < 2) continue
+    // createdAt은 소수점 자릿수가 들쭉날쭉한 ISO 문자열이라 localeCompare가 뒤집는다(ICU가 '.'을 '+'보다
+    // 앞에 둔다). 같은 초에 들어온 두 주문의 순서가 갈리므로 파싱해서 비교하고, 동점이면 orderId로 가른다
+    const sorted = [...group].sort(
+      (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.orderId - b.orderId,
+    )
+    for (const order of sorted.slice(1)) result.add(order.orderId)
+  }
+  return result
+}
+
 /** 주문 금액 표시 — "12,000원". 운영자가 은행 앱 입금액과 바로 대조하는 숫자라 카드·확인창이 같은 형식을 쓴다 */
 export function formatWon(amount: number): string {
   return `${amount.toLocaleString('ko-KR')}원`

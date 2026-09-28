@@ -74,6 +74,7 @@ type Props = {
   onRefundDone?: (orderId: number) => void
   onConfirmPayment?: (orderId: number) => void
   order?: OrderSummary
+  additionalOrder?: boolean
 }
 
 function render() {
@@ -112,13 +113,21 @@ function clickTab(label: string) {
   tab!.onClick!()
 }
 
+// orderId는 orderNo의 숫자부만 따서 만든다("R-1"→1) — 그런데 "D-1"·"C-1"도 같은 1이 나와 상태(탭)가
+// 다른 픽스처끼리 orderId/sessionId가 우연히 겹친다. sessionId는 그 숫자와 무관하게 독립적으로 늘려서
+// (이 파일의 픽스처들은 서로 다른 테이블의 별개 주문을 흉내낸다) "추가 주문" 배지가 우연히 잡히지 않게 한다.
+// "추가 주문" 배지 자체는 아래 전용 describe에서 별도로 sessionId를 맞춰 테스트한다.
+let nextSessionId = 1000
 function order(orderNo: string, createdAt: string, status: OrderStatus): OrderSummary {
   return {
     orderId: Number(orderNo.replace(/\D/g, '')),
     orderNo, status,
     paymentStatus: 'UNPAID', paymentMethod: null,
-    totalAmount: 1000, items: [], createdAt,
-    tableLabel: 'A-1', manual: false, sessionId: 1,
+    // 메뉴 항목이 하나는 있어야 "추가 주문" 배지 대상이 된다 — 자릿세·기타 항목만 든 주문은 세지 않는다
+    totalAmount: 1000,
+    items: [{ itemId: 1, menuId: 1, menuName: '메뉴', unitPrice: 1000, qty: 1, itemType: 'MENU' }],
+    createdAt,
+    tableLabel: 'A-1', manual: false, sessionId: nextSessionId++,
   }
 }
 
@@ -479,6 +488,26 @@ describe('새 주문·호출 알림', () => {
     expect(vi.mocked(playOrderAlert)).not.toHaveBeenCalled()
     expect(vi.mocked(playCallAlert)).not.toHaveBeenCalled()
     expect(vi.mocked(vibrate)).not.toHaveBeenCalled()
+  })
+})
+
+describe('추가 주문 배지', () => {
+  it('같은 테이블 세션의 후속 주문이 다른 탭(완료)에 첫 주문을 두고 있어도 배지를 표시한다', async () => {
+    const first = { ...order('X-1', '2026-09-21T10:00:00', 'DONE'), sessionId: 9 }
+    const second = { ...order('X-2', '2026-09-21T11:00:00', 'RECEIVED'), sessionId: 9 }
+    vi.mocked(apiFetch).mockImplementation(async (path) => {
+      const s = String(path)
+      const orders = s.includes('status=RECEIVED') ? [second] : s.includes('status=DONE') ? [first] : []
+      return new Response(JSON.stringify({ orders, calls: [] }), { status: 200 })
+    })
+    render()
+    await vi.waitFor(() => expect(cards().length).toBeGreaterThan(0))
+    expect(cards()[0].additionalOrder).toBe(true)
+  })
+
+  it('세션이 다르면(테이블이 다르거나 별개 세션) 배지가 없다', async () => {
+    await load()
+    expect(cards().every((c) => !c.additionalOrder)).toBe(true)
   })
 })
 
