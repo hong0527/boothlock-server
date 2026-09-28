@@ -13,6 +13,24 @@ const SESSION_INFO_KEY = 'boothlock_session_info'
 // 넘어가면 안 되기 때문에, 저장 키 하나로 묶어 이 파일이 세션·장바구니 수명을 함께 관리한다
 export const CART_STORAGE_KEY = 'boothlock_cart_items'
 
+// CartProvider는 앱 최상단에서 한 번만 마운트돼 items를 메모리(React state)에도 들고 있다 — 저장소만
+// 지워서는 안 되고, 지우는 그 순간 CartContext의 메모리 상태도 같이 비워야 한다(코드 리뷰 2026-09-29 발견:
+// 풀 리로드 없이 세션 토큰만 바뀌는 경로가 생기면 저장소는 비었는데 화면엔 앞 손님 장바구니가 그대로 남는다).
+// 이벤트로 알려서 CartContext가 직접 구독해 비우게 한다 — 여기서 CartContext를 import하면 순환 참조가 생긴다
+const CART_CLEARED_EVENT = 'boothlock:cart-cleared'
+
+function notifyCartCleared() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event(CART_CLEARED_EVENT))
+}
+
+/** CartContext 전용 구독 — 저장소의 장바구니가 비워질 때마다(세션 변경·만료) 불린다. 해제 함수를 돌려준다 */
+export function onCartCleared(handler: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  window.addEventListener(CART_CLEARED_EVENT, handler)
+  return () => window.removeEventListener(CART_CLEARED_EVENT, handler)
+}
+
 export function getSessionToken(): string | null {
   return readStored(SESSION_TOKEN_KEY)
 }
@@ -33,6 +51,7 @@ export function setCustomerSession(sessionToken: string, info: CustomerSessionIn
   const previousToken = getSessionToken()
   if (previousToken !== null && previousToken !== sessionToken) {
     removeStored(CART_STORAGE_KEY)
+    notifyCartCleared()
   }
   writeStored(SESSION_TOKEN_KEY, sessionToken)
   writeStored(SESSION_INFO_KEY, JSON.stringify(info))
@@ -45,6 +64,7 @@ export function clearCustomerSession() {
   removeStored(SESSION_TOKEN_KEY)
   removeStored(SESSION_INFO_KEY)
   removeStored(CART_STORAGE_KEY)
+  notifyCartCleared()
 }
 
 export function setSessionPartySize(partySize: number) {
