@@ -49,9 +49,11 @@ export function createIdempotencyKeyStore(
 
 /**
  * 손님 주문(C3) 키 저장소 — 모듈에 하나만 둔다.
- * 화면(OrderConfirmPage) 안의 useRef에 두면 "응답 유실 → 뒤로 가기 → 다시 주문 확인"에서 화면이 새로 떠 키가 새로 생기고,
+ * 화면(CartPage) 안의 useRef에 두면 "응답 유실 → 다른 화면 갔다가 장바구니로 복귀"에서 화면이 새로 떠 키가 새로 생기고,
  * 서버는 이미 만든 주문과 별개로 받아 중복 주문이 됐다. 모듈 단위면 탭이 살아 있는 동안 같은 장바구니는 같은 키다.
  * 서명에 세션 토큰을 섞어 다른 세션(퇴실 후 재스캔)에서는 새 키가 나오게 한다.
+ * 장바구니를 고치면 서명이 달라져 키도 새로 난다 — 그래서 CartPage는 장바구니가 바뀔 때 "다시 눌러도 한 번만
+ * 들어가요" 문구를 지운다(그 약속은 같은 장바구니에서만 성립한다).
  */
 export const customerOrderKeys = createIdempotencyKeyStore()
 
