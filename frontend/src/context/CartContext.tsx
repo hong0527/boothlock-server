@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { CART_STORAGE_KEY } from '../lib/customerSession'
+import { CART_STORAGE_KEY, onCartCleared } from '../lib/customerSession'
 import { readStoredJson, writeStored } from '../lib/safeStorage'
 import type { CartItem, CustomerMenuItem } from '../types/customer'
 
@@ -24,6 +24,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     writeStored(CART_STORAGE_KEY, JSON.stringify(items))
   }, [items])
+
+  // CartProvider는 앱 최상단에 한 번만 마운트돼 items를 메모리에도 들고 있다 — 풀 리로드 없이 세션 토큰만
+  // 바뀌는 경로가 생기면(코드 리뷰 2026-09-29 발견) 저장소만 지워서는 이 메모리 상태가 안 비워진다.
+  // customerSession.ts가 저장소를 지울 때마다 이벤트로 알려서 여기서도 즉시 비운다
+  useEffect(() => onCartCleared(() => setItems([])), [])
 
   const addItem: CartContextValue['addItem'] = (menu) => {
     setItems((prev) => {
