@@ -17,7 +17,8 @@ import java.util.Set;
  *   <li>O3 {@code unpaidOrderCount} — TableUnpaidOrderRepository.countUnpaidOrdersOfOpenSessions</li>
  *   <li>O6 퇴실 {@code warning} — TableUnpaidOrderRepository.findUnpaidOrdersOfSessionsForUpdate</li>
  *   <li>O24 일괄 입금 대상 — TablePaymentOrderRepository.findUnpaidOfActiveTableSessionsForUpdate</li>
- *   <li>SeatIdlePolicy 미결제 예외(C1·O3) — TableUnpaidOrderRepository.existsUnpaidOrderOn</li>
+ *   <li>SeatIdlePolicy 미결제 예외(C1·C3·C4) — TableUnpaidOrderRepository.existsUnpaidOrPendingApprovalOrderOn
+ *       (승인대기를 OR로 얹은 병합 쿼리. 규칙 단독 검증용 통로로 existsUnpaidOrderOn을 테스트 전용으로 남겨 뒀다)</li>
  *   <li>같은 예외의 E1 사본 — BoothSeatRepository.findSeatSummaries</li>
  * </ol>
  *

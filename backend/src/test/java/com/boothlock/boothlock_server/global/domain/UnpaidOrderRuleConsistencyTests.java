@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 미결제 정의({@link UnpaidOrderRule})가 다섯 쿼리에서 전부 같은지 — 주문·결제 상태의 모든 조합을 한 테이블씩 깔고
+ * 미결제 정의({@link UnpaidOrderRule})가 여섯 쿼리에서 전부 같은지 — 주문·결제 상태의 모든 조합을 한 테이블씩 깔고
  * O3 건수·O6 경고 건수·O24 대상·유휴 예외(SeatIdlePolicy 활성 조건 2)·E1 좌석 집계가 {@link UnpaidOrderRule#matches}와
  * 조합마다 일치해야 한다. 한 곳만 옛 조건(RECEIVED만)으로 되돌리면 DONE+UNPAID 행에서 그 쿼리만 어긋나 여기서 잡힌다.
  *
@@ -126,7 +126,7 @@ class UnpaidOrderRuleConsistencyTests {
     }
 
     @Test
-    void fiveQueriesAgreeWithTheRuleOnEveryStatusCombination() {
+    void allQueriesAgreeWithTheRuleOnEveryStatusCombination() {
         List<Fixture> fixtures = seedAllCombos();
         List<Long> tableIds = fixtures.stream().map(Fixture::tableId).toList();
 
@@ -164,6 +164,14 @@ class UnpaidOrderRuleConsistencyTests {
             boolean idle = tableUnpaidOrderRepository.existsUnpaidOrderOn(fx.sessionId(), booth.getId(), DAY);
             if (idle != expected) {
                 wrong.add("SeatIdlePolicy existsUnpaidOrderOn=" + idle);
+            }
+            // C1·C3·C4가 실제로 부르는 쿼리 — 미결제 OR 승인대기라, 미결제 조합에 더해 PENDING_APPROVAL이면
+            // 결제 상태와 무관하게 참이어야 한다. 위 단독 쿼리만 검증하면 프로덕션 경로가 무방비로 남는다
+            boolean activeExpected = expected || fx.combo().status() == OrderStatus.PENDING_APPROVAL;
+            boolean active = tableUnpaidOrderRepository
+                    .existsUnpaidOrPendingApprovalOrderOn(fx.sessionId(), booth.getId(), DAY);
+            if (active != activeExpected) {
+                wrong.add("SeatIdlePolicy existsUnpaidOrPendingApprovalOrderOn=" + active);
             }
             if (!wrong.isEmpty()) {
                 disagreements.put(fx.combo().toString(), wrong);

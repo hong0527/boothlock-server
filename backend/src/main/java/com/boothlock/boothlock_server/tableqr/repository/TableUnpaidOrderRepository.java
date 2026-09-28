@@ -74,7 +74,11 @@ public interface TableUnpaidOrderRepository extends Repository<OrderEntity, Long
     // 동시에 누를 때 같은 행들을 반대 순서로 잠가 교착(MySQL 1213 → 500)이 나지 않게 한다
     List<OrderEntity> findUnpaidOrdersOfSessionsForUpdate(@Param("sessionIds") List<Long> sessionIds, @Param("boothId") Long boothId);
 
-    /** C1 세션 복원 판정 — 이 세션에 해당 영업일의 미결제({@link UnpaidOrderRule}) 주문이 있는가 (SeatIdlePolicy 활성 조건 2) */
+    /**
+     * 미결제({@link UnpaidOrderRule}) 조건만 단독으로 — 프로덕션은 아래 병합 쿼리를 쓰고, 이 메서드는
+     * UnpaidOrderRuleConsistencyTests 전용이다. 병합 쿼리는 미결제와 승인대기를 OR로 묶어 "미결제 정의와
+     * 정확히 일치하는가"를 그것만으로는 가려낼 수 없어서, 규칙 상수를 단독으로 태워 볼 통로를 남겨 둔다.
+     */
     @Query("""
             select count(o.id) > 0
               from OrderEntity o
@@ -85,21 +89,6 @@ public interface TableUnpaidOrderRepository extends Repository<OrderEntity, Long
     boolean existsUnpaidOrderOn(@Param("sessionId") Long sessionId,
                                 @Param("boothId") Long boothId,
                                 @Param("businessDate") LocalDate businessDate);
-
-    /** C1 세션 복원·인증(C3·C4)·수기 주문 판정 — 이 세션에 해당 영업일의 승인대기 주문이 있는가 (SeatIdlePolicy 활성 조건 3).
-     * existsUnpaidOrderOn과 별개로 남겨 둔다 — UnpaidOrderRuleConsistencyTests가 이 메서드 없이 existsUnpaidOrderOn만
-     * UnpaidOrderRule과 정확히 일치하는지 단독으로 확인하므로, 합쳐 버리면 그 교차검증의 의미가 흐려진다.
-     * 세션 복원 판정 자체(SeatIdlePolicy.Criteria#isActive)는 아래 병합 쿼리를 대신 쓴다 */
-    @Query("""
-            select count(o.id) > 0
-              from OrderEntity o
-             where o.boothId = :boothId
-               and o.businessDate = :businessDate
-               and o.sessionId = :sessionId
-               and """ + SeatIdlePolicy.PENDING_APPROVAL_JPQL_CONDITION)
-    boolean existsPendingApprovalOrderOn(@Param("sessionId") Long sessionId,
-                                         @Param("boothId") Long boothId,
-                                         @Param("businessDate") LocalDate businessDate);
 
     /**
      * C1 세션 복원·인증(C3·C4)·수기 주문 판정 — SeatIdlePolicy 활성 조건 2·3을 한 번에(미결제 OR 승인대기).

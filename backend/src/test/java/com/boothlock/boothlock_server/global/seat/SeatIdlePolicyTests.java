@@ -166,18 +166,12 @@ class SeatIdlePolicyTests {
         assertThat(policy(180).criteria().isActive(session(NOW_KST.minusMinutes(180).minusSeconds(1)), false)).isFalse();
     }
 
-    // hasQualifyingOrderToday 하나로 합쳤다(2026-09-28 코드 리뷰) — 미결제(UnpaidOrderRule)·승인대기(PENDING_APPROVAL)
-    // 둘 다 이 자리에 true를 전달하는 실제 이유라, 두 출처를 각각 문서화하는 뜻으로 테스트는 나눠 둔다
-
+    // 미결제(UnpaidOrderRule)·승인대기(PENDING_APPROVAL)는 hasQualifyingOrderToday 하나로 합쳐 들어온다
+    // (2026-09-28 코드 리뷰) — 여기서는 두 출처를 구분할 수 없으므로 테스트도 하나다. 어느 출처가 true를
+    // 만드는지는 쿼리 수준(UnpaidOrderRuleConsistencyTests)과 API 수준(SeatFeeIdleHandoffApiTests)이 가른다
     @Test
-    @DisplayName("유휴여도 현재 영업일 미결제가 있으면 활성 — §7-9 미결제 세션은 영업일 종료로만 만료")
-    void idleSessionWithUnpaidOrderTodayStaysActive() {
-        assertThat(policy(180).criteria().isActive(session(NOW_KST.minusHours(10)), true)).isTrue();
-    }
-
-    @Test
-    @DisplayName("유휴여도 현재 영업일 승인대기 주문이 있으면 활성 — 2026-09-28 피드백: 주문 직후 자리를 뜬 손님의 승인 대기")
-    void idleSessionWithPendingApprovalOrderTodayStaysActive() {
+    @DisplayName("유휴여도 현재 영업일에 살아 있는 주문(미결제 또는 승인대기)이 있으면 활성 — §7-9")
+    void idleSessionWithQualifyingOrderTodayStaysActive() {
         assertThat(policy(180).criteria().isActive(session(NOW_KST.minusHours(10)), true)).isTrue();
     }
 

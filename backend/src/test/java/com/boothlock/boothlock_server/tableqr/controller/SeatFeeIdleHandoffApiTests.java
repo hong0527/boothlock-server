@@ -330,4 +330,32 @@ class SeatFeeIdleHandoffApiTests {
                 .count();
         assertEquals(1, seatFeeOrders, "자릿세는 첫 세션에서 한 번만");
     }
+
+    /**
+     * 이 PR이 만드는 핵심 모양 — 손님이 주문만 넣고(승인 전) 자리를 뜬 뒤 유휴 임계를 넘긴 경우.
+     * 다른 테스트들은 자릿세 인계만 보려고 그 승인대기를 미리 거절해 두므로(firstPartyChoosesThree 주석),
+     * 승인대기가 살아 있는 채로 임계를 넘기는 경로는 여기서만 검증한다.
+     */
+    @Test
+    void livePendingApprovalOrderKeepsSessionEvenPastIdleThreshold() throws Exception {
+        String first = scan().get("sessionToken").asString();
+        Long[] ids = choosesAndOrders(first, 3);
+        // 자릿세는 결제까지 끝내 미결제(활성 조건 2)를 지운다 — 승인대기(조건 3)만으로 세션이 유지되는지 보려는 것
+        approveAndPay(ids[0]);
+        makeIdle(first);
+
+        JsonNode rescan = scan();
+        assertEquals(first, rescan.get("sessionToken").asString(),
+                "승인대기 주문이 있으면 유휴 임계를 넘겨도 같은 세션을 이어 쓴다 — 손님이 자기 주문을 계속 본다");
+        assertTrue(rescan.get("restored").asBoolean());
+        assertEquals(3, rescan.get("partySize").asInt());
+
+        // 운영자가 그 승인대기를 거절해 정리하면 살아 있는 주문이 없어져 평소대로 유휴 인계가 일어난다
+        assertEquals(1, fx.orderRepository.cancelByStaff(ids[1], fx.booth.getId(), "승인대기 정리", "race-staff",
+                LocalDateTime.now(KST)));
+        makeIdle(first);
+
+        assertNotEquals(first, scan().get("sessionToken").asString(),
+                "거절로 살아 있는 주문이 없어지면 유휴 세션은 다시 인계 대상이 된다");
+    }
 }
