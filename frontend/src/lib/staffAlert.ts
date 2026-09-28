@@ -1,9 +1,12 @@
 import { readStored, writeStored } from './safeStorage'
+import orderAlertClipUrl from '../assets/sounds/order-alert.mp3'
 
 /**
  * 운영자 새 주문·호출 알림의 기기 쪽 동작 — 소리(WebAudio 비프)·진동·화면 꺼짐 방지(wakeLock).
  *
- * <p>소리 파일을 두지 않고 OscillatorNode로 직접 만든다 — 에셋 로딩 실패(축제장 와이파이) 걱정이 없다.
+ * <p>직원호출은 OscillatorNode로 직접 만든다 — 에셋 로딩 실패(축제장 와이파이) 걱정이 없다. 새 주문 알림음은
+ * 번들에 같이 실려 배포되는 짧은 음원(2026-09-29 파일럿 피드백)을 쓰되, 못 받거나 디코딩에 실패하면 같은
+ * 이유로 합성음으로 조용히 대신한다({@link ensureOrderAlertBuffer}) — 축제장 네트워크와 무관하게 항상 소리는 난다.
  *
  * <p>iOS Safari는 사용자 동작(탭) 안에서 한 번 resume()한 AudioContext만 소리를 낸다. 그래서 "알림 켜기" 버튼이
  * {@link unlockAudio}를 부르고, 새로고침 뒤 설정만 남아 있을 때는 화면 아무 곳이나 누르는 순간 풀리게 한다({@link listenForAudioUnlock}).
@@ -111,6 +114,7 @@ export function unlockAudio() {
       audioContext = new Ctor()
     }
     resumeAudio()
+    ensureOrderAlertBuffer(audioContext)
   } catch {
     // 오디오를 못 쓰는 환경 — 진동·탭 제목 알림은 그대로 동작한다
   }
@@ -167,11 +171,12 @@ export function listenForAudioUnlock(): () => void {
 
 /*
  * 알림음 두 가지 — 소리만 듣고 무엇인지 알 수 있게 음색·리듬·음높이를 모두 다르게 한다.
- * 음원 파일은 쓰지 않고 여기서 음을 직접 만든다(저작권·라이선스 걱정이 없고, 다른 서비스의 소리를 흉내 내지 않는다).
- * - 새 주문: 맑은 벨 음색으로 네 음이 이어지며 점점 높아지는 "띠디리링↗"(C6→E6→G6→C7, 마지막 음을 길게, 약 1.8초).
- *   1~2kHz라 낮은 소리가 많은 축제장 소음 위로 뚫고 나오고, 올라가는 음형은 "새 것이 왔다"로 들린다.
- * - 직원호출: 여운 없는 짧은 전자음으로 내려가는 두 음 "딩동 · 딩동"(약 0.7초).
- * 음높이 방향(올라감↔내려감)·음색(울리는 벨↔마른 전자음)·음역(높음↔중간)이 모두 달라 소음 속에서도 갈린다.
+ * - 새 주문: 팀이 고른 짧고 명쾌한 실제 음원(약 1.15초, order-alert.mp3) — 준비 전이거나 못 받았으면 맑은 벨
+ *   음색으로 네 음이 이어지며 점점 높아지는 합성음 "띠디리링↗"(C6→E6→G6→C7, 마지막 음을 길게, 약 1.8초)으로
+ *   대신한다. 1~2kHz라 낮은 소리가 많은 축제장 소음 위로 뚫고 나오고, 올라가는 음형은 "새 것이 왔다"로 들린다.
+ * - 직원호출: 음원을 쓰지 않고 여기서 직접 만든다(저작권 걱정이 없고, 다른 서비스의 소리를 흉내 내지 않는다) —
+ *   여운 없는 짧은 전자음으로 내려가는 두 음 "딩동 · 딩동"(약 0.7초).
+ * 음색(음원·벨 ↔ 마른 전자음)·리듬·음역이 모두 달라 소음 속에서도 새 주문과 호출이 갈린다.
  * 둘 다 알림음 크기(마스터 게인)를 함께 탄다.
  *
  * 폴링에서 부르는 알림음은 오디오가 실제로 돌고 있을(running) 때만 예약한다. 잠긴(suspended·interrupted) 동안에는
@@ -183,8 +188,9 @@ export function listenForAudioUnlock(): () => void {
 let nextFreeAt = 0
 // 두 소리가 붙어 한 소리로 들리지 않게 띄우는 간격(초)
 const PATTERN_GAP = 0.15
-// 예약해 둔 소리 — 알림을 끄면 stopAlertSounds가 한꺼번에 끊는다(화면을 떠나는 것만으로는 끊지 않는다)
-const scheduledOscillators = new Set<OscillatorNode>()
+// 예약해 둔 소리(오실레이터·실제 음원 재생 둘 다) — 알림을 끄면 stopAlertSounds가 한꺼번에 끊는다
+// (화면을 떠나는 것만으로는 끊지 않는다). OscillatorNode·AudioBufferSourceNode 둘 다 AudioScheduledSourceNode다
+const scheduledSources = new Set<AudioScheduledSourceNode>()
 // 직원호출 음색용 저역통과 필터 — 컨텍스트가 하나뿐이라 한 번 만들어 재사용한다
 let callFilter: BiquadFilterNode | null = null
 // 모든 알림음이 지나는 출구 — 알림음 크기(마스터 게인) → 리미터 → 스피커. 컨텍스트가 하나뿐이라 한 번 만든다
@@ -225,9 +231,9 @@ function scheduleTone(
   gain.gain.exponentialRampToValueAtTime(peak, at + attack)
   gain.gain.exponentialRampToValueAtTime(0.0001, at + decaySeconds)
   osc.connect(gain).connect(destination)
-  scheduledOscillators.add(osc)
+  scheduledSources.add(osc)
   osc.onended = () => {
-    scheduledOscillators.delete(osc)
+    scheduledSources.delete(osc)
     gain.disconnect()
   }
   osc.start(at)
@@ -280,12 +286,53 @@ const ORDER_NOTES: [number, number, number, number][] = [
   [0.3, 2093, 1.5, 0.49], // C7 링 — 길게
 ]
 
-/** 새 주문 알림음 — 점점 높아지며 이어지는 "띠디리링↗"(약 1.8초). 오디오가 잠겨 있으면 소리 없이 넘어간다(진동·탭 제목은 그대로) */
+// 실제 녹음 음원(2026-09-29 파일럿 피드백 — 합성음보다 짧고 명쾌한 소리 요청) — 디코딩된 결과를 캐시해 둔다.
+// 못 받거나 디코딩에 실패해도(축제장 와이파이 등) playOrderAlert가 알아서 기존 합성음("띠디리링↗")으로 대신 울린다 —
+// 알림음 하나 때문에 주문현황이 죽거나 무음이 되면 안 된다는 이 파일의 원래 원칙을 그대로 따른다
+let orderAlertBuffer: AudioBuffer | null = null
+let orderAlertLoading = false
+
+/** 음원을 미리 받아 디코딩해 둔다 — 알림을 켤 때(unlockAudio) 한 번, 실패하면 다음 알림음을 낼 때 다시 시도한다 */
+function ensureOrderAlertBuffer(ctx: AudioContext) {
+  if (orderAlertBuffer || orderAlertLoading) return
+  orderAlertLoading = true
+  fetch(orderAlertClipUrl)
+    .then((res) => res.arrayBuffer())
+    .then((data) => ctx.decodeAudioData(data))
+    .then((decoded) => { orderAlertBuffer = decoded })
+    .catch(() => {
+      // 무시 — 다음 playOrderAlert 호출이 다시 시도하고, 그때까지는 합성음이 대신 울린다
+    })
+    .finally(() => { orderAlertLoading = false })
+}
+
+/** 실제 음원 재생을 예약한다 — 알림음 크기(alertOutput)를 그대로 타서 볼륨 설정이 똑같이 적용된다 */
+function scheduleOrderClip(ctx: AudioContext, buffer: AudioBuffer, at: number): number {
+  const src = ctx.createBufferSource()
+  src.buffer = buffer
+  src.connect(alertOutput(ctx))
+  scheduledSources.add(src)
+  src.onended = () => scheduledSources.delete(src)
+  src.start(at)
+  return buffer.duration
+}
+
+/** 새 주문 알림음 — 실제 음원이 준비돼 있으면 그걸 울리고, 아직이면(첫 알림 등) 기존 합성음
+ * "띠디리링↗"(약 1.8초)으로 대신 울리면서 다음 알림을 위해 음원을 마저 받아 둔다. 오디오가 잠겨 있으면 소리 없이
+ * 넘어간다(진동·탭 제목은 그대로) */
 export function playOrderAlert() {
-  playPattern((ctx, start) => {
+  if (!audioContext) unlockAudio()
+  const ctx = audioContext
+  const buffer = orderAlertBuffer
+  if (ctx && !buffer) ensureOrderAlertBuffer(ctx)
+  if (buffer) {
+    playPattern((c, start) => scheduleOrderClip(c, buffer, start))
+    return
+  }
+  playPattern((c, start) => {
     let end = 0
     for (const [offset, freq, decay, peak] of ORDER_NOTES) {
-      ringChime(ctx, start + offset, freq, peak, decay)
+      ringChime(c, start + offset, freq, peak, decay)
       end = Math.max(end, offset + decay)
     }
     return end
@@ -346,15 +393,15 @@ export function previewOrderAlert() {
  * 남아 있다가 다음에 켤 때 한꺼번에 터지지 않게. 화면 이동에는 부르지 않는다 — 이미 들어온 알림의 소리는 끝까지 울린다
  */
 export function stopAlertSounds() {
-  for (const osc of scheduledOscillators) {
+  for (const source of scheduledSources) {
     try {
-      osc.disconnect()
-      osc.stop()
+      source.disconnect()
+      source.stop()
     } catch {
       // 이미 끝난 소리 — 무시
     }
   }
-  scheduledOscillators.clear()
+  scheduledSources.clear()
   nextFreeAt = 0
   stopGeneration += 1
 }
