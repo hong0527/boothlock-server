@@ -177,7 +177,7 @@ describe('알림음', () => {
     expect(oscillators).toHaveLength(0)
   })
 
-  it('주문음은 올라가는 두 음을 두 번 — "띠링↗ · 띠링↗"(1초 안), 호출음은 내려가는 사각파라 음높이 방향부터 다르다', async () => {
+  it('주문음은 이어지며 점점 높아지는 네 음 "띠디리링↗" — 마지막 음을 가장 길게, 전체 약 1.8초. 호출음은 내려가는 사각파라 음높이 방향부터 다르다', async () => {
     const { oscillators } = fakeAudio('running')
     const { playCallAlert, playOrderAlert } = await load()
     playOrderAlert()
@@ -190,9 +190,20 @@ describe('알림음', () => {
     const order = oscillators.filter(o => o.type === 'sine')
     const orderNotes = fundamentals(order)
     expect(orderNotes).toHaveLength(4)
-    expect(orderNotes[1]).toBeGreaterThan(orderNotes[0])
-    expect(orderNotes[3]).toBeGreaterThan(orderNotes[2])
-    expect(Math.max(...order.map(o => o.stopAt))).toBeLessThan(1)
+    // 띠 → 디 → 리 → 링: 한 음씩 계속 올라간다
+    for (let i = 1; i < orderNotes.length; i++) expect(orderNotes[i]).toBeGreaterThan(orderNotes[i - 1])
+    // 음마다 기음이 가장 오래 운다 — 시작 순서대로 [시작, 끝]
+    const notes = [...new Set(order.map(o => o.startAt))].sort((a, b) => a - b)
+      .map(at => ({ at, end: Math.max(...order.filter(o => o.startAt === at).map(o => o.stopAt)) }))
+    // 끊기지 않고 이어진다 — 다음 음이 앞 음이 다 사라지기 전에 시작한다
+    for (let i = 1; i < notes.length; i++) expect(notes[i].at).toBeLessThan(notes[i - 1].end)
+    // 마지막 "링"이 가장 길게 운다
+    const lengths = notes.map(n => n.end - n.at)
+    expect(Math.max(...lengths.slice(0, -1))).toBeLessThan(lengths.at(-1)!)
+    // 전체 약 1.8초
+    const total = Math.max(...order.map(o => o.stopAt)) - notes[0].at
+    expect(total).toBeGreaterThan(1.6)
+    expect(total).toBeLessThan(2)
 
     oscillators.length = 0
     playCallAlert()

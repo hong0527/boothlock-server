@@ -168,8 +168,8 @@ export function listenForAudioUnlock(): () => void {
 /*
  * 알림음 두 가지 — 소리만 듣고 무엇인지 알 수 있게 음색·리듬·음높이를 모두 다르게 한다.
  * 음원 파일은 쓰지 않고 여기서 음을 직접 만든다(저작권·라이선스 걱정이 없고, 다른 서비스의 소리를 흉내 내지 않는다).
- * - 새 주문: 맑은 마림바·벨 음색으로 위로 올라가는 두 음 "띠링↗"을 한 번 더 "띠링↗ · 띠링↗"(약 0.8초).
- *   1.3~1.8kHz라 낮은 소리가 많은 축제장 소음 위로 뚫고 나오고, 올라가는 음형은 "새 것이 왔다"로 들린다.
+ * - 새 주문: 맑은 벨 음색으로 네 음이 이어지며 점점 높아지는 "띠디리링↗"(C6→E6→G6→C7, 마지막 음을 길게, 약 1.8초).
+ *   1~2kHz라 낮은 소리가 많은 축제장 소음 위로 뚫고 나오고, 올라가는 음형은 "새 것이 왔다"로 들린다.
  * - 직원호출: 여운 없는 짧은 전자음으로 내려가는 두 음 "딩동 · 딩동"(약 0.7초).
  * 음높이 방향(올라감↔내려감)·음색(울리는 벨↔마른 전자음)·음역(높음↔중간)이 모두 달라 소음 속에서도 갈린다.
  * 둘 다 알림음 크기(마스터 게인)를 함께 탄다.
@@ -253,36 +253,42 @@ function playPattern(build: (ctx: AudioContext, start: number) => number) {
   }
 }
 
-// 주문음 음색 — 정수배 배음(2·3배)을 옅게 섞은 사인파. 어긋난 배음의 "종"보다 맑고 또렷하게 끊겨 마림바·벨처럼 들린다
+// 주문음 음색 — 정수배 배음(2·3배)을 옅게 섞은 사인파(맑은 벨). 위쪽 배음은 기음보다 빨리 사라지게 해(decay 비율)
+// 마지막 음을 길게 끌어도 쨍하게 남지 않고 둥근 여운만 남는다
 const CHIME_PARTIALS = [
-  { ratio: 1, gain: 1 },
-  { ratio: 2, gain: 0.3 },
-  { ratio: 3, gain: 0.12 },
+  { ratio: 1, gain: 1, decay: 1 },
+  { ratio: 2, gain: 0.3, decay: 0.6 },
+  { ratio: 3, gain: 0.12, decay: 0.4 },
 ]
 
-/** 맑은 음 하나 — 5ms 만에 올라 0.25초에 걸쳐 사라지는 짧은 "띵" */
+/** 맑은 벨 음 하나 — 5ms 만에 올라 decaySeconds에 걸쳐 사라진다 */
 function ringChime(ctx: AudioContext, at: number, freq: number, peakGain: number, decaySeconds: number) {
   const output = alertOutput(ctx)
   for (const partial of CHIME_PARTIALS) {
-    scheduleTone(ctx, output, 'sine', freq * partial.ratio, at, peakGain * partial.gain, 0.005, decaySeconds)
+    scheduleTone(ctx, output, 'sine', freq * partial.ratio, at, peakGain * partial.gain, 0.005, decaySeconds * partial.decay)
   }
 }
 
-const ORDER_LOW = 1318.51 // E6
-const ORDER_HIGH = 1760 // A6 — 완전4도 위로 올라간다
-// 배음까지 더한 최고 음량 0.49 × (1 + 0.3 + 0.12) ≈ 0.7 — 기본 크기(70%)에서 예전 주문음과 비슷한 크기
-const ORDER_PEAK = 0.49
-const ORDER_NOTE_DECAY = 0.25
-// "띠링↗ · 띠링↗" — [시작(초), 음높이]. 한 번만 울리면 놓치기 쉬워 같은 음형을 한 번 더 들려준다
-const ORDER_NOTES: [number, number][] = [[0, ORDER_LOW], [0.11, ORDER_HIGH], [0.45, ORDER_LOW], [0.56, ORDER_HIGH]]
+// "띠 → 디 → 리 → 링↗" — 장3화음을 한 옥타브 타고 오르는 하나의 벨 소리. [시작(초), 음높이, 울림(초), 최고 음량].
+// 음 사이 0.1초에 앞 음이 0.45초 울려 뒤 음과 겹치며 이어진다(끊긴 "띠링 · 띠링"이 아니라 한 줄기). 마지막 "링"은 1.5초 끌어
+// 끝맺는다 — 전체 약 1.8초. 겹친 꼬리까지 더해도 최고 약 0.6이라 찢어지지 않고, 마지막 음(0.49 × 배음 합 1.42 ≈ 0.7)이
+// 기본 크기(70%)에서 예전 주문음과 비슷한 크기로 가장 또렷하다
+const ORDER_NOTES: [number, number, number, number][] = [
+  [0, 1046.5, 0.45, 0.42], // C6 띠
+  [0.1, 1318.51, 0.45, 0.42], // E6 디
+  [0.2, 1567.98, 0.45, 0.42], // G6 리
+  [0.3, 2093, 1.5, 0.49], // C7 링 — 길게
+]
 
-/** 새 주문 알림음 — 올라가는 두 음 "띠링↗ · 띠링↗". 오디오가 잠겨 있으면 소리 없이 넘어간다(진동·탭 제목은 그대로) */
+/** 새 주문 알림음 — 점점 높아지며 이어지는 "띠디리링↗"(약 1.8초). 오디오가 잠겨 있으면 소리 없이 넘어간다(진동·탭 제목은 그대로) */
 export function playOrderAlert() {
   playPattern((ctx, start) => {
-    for (const [offset, freq] of ORDER_NOTES) {
-      ringChime(ctx, start + offset, freq, ORDER_PEAK, ORDER_NOTE_DECAY)
+    let end = 0
+    for (const [offset, freq, decay, peak] of ORDER_NOTES) {
+      ringChime(ctx, start + offset, freq, peak, decay)
+      end = Math.max(end, offset + decay)
     }
-    return ORDER_NOTES[ORDER_NOTES.length - 1][0] + ORDER_NOTE_DECAY
+    return end
   })
 }
 
