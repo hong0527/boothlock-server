@@ -41,10 +41,22 @@ export default function CartPage() {
       .catch(() => setMyOrders(null))
   }, [])
 
-  const previewLoading = myOrders === undefined
-  const seatFee = previewLoading
-    ? 0
-    : pendingSeatFee(partySize, seatFeePerPerson, myOrders, sessionInfo?.seatFeeCharged === true)
+  // 장바구니를 고치면 직전 실패 문구를 지운다 — 타임아웃 문구가 "다시 눌러도 주문은 한 번만 들어가요"라고
+  // 약속하는데, 멱등키는 담긴 메뉴로 만들어지므로(customerOrderFingerprint) 수량을 바꾸면 키가 달라져
+  // 그 약속이 깨진다. 서버에 이미 들어간 주문이 있으면 두 건이 된다. 문구가 장바구니보다 오래 살지 않게 한다
+  const cartSignature = items.map((item) => `${item.menuId}x${item.qty}`).join('|')
+  useEffect(() => {
+    setError(null)
+  }, [cartSignature])
+
+  // 자릿세를 물릴 수 없는 부스·세션이면 미리보기가 무의미하다 — 그런데도 주문 버튼을 GET 응답까지(최대 10초)
+  // 막으면 혼잡한 축제장 회선에서 눌러도 아무 반응이 없다. 자릿세가 걸릴 때만 기다린다
+  const seatFeePossible = !!partySize && partySize > 0 && seatFeePerPerson > 0 && sessionInfo?.seatFeeCharged !== true
+  const previewLoading = myOrders === undefined && seatFeePossible
+  const seatFee =
+    !seatFeePossible || myOrders === undefined
+      ? 0
+      : pendingSeatFee(partySize, seatFeePerPerson, myOrders, sessionInfo?.seatFeeCharged === true)
 
   const handleSubmit = async () => {
     if (loading || items.length === 0) return
@@ -168,31 +180,36 @@ export default function CartPage() {
           <p className="py-20 text-center text-body-1 text-neutral-400">장바구니가 비어있어요.</p>
         )}
 
-        {seatFee !== null && seatFee > 0 && (
-          <div className="flex items-center justify-between border-t border-neutral-100 py-3 text-body-1 text-neutral-900">
-            <span>
-              자릿세 {partySize}명 × {seatFeePerPerson.toLocaleString()}원
-            </span>
-            <span>{seatFee.toLocaleString()}원</span>
-          </div>
+        {/* 자릿세는 주문과 함께만 청구된다 — 빈 장바구니에서 하단 탭으로 들어오면 "비어있어요" 옆에
+            "자릿세 2명 × 3,000원 / 총 6,000원"이 뜨던 것을 막는다 */}
+        {items.length > 0 && seatFee !== null && seatFee > 0 && (
+          <>
+            <div className="flex items-center justify-between border-t border-neutral-100 py-3 text-body-1 text-neutral-900">
+              <span>
+                자릿세 {partySize}명 × {seatFeePerPerson.toLocaleString()}원
+              </span>
+              <span>{seatFee.toLocaleString()}원</span>
+            </div>
+            <p className="pb-3 text-body-3 text-neutral-500">자릿세는 첫 주문에만 별도 주문으로 함께 청구돼요.</p>
+          </>
         )}
-        {seatFee !== null && seatFee > 0 && (
-          <p className="pb-3 text-body-3 text-neutral-500">자릿세는 첫 주문에만 별도 주문으로 함께 청구돼요.</p>
-        )}
-        {seatFee === null && seatFeePerPerson > 0 && (
+        {items.length > 0 && seatFee === null && seatFeePerPerson > 0 && (
           <p className="pb-3 text-body-3 text-neutral-500">
             첫 주문에는 자릿세(1인 {seatFeePerPerson.toLocaleString()}원)가 별도 주문으로 함께 청구돼요.
           </p>
         )}
-
-        {error && <p className="pb-4 text-body-3 text-red-600">{error}</p>}
-        {callMessage && <p className="pb-4 text-center text-body-3 text-neutral-400">{callMessage}</p>}
       </div>
 
       <div className="border-t border-neutral-200 bg-neutral-50 px-6 pt-5 pb-8">
+        {/* 실패·호출 문구는 버튼과 같은 고정 영역에 둔다 — 스크롤되는 목록 끝에 있으면 장바구니가 길 때
+            화면 밖이라, 손님은 아무 일도 안 일어난 줄 알고 다시 누른다 */}
+        {error && <p className="mb-3 text-body-3 text-red-600">{error}</p>}
+        {callMessage && <p className="mb-3 text-center text-body-3 text-neutral-400">{callMessage}</p>}
         <div className="mb-2 flex items-center justify-between">
           <span className="text-body-1 text-neutral-900">총 주문금액</span>
-          <span className="text-heading-2 text-neutral-900">{(totalAmount + (seatFee ?? 0)).toLocaleString()}원</span>
+          <span className="text-heading-2 text-neutral-900">
+            {(totalAmount + (items.length > 0 ? (seatFee ?? 0) : 0)).toLocaleString()}원
+          </span>
         </div>
         <p className="mb-3 text-center text-body-3 text-neutral-400">
           결제는 계좌이체로만 진행돼요. 신중하게 주문해주세요.
