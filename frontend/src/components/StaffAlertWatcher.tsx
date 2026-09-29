@@ -53,7 +53,10 @@ export default function StaffAlertWatcher() {
         const res = await apiFetch('/api/v1/admin/orders?status=PENDING_APPROVAL')
         if (!res.ok) throw new Error(`알림 조회 실패 (${res.status})`)
         const body: DashboardResponse = await res.json()
-        return snapshotOf(body.orders, body.calls ?? [])
+        // 서버 시각(Date 헤더) — 탭 복귀 직후 따라잡기 조회에서 오래된 주문·호출을 소리로 알리지 않는 기준
+        // (newArrivals LATE_ALERT_MS). 없거나 못 읽으면 넘기지 않는다(전부 알린다 — CORS 분리 배포면 Date가 안 읽혀 이쪽이다)
+        const serverNow = Date.parse(res.headers.get('Date') ?? '')
+        return snapshotOf(body.orders, body.calls ?? [], Number.isFinite(serverNow) ? serverNow : undefined)
       },
       // 알림을 꺼 두었으면 소리·진동만 내지 않는다(감시는 계속 — 다시 켰을 때 지난 것이 한꺼번에 울리지 않게).
       // 주문과 호출이 한 번에 오면 staffAlert가 주문음이 끝난 뒤에 호출음을 이어 붙인다(겹치지 않게)
