@@ -42,6 +42,13 @@ describe('fetchWithTimeout — 현장 인터넷이 약할 때', () => {
     expect(res.status).toBe(200)
   })
 
+  it('HTTP 캐시를 거치지 않는다(캐시된 옛 410 때문에 새 세션도 "세션 만료"에 갇히지 않게)', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('ok', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await fetchWithTimeout('/api/v1/orders', { headers: { 'X-Session-Token': 't' } })
+    expect(fetchMock.mock.calls[0][1]?.cache).toBe('no-store')
+  })
+
   it('호출자가 먼저 취소하면 TimeoutError가 아니라 원래 취소 예외다', async () => {
     vi.stubGlobal('fetch', hangingFetch())
     const outer = new AbortController()
