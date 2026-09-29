@@ -94,4 +94,18 @@ describe('onResume — 폰을 다시 켜거나 인터넷이 돌아오면 바로 
     doc.dispatchEvent(new Event('visibilitychange'))
     expect(cb).toHaveBeenCalledTimes(1)
   })
+
+  it('왜 불렀는지 넘긴다 — 화면 복귀는 visible, 재연결은 online(직원 알림 감시의 따라잡기 판단)', () => {
+    const { doc, win } = fakeDom()
+    const cb = vi.fn()
+    onResume(cb)
+    doc.visibilityState = 'hidden'
+    doc.dispatchEvent(new Event('visibilitychange'))
+    doc.visibilityState = 'visible'
+    doc.dispatchEvent(new Event('visibilitychange'))
+    expect(cb).toHaveBeenLastCalledWith('visible')
+    win.dispatchEvent(new Event('online'))
+    expect(cb).toHaveBeenLastCalledWith('online')
+    expect(cb.mock.calls).toEqual([['visible'], ['online']])
+  })
 })

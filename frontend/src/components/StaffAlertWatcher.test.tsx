@@ -24,7 +24,19 @@ const hooks = vi.hoisted(() => ({
   alertPreferred: true,
   prefListener: null as ((on: boolean) => void) | null,
   server: { orders: [] as number[], calls: [] as number[] },
+  // 응답 Date 헤더(null이면 안 보냄)와 id별 "생긴 지 몇 초"(없으면 방금 생김)
+  dateHeader: null as string | null,
+  orderAgeSeconds: {} as Record<number, number>,
+  callAgeSeconds: {} as Record<number, number>,
+  // 감시가 등록한 화면 복귀·재연결 리스너(lib/onResume 대역)
+  resumeListener: null as ((reason: 'visible' | 'online') => void) | null,
 }))
+// 서버 시각 — Date 헤더는 초 단위라 딱 떨어지는 값으로
+const SERVER_NOW = Date.parse('2026-09-29T03:00:00Z')
+// 생긴 시각은 서버가 주는 모양 그대로 — KST 오프셋·소수점 6자리(OffsetDateTime, MICROS 절삭)
+const createdAt = (ageSeconds = 0) =>
+  new Date(SERVER_NOW - ageSeconds * 1000 + 9 * 3600_000).toISOString().replace('Z', '123+09:00')
+const resume = (reason: 'visible' | 'online') => hooks.resumeListener!(reason)
 vi.mock('react', async () => ({
   ...await vi.importActual<typeof import('react')>('react'),
   useState: (initial: unknown) => {
@@ -53,7 +65,12 @@ vi.mock('react', async () => ({
 vi.mock('react-router-dom', () => ({ useLocation: () => ({ pathname: hooks.pathname }) }))
 vi.mock('../lib/auth', () => ({ getAuthToken: () => hooks.token }))
 vi.mock('../lib/apiFetch', () => ({ apiFetch: vi.fn() }))
-vi.mock('../lib/onResume', () => ({ onResume: () => () => {} }))
+vi.mock('../lib/onResume', () => ({
+  onResume: (listener: (reason: 'visible' | 'online') => void) => {
+    hooks.resumeListener = listener
+    return () => { if (hooks.resumeListener === listener) hooks.resumeListener = null }
+  },
+}))
 vi.mock('../lib/staffAlert', () => ({
   acquireWakeLock: vi.fn(),
   isAlertPreferred: () => hooks.alertPreferred,
@@ -100,11 +117,15 @@ beforeEach(() => {
   hooks.token = 'jwt'
   hooks.alertPreferred = true
   hooks.server = { orders: [1], calls: [] }
+  hooks.dateHeader = null
+  hooks.orderAgeSeconds = {}
+  hooks.callAgeSeconds = {}
+  hooks.resumeListener = null
   vi.clearAllMocks()
   vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({
-    orders: hooks.server.orders.map(orderId => ({ orderId })),
-    calls: hooks.server.calls.map(callId => ({ callId })),
-  }), { status: 200 }))
+    orders: hooks.server.orders.map(orderId => ({ orderId, createdAt: createdAt(hooks.orderAgeSeconds[orderId]) })),
+    calls: hooks.server.calls.map(callId => ({ callId, createdAt: createdAt(hooks.callAgeSeconds[callId]) })),
+  }), { status: 200, headers: hooks.dateHeader === null ? {} : { Date: hooks.dateHeader } }))
 })
 afterEach(() => {
   unmountAll()
@@ -192,6 +213,79 @@ describe('어느 직원 화면에서든 울린다 (StaffAlertWatcher)', () => {
     await tick()
     expect(playOrderAlert).not.toHaveBeenCalled()
     expect(playCallAlert).not.toHaveBeenCalled()
+  })
+})
+
+describe('탭 복귀 직후 따라잡기 조회에서만 늦은 것을 울리지 않는다 (서버 Date 헤더 기준)', () => {
+  beforeEach(() => { hooks.dateHeader = new Date(SERVER_NOW).toUTCString() })
+
+  it('숨겨졌던 탭이 돌아온 첫 조회 — 오래된 주문·호출은 울리지 않고, 20초 안에 생긴 호출만 울린다', async () => {
+    render()
+    await tick(0)
+    // 탭이 뒤에 있는 동안 생긴 주문 2(1분 전)·호출 5(40초 전), 돌아오기 직전 누른 호출 6(3초 전)
+    hooks.server = { orders: [1, 2], calls: [5, 6] }
+    hooks.orderAgeSeconds = { 2: 60 }
+    hooks.callAgeSeconds = { 5: 40, 6: 3 }
+    resume('visible')
+    await tick(0)
+    expect(playOrderAlert).not.toHaveBeenCalled()
+    expect(playCallAlert).toHaveBeenCalledTimes(1)
+    expect(vibrate).toHaveBeenCalledTimes(1)
+  })
+
+  it('복귀 뒤 다음 주기부터는 평소대로 — 20초 넘은 새 주문이라도 울린다(무음 처리한 것은 다시 울리지 않는다)', async () => {
+    render()
+    await tick(0)
+    hooks.server = { orders: [1, 2], calls: [] }
+    hooks.orderAgeSeconds = { 2: 60 }
+    resume('visible')
+    await tick(0)
+    expect(playOrderAlert).not.toHaveBeenCalled()
+    hooks.server = { orders: [1, 2, 3], calls: [] }
+    hooks.orderAgeSeconds = { 2: 65, 3: 25 }
+    await tick()
+    expect(playOrderAlert).toHaveBeenCalledTimes(1)
+    await tick()
+    expect(playOrderAlert).toHaveBeenCalledTimes(1)
+  })
+
+  it('화면을 보는 중 조회가 실패했다 복구되면 20초 넘은 것도 울린다', async () => {
+    render()
+    await tick(0)
+    vi.mocked(apiFetch).mockRejectedValueOnce(new Error('timeout')).mockRejectedValueOnce(new Error('timeout'))
+    await tick()
+    await tick()
+    hooks.server = { orders: [1, 2], calls: [5] }
+    hooks.orderAgeSeconds = { 2: 25 }
+    hooks.callAgeSeconds = { 5: 40 }
+    await tick()
+    expect(playOrderAlert).toHaveBeenCalledTimes(1)
+    expect(playCallAlert).toHaveBeenCalledTimes(1)
+  })
+
+  it('평소 주기 조회는 20초 넘게 늦게 알게 된 것도 울린다 — 숨겨진 탭에서 느려진 주기 포함', async () => {
+    render()
+    await tick(0)
+    hooks.server = { orders: [1, 2], calls: [] }
+    hooks.orderAgeSeconds = { 2: 50 }
+    await tick()
+    expect(playOrderAlert).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['Date 헤더 없음', null],
+    ['Date 헤더를 못 읽음', 'not-a-date'],
+  ])('%s이면 따라잡기 조회라도 가리지 않고 울린다 — 새 알림을 놓치지 않게', async (_label, header) => {
+    hooks.dateHeader = header
+    render()
+    await tick(0)
+    hooks.server = { orders: [1, 2], calls: [5] }
+    hooks.orderAgeSeconds = { 2: 300 }
+    hooks.callAgeSeconds = { 5: 300 }
+    resume('visible')
+    await tick(0)
+    expect(playOrderAlert).toHaveBeenCalledTimes(1)
+    expect(playCallAlert).toHaveBeenCalledTimes(1)
   })
 })
 

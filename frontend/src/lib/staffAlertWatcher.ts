@@ -1,4 +1,5 @@
 import { diffArrivals, type ArrivalSnapshot, type Arrivals } from './newArrivals'
+import type { ResumeReason } from './onResume'
 
 /**
  * 직원용 앱 공통 알림 감시 — 어느 직원 화면에 있든 새 승인대기 주문·직원호출을 잡아 알린다(StaffAlertWatcher가 앱에 하나만 둔다).
@@ -8,7 +9,12 @@ import { diffArrivals, type ArrivalSnapshot, type Arrivals } from './newArrivals
  *
  * <p>판단은 lib/newArrivals 그대로다(id 집합 비교, 첫 조회는 알리지 않음). 알림을 껐는지는 여기서 보지 않는다 —
  * 끈 동안에도 감시는 계속해 스냅샷을 최신으로 두고, 소리만 onArrivals 쪽에서 막는다. 그래야 다시 켰을 때 끈 동안 쌓인 것이
- * 한꺼번에 울리지 않는다. 조회가 실패한 주기는 스냅샷을 바꾸지 않는다 — 다음 성공 때 그 사이 것도 새 것으로 잡힌다.
+ * 한꺼번에 울리지 않는다. 조회가 실패한 주기는 스냅샷을 바꾸지 않는다 — 다음 성공 때 그 사이 것도 새 것으로 잡힌다
+ * (얼마나 늦었든 알린다).
+ *
+ * <p>늦은 것 무음(newArrivals suppressLate)은 숨겨졌던 탭이 다시 보인 직후(onResume 'visible')에 실제로 도는 조회 한 번에만
+ * 건다. 그때 앞 조회가 아직 안 끝나 건너뛰면 다음에 도는 조회가 이어받는다. 그 조회가 끝나면(성공이든 실패든) 다시 평소대로다.
+ * 재연결(onResume 'online')·평소 주기·숨겨진 채 느려진 주기 조회는 늦었어도 알린다.
  */
 
 // 직원용 화면 — 손님(/t, /order, /cart …)·방문자(/home, /scan)·로그인 화면에서는 감시하지 않는다.
@@ -28,8 +34,8 @@ export type ArrivalWatcherDeps = {
   fetchSnapshot: () => Promise<ArrivalSnapshot>
   /** 새로 생긴 게 있을 때만 불린다 */
   onArrivals: (arrivals: Arrivals) => void
-  /** 폰 잠금 해제·재연결 때 바로 한 번 더 보게 한다(lib/onResume). 반환값은 해제 함수 */
-  onResume?: (listener: () => void) => () => void
+  /** 폰 잠금 해제·재연결 때 바로 한 번 더 보게 한다(lib/onResume). 'visible'이면 따라잡기 조회다. 반환값은 해제 함수 */
+  onResume?: (listener: (reason: ResumeReason) => void) => () => void
   intervalMs?: number
 }
 
@@ -56,16 +62,20 @@ export function createArrivalWatcher({
   let inFlight = false
   // stop 할 때마다 올린다 — 멈춘 뒤에 도착한 응답이 스냅샷을 되살리거나 소리를 내지 않게
   let generation = 0
+  // 탭이 다시 보였다 — 다음에 실제로 도는 조회 하나를 따라잡기로 본다(위 설명)
+  let catchUpPending = false
 
   async function poll() {
-    // 앞 조회가 아직이면 건너뛴다 — 느린 회선에서 요청이 겹겹이 쌓이지 않게
+    // 앞 조회가 아직이면 건너뛴다 — 느린 회선에서 요청이 겹겹이 쌓이지 않게(따라잡기 표시는 남겨 다음 조회가 이어받는다)
     if (inFlight) return
     inFlight = true
     const current = generation
+    const suppressLate = catchUpPending
+    catchUpPending = false
     try {
       const next = await fetchSnapshot()
       if (current !== generation) return
-      const arrivals = diffArrivals(snapshot, next)
+      const arrivals = diffArrivals(snapshot, next, { suppressLate })
       snapshot = next
       if (arrivals.newPendingOrders + arrivals.newCalls > 0) onArrivals(arrivals)
     } catch {
@@ -81,7 +91,10 @@ export function createArrivalWatcher({
       runningWatcher = self
       void poll()
       timer = setInterval(() => void poll(), intervalMs)
-      offResume = onResume?.(() => void poll()) ?? null
+      offResume = onResume?.((reason) => {
+        if (reason === 'visible') catchUpPending = true
+        void poll()
+      }) ?? null
       return true
     },
     stop() {
@@ -93,6 +106,7 @@ export function createArrivalWatcher({
       offResume = null
       generation += 1
       inFlight = false
+      catchUpPending = false
       snapshot = null
     },
   }
