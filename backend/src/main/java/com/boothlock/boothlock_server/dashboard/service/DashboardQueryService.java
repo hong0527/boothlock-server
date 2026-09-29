@@ -32,8 +32,13 @@ public class DashboardQueryService {
     // 진행중(RECEIVED)은 처리 안 된 주문이 뒤로 밀려 안 보이면 안 되므로 제한 없음.
     // 상태 필터 없는 조회는 테이블-홈/결제 모달이 하루치 테이블별 항목·합계를 집계하는 데도 쓰여서
     // (TableOrderContext.tsx, PaymentModal.tsx) 하루 주문이 이 값을 넘으면 그 집계가 조용히 누락된다 —
-    // 무한 누적 방지라는 원래 취지는 지키면서, 작은 행사 하루 물량은 넉넉히 담기게 30 → 500으로 올린다.
-    private static final Limit DASHBOARD_LIST_LIMIT = Limit.of(500);
+    // 무한 누적 방지라는 원래 취지는 지키면서, 작은 행사 하루 물량은 넉넉히 담기게 30 → 500으로 올렸었다.
+    // 2026-09-29 파일럿 전야 부하테스트로 500을 다시 올림: 자릿세가 세션 첫 메뉴 주문과 별도 주문 행으로 잡혀
+    // (OrderWriter.saveSeatFeeOrder) 팀당 최소 2건(자릿세+메뉴)을 채번을 함께 쓰며, 30테이블·2시간 회전·
+    // 18시~새벽 4시(5회전)에 팀당 추가주문 몇 건만 섞여도 부스 하루 합계가 500을 넘어(실측 재현: 600건 시점에
+    // 테이블 화면에서 방금 만든 미결제 주문이 사라짐) 500이 파일럿 규모에서 안전하지 않다고 판단. MySQL
+    // 누적 2300여 건에서도 O10 조회 p95 <1.3s(부하테스트 실측)라 이 정도 상향은 성능에 영향 없다.
+    private static final Limit DASHBOARD_LIST_LIMIT = Limit.of(3000);
 
     private final OrderRepository orderRepository;
     private final StaffCallRepository staffCallRepository;
