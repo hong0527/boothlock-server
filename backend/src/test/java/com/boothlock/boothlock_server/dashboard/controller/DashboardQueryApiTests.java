@@ -47,7 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * O10 실시간 대시보드 API — JWT 인증(§7-21)·옛 boothId 파라미터 400·tableId 필터·businessDate 기본값(현재 영업일)·Limit 500.
+ * O10 실시간 대시보드 API — JWT 인증(§7-21)·옛 boothId 파라미터 400·tableId 필터·businessDate 기본값(현재 영업일)·Limit 3000(2026-09-29 상향).
  * 영업일은 테스트 실행 시점의 현재 영업일(06:00 경계)로 잡고 시각은 그 날짜의 KST 벽시계 값으로 시딩한다 —
  * 기본값이 "현재 영업일"이라 고정 날짜로는 기본값 경로를 검증할 수 없다.
  */
@@ -566,40 +566,40 @@ class DashboardQueryApiTests {
                 .andExpect(status().isForbidden());
     }
 
-    // ── Limit 500 ───────────────────────────────────────────
+    // ── Limit 3000 (2026-09-29 파일럿 전야 부하테스트로 500 → 3000, DashboardQueryService 주석 참고) ──
 
     @Test
-    void capsNonReceivedListsAtFiveHundredButKeepsReceivedUnlimited() throws Exception {
+    void capsNonReceivedListsAtLimitButKeepsReceivedUnlimited() throws Exception {
         List<OrderEntity> bulk = new ArrayList<>();
-        for (int seq = 100; seq < 601; seq++) {          // DONE 501건
+        for (int seq = 100; seq < 3101; seq++) {          // DONE 3001건
             OrderEntity o = new OrderEntity(boothId, null, "M-" + seq, day, seq, null, 1000, true, null, day.atTime(12, 0));
             o.addItem(new OrderItemEntity(3L, "김치전", 1000, 1));
             bulk.add(o);
         }
-        for (int seq = 700; seq < 1201; seq++) {         // RECEIVED 501건
+        for (int seq = 3200; seq < 6201; seq++) {         // RECEIVED 3001건
             OrderEntity o = new OrderEntity(boothId, null, "M-" + seq, day, seq, null, 1000, true, null, day.atTime(12, 0));
             o.addItem(new OrderItemEntity(3L, "김치전", 1000, 1));
             bulk.add(o);
         }
         orderRepository.saveAll(bulk);
-        jdbcTemplate.update("update orders set status = 'DONE' where booth_id = ? and order_seq between 100 and 600", boothId);
+        jdbcTemplate.update("update orders set status = 'DONE' where booth_id = ? and order_seq between 100 and 3100", boothId);
 
         mockMvc.perform(dashboard(staffToken).param("status", "DONE"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.orders.length()").value(500));
+                .andExpect(jsonPath("$.orders.length()").value(3000));
         mockMvc.perform(dashboard(staffToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.orders.length()").value(500));
+                .andExpect(jsonPath("$.orders.length()").value(3000));
         mockMvc.perform(dashboard(staffToken).param("status", "RECEIVED"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.orders.length()").value(501 + 4));   // 시딩 RECEIVED 4건 포함, 상한 없음
-        assertEquals(1002 + 6, orderRepository.count());
+                .andExpect(jsonPath("$.orders.length()").value(3001 + 4));   // 시딩 RECEIVED 4건 포함, 상한 없음
+        assertEquals(6002 + 6, orderRepository.count());
     }
 
-    // ── 취소 주문 삭제(hidden) — Limit 500과의 상호작용 ──────
+    // ── 취소 주문 삭제(hidden) — Limit과의 상호작용 ──────
 
     @Test
-    void hiddenCanceledOrdersAreExcludedBeforeTheFiveHundredLimitIsApplied() throws Exception {
+    void hiddenCanceledOrdersAreExcludedBeforeTheLimitIsApplied() throws Exception {
         // 회귀 재현: hidden 제외를 애플리케이션(Java)에서만 하면 "최근 500건"을 DB가 먼저 잘라버려서,
         // 그 500건이 전부 hidden이면 501번째로 밀린 진짜 보여줘야 할 취소 주문이 통째로 사라진다.
         // hidden 제외가 DB 쿼리(WHERE)에서 limit과 함께 걸려야 이 케이스에서 살아남는다.
