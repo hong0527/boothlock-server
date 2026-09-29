@@ -44,7 +44,10 @@ export async function fetchWithTimeout(
     else outer.addEventListener('abort', relay, { once: true })
   }
   try {
-    const res = await fetch(input, { ...init, signal: controller.signal })
+    // HTTP 캐시를 아예 거치지 않는다 — 크롬 계열은 캐시 헤더 없는 410을 기한 없이 캐시하는데, 세션은 URL이 아니라
+    // 헤더(X-Session-Token)라 새 세션의 같은 주소 요청에도 옛 410이 서버에 묻지 않고 나와 "세션 만료"에 갇혔다(안드로이드 실측).
+    // 이미 캐시된 폰도 이걸로 풀린다. 호출자가 cache를 따로 주면 그 값을 쓴다
+    const res = await fetch(input, { cache: 'no-store', ...init, signal: controller.signal })
     const buffered = await readWhole(res, controller.signal)
     if (isGatewayFailure(res.status)) markUnreachable()
     else markReachable()
