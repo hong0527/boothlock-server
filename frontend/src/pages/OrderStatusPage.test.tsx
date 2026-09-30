@@ -255,6 +255,19 @@ describe('주문현황 탭 정렬', () => {
     expect(paths.filter((p) => p.includes('status=DONE')).every((p) => p.includes('activeSessionOnly=true'))).toBe(true)
   })
 
+  it('완료·취소 건수는 그 탭을 보고 있을 때만 표시한다(안 볼 때는 목록을 안 받아 숫자가 멈추므로)', async () => {
+    const countOf = (label: string) => {
+      const tab = collect(render(), p => !!p.onClick && Children.toArray(p.children).some(k => k === label))[0]
+      return Children.toArray(tab!.children).filter(k => typeof k === 'number')
+    }
+    await load()
+    expect(countOf('완료')).toEqual([])
+    await clickTab('완료')
+    expect(countOf('완료')).toEqual([2])
+    await clickTab('진행')
+    expect(countOf('완료')).toEqual([])
+  })
+
   it('취소 탭도 서버 순서 그대로다', async () => {
     await load()
     await clickTab('취소')
