@@ -118,13 +118,14 @@ function renderedOrderNos(): string[] {
   return collect(render(), p => !!p.order).map(p => p.order!.orderNo)
 }
 function cards() { return collect(render(), p => !!p.order) }
-/** 탭 버튼을 누른다 — 라벨로 찾는다 */
-function clickTab(label: string) {
+/** 탭 버튼을 누른다 — 라벨로 찾는다. 완료·취소 탭은 누를 때 그 목록을 받으므로 응답 반영까지 한 틱 기다린다 */
+async function clickTab(label: string) {
   const tab = collect(render(), p => {
     const kids = Children.toArray(p.children)
     return !!p.onClick && kids.some(k => typeof k === 'string' && k === label)
   })[0]
   tab!.onClick!()
+  await new Promise((resolve) => setTimeout(resolve, 10))
 }
 
 // orderId는 orderNo의 숫자부만 따서 만든다("R-1"→1) — 그런데 "D-1"·"C-1"도 같은 1이 나와 상태(탭)가
@@ -243,26 +244,33 @@ describe('주문현황 탭 정렬', () => {
 
   it('완료 탭으로 옮기면 서버 순서(접수 최신 먼저) 그대로 그린다', async () => {
     await load()
-    clickTab('완료')
+    await clickTab('완료')
     expect(renderedOrderNos()).toEqual(['D-2', 'D-1'])
+  })
+
+  it('진행 탭을 보는 동안에는 완료·취소 전체 목록을 받지 않는다(저녁 폴링 부하) — 완료는 지금 세션 것만', async () => {
+    await load()
+    const paths = vi.mocked(apiFetch).mock.calls.map(([path]) => String(path))
+    expect(paths.some((p) => p.includes('status=CANCELED'))).toBe(false)
+    expect(paths.filter((p) => p.includes('status=DONE')).every((p) => p.includes('activeSessionOnly=true'))).toBe(true)
   })
 
   it('취소 탭도 서버 순서 그대로다', async () => {
     await load()
-    clickTab('취소')
+    await clickTab('취소')
     expect(renderedOrderNos()).toEqual(['C-1', 'C-2'])
   })
 
   it('완료 탭에 갔다가 진행 탭으로 돌아와도 진행 탭 정렬이 유지된다', async () => {
     await load()
-    clickTab('완료')
-    clickTab('진행')
+    await clickTab('완료')
+    await clickTab('진행')
     expect(renderedOrderNos()).toEqual(['P-1', 'P-2', 'R-1', 'R-2', 'R-3'])
   })
 
   it('폴링으로 목록이 바뀌면 바뀐 목록을 다시 정렬해 그린다', async () => {
     await load()
-    clickTab('진행')
+    await clickTab('진행')
     const added = [order('R-4', '2026-09-21T18:40:00', 'RECEIVED'), ...RECEIVED]
     vi.mocked(apiFetch).mockImplementation(async (path) => {
       const orders = String(path).includes('status=RECEIVED') ? added : []
@@ -304,7 +312,7 @@ describe('주문 취소 확인 단계', () => {
 
   it('되돌리기는 확인을 묻는다', async () => {
     await load()
-    clickTab('완료')
+    await clickTab('완료')
     await cards()[0].onRestore!(2)
     expect(confirmMessages).toEqual(['이 주문을 진행 상태로 복구할까요?'])
     expect(vi.mocked(restoreOrder)).toHaveBeenCalledWith(2)
@@ -346,21 +354,21 @@ describe('환불 완료', () => {
   it('ADMIN이면 카드에 환불 처리 수단을 넘긴다', async () => {
     localStorage.setItem('boothlock_staff', JSON.stringify({ role: 'ADMIN', boothId: 1, boothName: '테스트' }))
     await load()
-    clickTab('취소')
+    await clickTab('취소')
     expect(cards()[1].onRefundDone).toBeTypeOf('function')
   })
 
   it('STAFF에게는 붙지 않는다 — 눌러도 백엔드가 403이다', async () => {
     localStorage.setItem('boothlock_staff', JSON.stringify({ role: 'STAFF', boothId: 1, boothName: '테스트' }))
     await load()
-    clickTab('취소')
+    await clickTab('취소')
     expect(cards()[1].onRefundDone).toBeUndefined()
   })
 
   it('확인을 거쳐야 요청이 나간다', async () => {
     localStorage.setItem('boothlock_staff', JSON.stringify({ role: 'ADMIN', boothId: 1, boothName: '테스트' }))
     await load()
-    clickTab('취소')
+    await clickTab('취소')
     confirmAnswer = false
     await cards()[1].onRefundDone!(2)
     expect(vi.mocked(refundDone)).not.toHaveBeenCalled()
@@ -379,8 +387,8 @@ async function pollWith(pending: OrderSummary[], calls: { callId: number; tableL
   hooks.effects.splice(0)
   hooks.mounted = false
   render()
-  // 네 탭 조회가 모두 나간 뒤, 응답 파싱(json)·상태 반영까지 끝나도록 한 틱 더 기다린다
-  await vi.waitFor(() => expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(4))
+  // 폴링 조회(승인대기·진행·지금 세션 완료) 셋이 모두 나간 뒤, 응답 파싱(json)·상태 반영까지 끝나도록 한 틱 더 기다린다
+  await vi.waitFor(() => expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(3))
   await new Promise((resolve) => setTimeout(resolve, 10))
 }
 
@@ -468,7 +476,7 @@ describe('알림 — 주문현황의 몫(빠른 켜고 끔·탭 제목). 새 주
     hooks.effects.splice(0)
     hooks.mounted = false
     render()
-    await vi.waitFor(() => expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(4))
+    await vi.waitFor(() => expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(3))
     unmount()
     expect(fakeDocument.title).toBe('부스락')
     release()

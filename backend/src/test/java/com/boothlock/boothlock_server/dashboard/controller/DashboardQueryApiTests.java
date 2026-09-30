@@ -542,10 +542,23 @@ class DashboardQueryApiTests {
     }
 
     @Test
-    void activeSessionOnlyWithoutTableIdIsBadRequest() throws Exception {
+    void activeSessionOnlyWithoutTableIdReturnsOpenSessionOrdersOfWholeBooth() throws Exception {
+        // 테이블-홈 카드용 — 부스의 열린 세션(A-3 지금 세션·B-1) 주문만. 종료된 A-3 첫 세션(A3-1 두 건)·세션 없는 수기(M-4)·남의 부스는 빠진다
         mockMvc.perform(dashboard(staffToken).param("activeSessionOnly", "true"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orders.length()").value(2))
+                .andExpect(jsonPath("$.orders[*].orderNo").value(Matchers.containsInAnyOrder("A3-2", "B1-3")));
+
+        // 세션이 닫히면 그 테이블 주문은 빠진다
+        TableSessionEntity b1 = tableSessionRepository.findById(b1SessionId).orElseThrow();
+        b1.end(day.atTime(21, 0));
+        tableSessionRepository.save(b1);
+        mockMvc.perform(dashboard(staffToken).param("activeSessionOnly", "true"))
+                .andExpect(jsonPath("$.orders[*].orderNo").value(Matchers.contains("A3-2")));
+    }
+
+    @Test
+    void activeSessionOnlyRejectsNonBooleanValue() throws Exception {
         mockMvc.perform(dashboard(staffToken).param("activeSessionOnly", "maybe").param("tableId", tableA3Id.toString()))
                 .andExpect(status().isBadRequest());
     }

@@ -50,8 +50,8 @@ type OrdersByStatus = Record<OrderStatus, OrderSummary[]>
 
 // businessDate는 보내지 않는다 — 서버 기본값이 현재 영업일(06:00 경계)이라 새벽에도 전날 영업일 주문이 그대로 보인다.
 // 응답의 calls(미확인 호출)는 status 필터와 무관하게 부스 전체가 실려 온다 — 세 번 중 한 응답에서만 읽으면 된다
-async function fetchDashboard(status: OrderStatus): Promise<DashboardResponse> {
-  const res = await apiFetch(`/api/v1/admin/orders?status=${status}`)
+async function fetchDashboard(status: OrderStatus, openSessionsOnly = false): Promise<DashboardResponse> {
+  const res = await apiFetch(`/api/v1/admin/orders?status=${status}${openSessionsOnly ? '&activeSessionOnly=true' : ''}`)
   if (!res.ok) throw new Error(`주문 목록을 불러오지 못했어요 (${res.status})`)
   return res.json()
 }
@@ -65,6 +65,12 @@ export default function OrderStatusPage() {
   const [calls, setCalls] = useState<CallSummary[]>([])
   // 기본 진입 탭은 진행(승인대기+접수) — 승인대기가 맨 앞이라 지금 당장 반응해야 할 주문부터 보인다
   const [activeTab, setActiveTab] = useState<ViewTab>('ACTIVE')
+  // 폴링 콜백(refetchAll)은 한 번만 만든다 — 지금 보는 탭은 ref로 읽는다
+  const activeTabRef = useRef<ViewTab>('ACTIVE')
+  // 지금 앉은 손님들의 완료 주문 — "추가 주문" 배지 판정용. 완료 탭 전체(하루 누적)는 그 탭을 볼 때만 받는다
+  const [openSessionDone, setOpenSessionDone] = useState<OrderSummary[]>([])
+  // 완료·취소 탭을 한 번이라도 불러왔는가 — 안 불러온 탭은 건수를 표시하지 않는다(0건으로 오해하지 않게)
+  const [loadedHistoryTabs, setLoadedHistoryTabs] = useState<ReadonlySet<OrderStatus>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
   // 버튼 작업(완료·취소·복구·호출확인) 오류는 따로 둔다 — error는 폴링이 성공할 때마다 지워서, 한데 두면
   // "이미 다른 상태로 바뀌었어요" 같은 안내가 5초 안에 사라져 바쁜 운영자가 못 본다. 다음 작업이 성공하면 지운다
@@ -95,20 +101,35 @@ export default function OrderStatusPage() {
     const runId = pollGuard.current.begin(skipIfBusy)
     if (runId === null) return
     try {
-      const results = await Promise.all(TABS.map((tab) => fetchDashboard(tab.status)))
+      // 5초 폴링은 승인대기·진행과 "지금 앉은 손님의 완료 주문"(배지 판정용, 작다)만 받는다. 완료·취소 탭 전체는 하루 누적이라
+      // 커질수록 폴링이 무거워져(저녁 부하) 그 탭을 보고 있을 때만 받는다
+      const viewing = activeTabRef.current
+      const historyStatus: OrderStatus | null = viewing === 'ACTIVE' ? null : viewing
+      const [pendingRes, receivedRes, openDoneRes, historyRes] = await Promise.all([
+        fetchDashboard('PENDING_APPROVAL'),
+        fetchDashboard('RECEIVED'),
+        fetchDashboard('DONE', true),
+        historyStatus ? fetchDashboard(historyStatus) : Promise.resolve(null),
+      ])
       if (!pollGuard.current.isLatest(runId) || !mountedRef.current) return
-      setOrdersByStatus(
-        Object.fromEntries(TABS.map((tab, i) => [tab.status, results[i].orders])) as OrdersByStatus,
-      )
-      // calls(미확인 호출)는 상태 필터와 무관하게 부스 전체가 실려 온다 — 어느 응답에서 읽어도 같다. 승인대기가
-      // 첫 탭이라 그 응답에서 읽는다(예전엔 RECEIVED 응답 기준이었다)
-      const nextCalls = results[0].calls ?? []
+      setOrdersByStatus((prev) => ({
+        ...prev,
+        PENDING_APPROVAL: pendingRes.orders,
+        RECEIVED: receivedRes.orders,
+        ...(historyStatus && historyRes ? { [historyStatus]: historyRes.orders } : {}),
+      }))
+      setOpenSessionDone(openDoneRes.orders)
+      if (historyStatus && historyRes) {
+        setLoadedHistoryTabs((prev) => (prev.has(historyStatus) ? prev : new Set([...prev, historyStatus])))
+      }
+      // calls(미확인 호출)는 상태 필터와 무관하게 부스 전체가 실려 온다 — 어느 응답에서 읽어도 같다. 승인대기 응답에서 읽는다
+      const nextCalls = pendingRes.calls ?? []
       setCalls(nextCalls)
       setError(null)
       // 새 주문·호출의 소리·진동은 앱 공통 StaffAlertWatcher가 낸다 — 여기서도 내면 주문현황에서만 두 번 울린다.
       // 탭 제목의 승인대기 수는 알림 켜고 끔과 무관하게 이 화면이 갱신한다
       if (typeof document !== 'undefined') {
-        document.title = alertTitle(results[0].orders.length, baseTitleRef.current)
+        document.title = alertTitle(pendingRes.orders.length, baseTitleRef.current)
       }
     } catch (err) {
       if (!pollGuard.current.isLatest(runId) || !mountedRef.current) return
@@ -168,14 +189,23 @@ export default function OrderStatusPage() {
   )
 
   const tabCount = (tab: ViewTab) =>
-    tab === 'ACTIVE' ? counts.PENDING_APPROVAL + counts.RECEIVED : counts[tab]
+    tab === 'ACTIVE' ? counts.PENDING_APPROVAL + counts.RECEIVED : loadedHistoryTabs.has(tab) ? counts[tab] : ''
 
-  // "추가 주문" 배지 — 지금 불러온 4개 상태 전체를 합쳐서 판정한다(activeTab 안에서만 보면 같은 세션의
-  // 첫 주문이 다른 탭에 있을 때 놓친다). 근거는 additionalOrderIds 주석 참고
-  const additionalIds = useMemo(
-    () => additionalOrderIds(Object.values(ordersByStatus).flat()),
-    [ordersByStatus],
-  )
+  // 완료·취소 탭으로 가면 그 탭 목록을 바로 받는다(폴링 주기를 기다리지 않게). 이후 그 탭을 보는 동안은 폴링이 같이 받는다
+  const selectTab = (tab: ViewTab) => {
+    activeTabRef.current = tab
+    setActiveTab(tab)
+    if (tab !== 'ACTIVE') void refetchAll()
+  }
+
+  // "추가 주문" 배지 — 불러온 주문 전체를 합쳐서 판정한다(activeTab 안에서만 보면 같은 세션의 첫 주문이 다른 탭에 있을 때 놓친다).
+  // 완료 탭을 안 봐도 지금 앉은 손님의 완료 주문(openSessionDone)은 늘 있다 — 첫 주문은 대개 먼저 완료된다.
+  // 같은 주문이 두 목록에 다 있을 수 있어 id로 한 번만 센다. 근거는 additionalOrderIds 주석 참고
+  const additionalIds = useMemo(() => {
+    const byId = new Map<number, OrderSummary>()
+    for (const order of [...Object.values(ordersByStatus).flat(), ...openSessionDone]) byId.set(order.orderId, order)
+    return additionalOrderIds([...byId.values()])
+  }, [ordersByStatus, openSessionDone])
 
   // O15 호출 확인 — 성공하면 서버 calls에서 빠진다. 폴링을 기다리지 않고 바로 지운다(멱등이라 중복 눌림도 안전)
   const acknowledgeCall = async (callId: number) => {
@@ -275,7 +305,7 @@ export default function OrderStatusPage() {
           <button
             key={tab.key}
             type="button"
-            onClick={() => setActiveTab(tab.key)}
+            onClick={() => selectTab(tab.key)}
             className={`flex items-center gap-2 pb-2 text-[22px] leading-[1.2] font-semibold tracking-[-0.04em] ${
               activeTab === tab.key
                 ? 'border-b-2 border-neutral-900 text-neutral-900'

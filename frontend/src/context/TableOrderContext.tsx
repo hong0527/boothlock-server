@@ -91,8 +91,10 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
 
       // 주문 집계는 실패해도 테이블 목록 자체는 보여준다 — 카드에 항목만 비게 나올 뿐
       let orders: OrderSummary[] = []
-      // businessDate 생략 = 서버가 현재 영업일(06:00 경계)로 기본 처리 — 프론트 달력 날짜를 보내면 새벽에 전날 주문이 빠진다
-      const ordersRes = await apiFetch('/api/v1/admin/orders')
+      // 부스 전체 테이블의 열린 세션 주문만 받는다(activeSessionOnly, tableId 없이) — 예전엔 영업일 주문 전체를 받아 여기서 세션별로
+      // 걸러서 저녁으로 갈수록 5초 폴링이 무거워졌다. 카드 집계(aggregateSessionOrders)는 어차피 지금 세션 주문만 쓴다.
+      // businessDate 생략 = 영업일로 거르지 않음 — 06:00을 넘긴 열린 세션 주문도 결제 모달과 같게 카드에 잡힌다
+      const ordersRes = await apiFetch('/api/v1/admin/orders?activeSessionOnly=true')
       if (ordersRes.ok) {
         const ordersData: { orders: OrderSummary[] } = await ordersRes.json()
         orders = ordersData.orders
