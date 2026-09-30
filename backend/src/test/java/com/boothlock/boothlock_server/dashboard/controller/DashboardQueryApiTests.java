@@ -597,9 +597,10 @@ class DashboardQueryApiTests {
         orderRepository.saveAll(bulk);
         jdbcTemplate.update("update orders set status = 'DONE' where booth_id = ? and order_seq between 100 and 3100", boothId);
 
+        // 완료·취소 탭은 최근 100건(HISTORY_TAB_LIMIT) — 상태 필터 없는 조회만 3000
         mockMvc.perform(dashboard(staffToken).param("status", "DONE"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.orders.length()").value(3000));
+                .andExpect(jsonPath("$.orders.length()").value(100));
         mockMvc.perform(dashboard(staffToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.orders.length()").value(3000));
@@ -609,12 +610,33 @@ class DashboardQueryApiTests {
         assertEquals(6002 + 6, orderRepository.count());
     }
 
+    @Test
+    void historyTabsReturnNewestHundredButOpenSessionDoneIsNotCapped() throws Exception {
+        List<OrderEntity> bulk = new ArrayList<>();
+        for (int seq = 100; seq < 250; seq++) {           // 지금 세션(B-1)의 완료 150건 — 앞 50건이 가장 최근
+            OrderEntity o = new OrderEntity(boothId, b1SessionId, "B1-" + seq, day, seq, null, 1000, false, "B-1",
+                    day.atTime(12, 0).plusMinutes(250 - seq));
+            o.addItem(new OrderItemEntity(3L, "김치전", 1000, 1));
+            bulk.add(o);
+        }
+        orderRepository.saveAll(bulk);
+        jdbcTemplate.update("update orders set status = 'DONE' where booth_id = ? and order_seq between 100 and 249", boothId);
+
+        // 완료 탭 — 최신 100건, 최신순
+        mockMvc.perform(dashboard(staffToken).param("status", "DONE"))
+                .andExpect(jsonPath("$.orders.length()").value(100))
+                .andExpect(jsonPath("$.orders[0].orderNo").value("B1-100"));
+        // 지금 세션 완료(추가 주문 배지용)는 100건에 자르지 않는다
+        mockMvc.perform(dashboard(staffToken).param("status", "DONE").param("activeSessionOnly", "true"))
+                .andExpect(jsonPath("$.orders.length()").value(150));
+    }
+
     // ── 취소 주문 삭제(hidden) — Limit과의 상호작용 ──────
 
     @Test
     void hiddenCanceledOrdersAreExcludedBeforeTheLimitIsApplied() throws Exception {
-        // 회귀 재현: hidden 제외를 애플리케이션(Java)에서만 하면 "최근 500건"을 DB가 먼저 잘라버려서,
-        // 그 500건이 전부 hidden이면 501번째로 밀린 진짜 보여줘야 할 취소 주문이 통째로 사라진다.
+        // 회귀 재현: hidden 제외를 애플리케이션(Java)에서만 하면 "최근 100건"(취소 탭 상한)을 DB가 먼저 잘라버려서,
+        // 그 100건이 전부 hidden이면 밀린 진짜 보여줘야 할 취소 주문이 통째로 사라진다(hidden 500건 > 상한 100이라 재현된다).
         // hidden 제외가 DB 쿼리(WHERE)에서 limit과 함께 걸려야 이 케이스에서 살아남는다.
         OrderEntity visible = new OrderEntity(
                 boothId, null, "M-VISIBLE", day, 9000, null, 1000, true, null, day.atTime(6, 0));

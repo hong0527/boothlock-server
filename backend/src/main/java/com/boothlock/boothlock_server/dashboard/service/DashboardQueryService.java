@@ -38,6 +38,12 @@ public class DashboardQueryService {
     // 테이블 화면에서 방금 만든 미결제 주문이 사라짐) 500이 파일럿 규모에서 안전하지 않다고 판단. MySQL
     // 누적 2300여 건에서도 O10 조회 p95 <1.3s(부하테스트 실측)라 이 정도 상향은 성능에 영향 없다.
     private static final Limit DASHBOARD_LIST_LIMIT = Limit.of(3000);
+    /**
+     * 주문현황 완료·취소 탭(status=DONE·CANCELED, activeSessionOnly 없이)은 최근 100건만 — 운영자가 거의 안 보는 이력 탭이고,
+     * 그 탭을 보는 동안 5초마다 조회하므로 하루 누적이 그대로 실리면 저녁에 그 기기가 무거워진다. 그 이전 건은 q(주문번호)로 찾는다.
+     * activeSessionOnly(지금 세션 완료 — 추가 주문 배지·결제 모달)는 범위가 스스로 좁아 여기 해당하지 않는다
+     */
+    private static final Limit HISTORY_TAB_LIMIT = Limit.of(100);
 
     private final OrderRepository orderRepository;
     private final StaffCallRepository staffCallRepository;
@@ -81,8 +87,10 @@ public class DashboardQueryService {
         LocalDate effectiveDate = activeSessionOnly && businessDate == null
                 ? null
                 : resolveBusinessDate(businessDate, LocalDateTime.now(KST_ZONE));
-        Limit limit = status == OrderStatus.RECEIVED ? Limit.unlimited() : DASHBOARD_LIST_LIMIT;
-        // excludeHidden=true — 삭제(hidden=true) 처리된 취소 주문을 limit(500건)과 같은 쿼리에서 DB 단계부터 뺀다.
+        Limit limit = status == OrderStatus.RECEIVED ? Limit.unlimited()
+                : (status == OrderStatus.DONE || status == OrderStatus.CANCELED) && !activeSessionOnly ? HISTORY_TAB_LIMIT
+                : DASHBOARD_LIST_LIMIT;
+        // excludeHidden=true — 삭제(hidden=true) 처리된 취소 주문을 limit과 같은 쿼리에서 DB 단계부터 뺀다.
         // limit을 먼저 적용하고 나중에(Java에서) hidden을 지우면 hidden 행이 그 자리를 차지해 정상 취소 주문이
         // 밀려날 수 있어(실측됨) DB WHERE절에서 함께 처리한다. O18 매출 집계(SalesStatsService)는 이 메서드를
         // excludeHidden=false로 불러 hidden 여부와 무관하게 전부 보므로 정산·환불 데이터는 영향받지 않는다.
