@@ -1,54 +1,47 @@
-import { useCallback, useState } from 'react'
-import { readStoredJson, writeStored } from './safeStorage'
+import { apiFetch } from './apiFetch'
 
 /**
  * 진행 중 주문의 "나간 메뉴" 체크 — 감튀·치킨·콜라처럼 한 주문이 여러 번에 나눠 나갈 때 뭐가 남았는지 보려고 쓴다.
  *
- * 서버에 저장하지 않고 이 기기(브라우저)에만 남긴다 — 운영자 손 체크용 메모라 주문 상태·정산과 무관하고,
- * 5초 폴링이 카드를 다시 그려도, 새로고침해도 유지되면 충분하다. 다른 기기에는 보이지 않는다.
- *
- * 저장 형태: { [orderId]: { at: 마지막 변경 ms, ids: itemId[] } }. 오래된 주문 기록이 쌓이지 않게
- * 쓸 때마다 하루 넘은 항목을 지운다(영업일 하나 동안만 의미가 있다).
+ * 같은 부스의 여러 기기가 함께 보도록 서버에 저장한다. 다만 DB가 아니라 서버 메모리라, API를 재시작(배포)하면
+ * 체크가 모두 사라진다(백엔드 ServedItemService). 주문 상태·정산과는 무관한 운영자 손 체크용 메모다.
  */
-const STORAGE_KEY = 'boothlock.servedItems'
-const KEEP_MS = 24 * 60 * 60 * 1000
 
-type ServedMap = Record<string, { at: number; ids: number[] }>
+/** orderId → 나간 itemId 집합 */
+export type ServedByOrder = ReadonlyMap<number, ReadonlySet<number>>
 
-function readAll(): ServedMap {
-  const value = readStoredJson<ServedMap>(STORAGE_KEY)
-  return value && typeof value === 'object' ? value : {}
+type ServedItemsResponse = { orders: { orderId: number; itemIds: number[] }[] }
+
+/** 부스의 체크 전체 — 주문현황 폴링이 함께 부른다 */
+export async function fetchServedItems(): Promise<ServedByOrder> {
+  const res = await apiFetch('/api/v1/admin/served-items')
+  if (!res.ok) throw new Error(`나간 메뉴 체크를 불러오지 못했어요 (${res.status})`)
+  const body: ServedItemsResponse = await res.json()
+  return new Map(body.orders.map((o) => [o.orderId, new Set(o.itemIds)]))
 }
 
-export function readServedItemIds(orderId: number): ReadonlySet<number> {
-  const entry = readAll()[String(orderId)]
-  return new Set(Array.isArray(entry?.ids) ? entry.ids : [])
+/** 항목 하나 체크/해제 — 멱등이라 다시 보내도 안전하다 */
+export function setItemServed(orderId: number, itemId: number, served: boolean) {
+  return apiFetch(`/api/v1/admin/orders/${orderId}/items/${itemId}/served`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ served }),
+  })
 }
 
-export function saveServedItemIds(orderId: number, ids: ReadonlySet<number>, now = Date.now()) {
-  const all = readAll()
-  for (const [key, entry] of Object.entries(all)) {
-    if (!entry || now - entry.at > KEEP_MS) delete all[key]
+/** 서버 목록 위에 아직 응답을 못 받은 내 체크를 덮어쓴다 — 요청 중에 도착한 폴링 응답이 방금 누른 체크를 되돌리지 않게 */
+export function withPendingToggles(
+  fromServer: ServedByOrder,
+  pending: ReadonlyMap<string, { orderId: number; itemId: number; served: boolean }>,
+): ServedByOrder {
+  if (pending.size === 0) return fromServer
+  const merged = new Map<number, Set<number>>()
+  for (const [orderId, ids] of fromServer) merged.set(orderId, new Set(ids))
+  for (const { orderId, itemId, served } of pending.values()) {
+    const ids = merged.get(orderId) ?? new Set<number>()
+    if (served) ids.add(itemId)
+    else ids.delete(itemId)
+    merged.set(orderId, ids)
   }
-  if (ids.size === 0) delete all[String(orderId)]
-  else all[String(orderId)] = { at: now, ids: [...ids] }
-  writeStored(STORAGE_KEY, JSON.stringify(all))
-}
-
-/** 카드 하나의 체크 상태 — 처음 그릴 때 저장값을 읽고, 누를 때마다 저장한다 */
-export function useServedItems(orderId: number) {
-  const [served, setServed] = useState<ReadonlySet<number>>(() => readServedItemIds(orderId))
-  const toggle = useCallback(
-    (itemId: number) => {
-      setServed((prev) => {
-        const next = new Set(prev)
-        if (next.has(itemId)) next.delete(itemId)
-        else next.add(itemId)
-        saveServedItemIds(orderId, next)
-        return next
-      })
-    },
-    [orderId],
-  )
-  return { served, toggle }
+  return merged
 }

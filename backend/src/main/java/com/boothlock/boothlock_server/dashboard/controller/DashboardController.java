@@ -8,12 +8,15 @@ import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
 import com.boothlock.boothlock_server.dashboard.dto.ItemQtyUpdateRequest;
 import com.boothlock.boothlock_server.dashboard.dto.ManualOrderRequest;
 import com.boothlock.boothlock_server.dashboard.dto.PaymentConfirmRequest;
+import com.boothlock.boothlock_server.dashboard.dto.ServedItemRequest;
+import com.boothlock.boothlock_server.dashboard.dto.ServedItemsResponse;
 import com.boothlock.boothlock_server.dashboard.dto.TablePaymentRequest;
 import com.boothlock.boothlock_server.dashboard.dto.TablePaymentResponse;
 import com.boothlock.boothlock_server.dashboard.service.CallService;
 import com.boothlock.boothlock_server.dashboard.service.DashboardOrderActionService;
 import com.boothlock.boothlock_server.dashboard.service.DashboardQueryService;
 import com.boothlock.boothlock_server.dashboard.service.ManualOrderService;
+import com.boothlock.boothlock_server.dashboard.service.ServedItemService;
 import com.boothlock.boothlock_server.dashboard.service.TablePaymentService;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
@@ -50,11 +53,13 @@ public class DashboardController {
     private final ManualOrderService manualOrderService;
     private final TablePaymentService tablePaymentService;
     private final TableSessionAuthService sessionAuthService;
+    private final ServedItemService servedItemService;
 
     public DashboardController(DashboardQueryService dashboardQueryService,
             DashboardOrderActionService orderActionService, CallService callService,
             ManualOrderService manualOrderService, TablePaymentService tablePaymentService,
-            TableSessionAuthService sessionAuthService) {
+            TableSessionAuthService sessionAuthService, ServedItemService servedItemService) {
+        this.servedItemService = servedItemService;
         this.dashboardQueryService = dashboardQueryService;
         this.orderActionService = orderActionService;
         this.callService = callService;
@@ -194,6 +199,26 @@ public class DashboardController {
             @PathVariable Long orderId,
             @PathVariable Long itemId) {
         return orderActionService.cancelItem(authorization, orderId, itemId);
+    }
+
+    /** 주문현황 메뉴별 "나감" 체크 목록 (명세서 밖) — 서버 메모리에만 있어 API 재시작 시 비워진다(ServedItemService) */
+    @Operation(summary = "나간 메뉴 체크 목록", description = "JWT 부스의 주문별 '나감' 체크 항목을 조회한다. DB가 아니라 서버 메모리에만 저장돼 "
+            + "API 재시작 시 사라진다. 체크가 없는 주문은 빠진다.")
+    @GetMapping("/admin/served-items")
+    public ServedItemsResponse getServedItems(@RequestHeader("Authorization") String authorization) {
+        return servedItemService.list(authorization);
+    }
+
+    /** 주문현황 메뉴별 "나감" 체크/해제 (명세서 밖) — 멱등. 타 부스 주문·주문에 없는 항목은 404 */
+    @Operation(summary = "나간 메뉴 체크", description = "주문 항목 하나를 '나감'으로 체크하거나 해제한다. 같은 값을 다시 보내도 결과가 같다. "
+            + "타 부스 주문이거나 주문에 없는 항목이면 404.")
+    @PutMapping("/admin/orders/{orderId}/items/{itemId}/served")
+    public ServedItemsResponse.OrderServed setServed(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long orderId,
+            @PathVariable Long itemId,
+            @Valid @RequestBody ServedItemRequest request) {
+        return servedItemService.setServed(authorization, orderId, itemId, request.served());
     }
 
     /**
