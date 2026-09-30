@@ -1,6 +1,7 @@
-import { PAYMENT_STATUS_LABEL, type OrderSummary } from '../types/dashboard'
+import { PAYMENT_STATUS_LABEL, type OrderItemSummary, type OrderSummary } from '../types/dashboard'
 import { displayTableLabel } from '../lib/tableLabel'
 import { formatClockTime, formatElapsed } from '../lib/time'
+import { useServedItems } from '../lib/servedItems'
 
 const ACTION_BUTTON_BASE =
   'h-[54px] flex-1 rounded-xl text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50 disabled:opacity-40'
@@ -95,22 +96,8 @@ export default function OrderCard({
 
       <div className="mt-3 border-t border-neutral-200" />
 
-      <ul className="mt-4 flex flex-1 flex-col gap-2">
-        {order.items.map((item) => (
-          <li
-            key={item.itemId}
-            // 자릿세는 조리할 음식이 아니다 — 주방이 요리로 착각하지 않게 흐리고 작게, "N명"으로 표시한다
-            className={
-              item.itemType === 'SEAT_FEE'
-                ? 'flex items-center gap-3 text-sm leading-[1.2] font-medium tracking-[-0.04em] text-neutral-400'
-                : 'flex items-center gap-3 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900'
-            }
-          >
-            <span>{item.menuName}</span>
-            <span>{item.itemType === 'SEAT_FEE' ? `${item.qty}명` : item.qty}</span>
-          </li>
-        ))}
-      </ul>
+      {/* 진행중 카드에서만 메뉴별 "나감" 체크를 보여 준다 — 한 주문이 나눠 나갈 때 남은 메뉴를 가리려고(servedItems 주석 참고) */}
+      <OrderItemList orderId={order.orderId} items={order.items} checkable={order.status === 'RECEIVED'} />
 
       {order.status === 'PENDING_APPROVAL' && onApprove && onReject && (
         <div className="mt-4 flex gap-4">
@@ -155,5 +142,49 @@ export default function OrderCard({
       )}
 
     </div>
+  )
+}
+
+/**
+ * 카드의 메뉴 목록. 체크 상태(훅)를 이 컴포넌트에 둔다 — OrderCard는 훅 없이 그리는 순수 함수로 남긴다.
+ * checkable이면 메뉴(MENU) 옆에 "나감" 체크박스를 두고, 체크한 메뉴는 흐리게 줄을 긋는다. 자릿세·기타 항목은 체크 대상이 아니다
+ */
+function OrderItemList({ orderId, items, checkable }: { orderId: number; items: OrderItemSummary[]; checkable: boolean }) {
+  const { served, toggle } = useServedItems(orderId)
+  return (
+    <ul className="mt-4 flex flex-1 flex-col gap-2">
+      {items.map((item) => (
+        <li
+          key={item.itemId}
+          // 자릿세는 조리할 음식이 아니다 — 주방이 요리로 착각하지 않게 흐리고 작게, "N명"으로 표시한다
+          className={
+            item.itemType === 'SEAT_FEE'
+              ? 'flex items-center gap-3 text-sm leading-[1.2] font-medium tracking-[-0.04em] text-neutral-400'
+              : 'flex items-center gap-3 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900'
+          }
+        >
+          {checkable && item.itemType === 'MENU' ? (
+            <label className="flex cursor-pointer items-center gap-3">
+              <input
+                type="checkbox"
+                checked={served.has(item.itemId)}
+                onChange={() => toggle(item.itemId)}
+                aria-label={`${item.menuName} 나감`}
+                className="h-6 w-6 shrink-0 cursor-pointer accent-primary-300"
+              />
+              <span className={`flex gap-3 ${served.has(item.itemId) ? 'text-neutral-400 line-through' : ''}`}>
+                <span>{item.menuName}</span>
+                <span>{item.qty}</span>
+              </span>
+            </label>
+          ) : (
+            <>
+              <span>{item.menuName}</span>
+              <span>{item.itemType === 'SEAT_FEE' ? `${item.qty}명` : item.qty}</span>
+            </>
+          )}
+        </li>
+      ))}
+    </ul>
   )
 }
