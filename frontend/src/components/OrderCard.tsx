@@ -1,7 +1,6 @@
 import { PAYMENT_STATUS_LABEL, type OrderItemSummary, type OrderSummary } from '../types/dashboard'
 import { displayTableLabel } from '../lib/tableLabel'
 import { formatClockTime, formatElapsed } from '../lib/time'
-import { useServedItems } from '../lib/servedItems'
 
 const ACTION_BUTTON_BASE =
   'h-[54px] flex-1 rounded-xl text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-50 disabled:opacity-40'
@@ -41,6 +40,9 @@ type OrderCardProps = {
   /** 같은 테이블 세션에서 두 번째 이후 주문 — 자릿세가 첫 주문에만 붙어서 카드끼리 겉보기가 달라 보일 수 있어
    * "이 테이블 첫 주문의 후속"이라는 걸 바로 알 수 있게 배지로 표시한다 (dashboardOrders.additionalOrderIds) */
   additionalOrder?: boolean
+  /** 진행중 카드의 "나감" 체크된 항목 — 넘기지 않으면 체크박스를 그리지 않는다(servedItems 주석 참고) */
+  servedItemIds?: ReadonlySet<number>
+  onToggleServed?: (orderId: number, itemId: number, served: boolean) => void
 }
 
 export default function OrderCard({
@@ -54,6 +56,8 @@ export default function OrderCard({
   onRestore,
   onRefundDone,
   additionalOrder,
+  servedItemIds,
+  onToggleServed,
 }: OrderCardProps) {
   // 진행 탭에서 승인대기 카드는 주황으로 구분한다(탭의 "대기" 뱃지·범례 체크박스와 같은 색)
   const isPending = order.status === 'PENDING_APPROVAL'
@@ -97,7 +101,15 @@ export default function OrderCard({
       <div className="mt-3 border-t border-neutral-200" />
 
       {/* 진행중 카드에서만 메뉴별 "나감" 체크를 보여 준다 — 한 주문이 나눠 나갈 때 남은 메뉴를 가리려고(servedItems 주석 참고) */}
-      <OrderItemList orderId={order.orderId} items={order.items} checkable={order.status === 'RECEIVED'} />
+      <OrderItemList
+        items={order.items}
+        served={servedItemIds ?? NO_SERVED}
+        onToggle={
+          order.status === 'RECEIVED' && onToggleServed
+            ? (itemId, served) => onToggleServed(order.orderId, itemId, served)
+            : undefined
+        }
+      />
 
       {order.status === 'PENDING_APPROVAL' && onApprove && onReject && (
         <div className="mt-4 flex gap-4">
@@ -145,12 +157,21 @@ export default function OrderCard({
   )
 }
 
+const NO_SERVED: ReadonlySet<number> = new Set()
+
 /**
- * 카드의 메뉴 목록. 체크 상태(훅)를 이 컴포넌트에 둔다 — OrderCard는 훅 없이 그리는 순수 함수로 남긴다.
- * checkable이면 메뉴(MENU) 옆에 "나감" 체크박스를 두고, 체크한 메뉴는 흐리게 줄을 긋는다. 자릿세·기타 항목은 체크 대상이 아니다
+ * 카드의 메뉴 목록. onToggle이 있으면 메뉴(MENU) 옆에 "나감" 체크박스를 두고, 체크한 메뉴는 흐리게 줄을 긋는다.
+ * 자릿세·기타 항목은 체크 대상이 아니다
  */
-function OrderItemList({ orderId, items, checkable }: { orderId: number; items: OrderItemSummary[]; checkable: boolean }) {
-  const { served, toggle } = useServedItems(orderId)
+function OrderItemList({
+  items,
+  served,
+  onToggle,
+}: {
+  items: OrderItemSummary[]
+  served: ReadonlySet<number>
+  onToggle?: (itemId: number, served: boolean) => void
+}) {
   return (
     <ul className="mt-4 flex flex-1 flex-col gap-2">
       {items.map((item) => (
@@ -163,12 +184,12 @@ function OrderItemList({ orderId, items, checkable }: { orderId: number; items: 
               : 'flex items-center gap-3 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900'
           }
         >
-          {checkable && item.itemType === 'MENU' ? (
+          {onToggle && item.itemType === 'MENU' ? (
             <label className="flex cursor-pointer items-center gap-3">
               <input
                 type="checkbox"
                 checked={served.has(item.itemId)}
-                onChange={() => toggle(item.itemId)}
+                onChange={(e) => onToggle(item.itemId, e.target.checked)}
                 aria-label={`${item.menuName} 나감`}
                 className="h-6 w-6 shrink-0 cursor-pointer accent-primary-300"
               />
