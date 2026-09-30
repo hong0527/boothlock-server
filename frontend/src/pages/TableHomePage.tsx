@@ -310,13 +310,15 @@ export default function TableHomePage() {
           </>
         ) : (
           <>
-            {/* TODO: 자리 이동·자리 합석은 스키마 설계가 더 필요해서 아직 동작 없음 */}
+            {/* TODO: 자리 이동·자리 합석 — 스키마·동시성 설계가 더 필요해 아직 기능이 없다. 눌리지도 않는 버튼이 보이면
+                운영자가 되는 기능인 줄 알고 헷갈려 해서(2026-09-30 파일럿 피드백) 기능이 생길 때까지 숨긴다.
             <PillButton type="button" disabled>
               자리 이동
             </PillButton>
             <PillButton type="button" disabled>
               자리 합석
             </PillButton>
+            */}
             <PillButton type="button" onClick={() => setEditMode(true)}>
               테이블 편집
             </PillButton>
