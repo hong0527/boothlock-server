@@ -57,6 +57,11 @@ export default function OrderCard({
   // 진행 탭에서 승인대기 카드는 주황으로 구분한다(탭의 "대기" 뱃지·범례 체크박스와 같은 색)
   const isPending = order.status === 'PENDING_APPROVAL'
   const statusBadge = STATUS_BADGE[order.status]
+  // 백엔드 OrderEntity.restore()가 막는 것과 정확히 같은 조건 — 메뉴(MENU) 항목이 하나도 없는 완료 주문
+  // (자릿세·기타 항목만)은 되돌리기를 눌러도 항상 409("조리할 메뉴가 없는 주문은 접수로 되돌릴 수 없다")다.
+  // 그 경우에만 되돌리기→취소 두 단계 없이 바로 취소할 수 있게 한다 — 메뉴가 남은 일반 완료 주문은
+  // 되돌리기가 정상 동작하므로 기존 그대로 둔다(2026-09-30 파일럿 현장 피드백, 범위를 이 경우로만 좁힘)
+  const isDoneWithoutMenuItems = order.status === 'DONE' && !order.items.some((item) => item.itemType === 'MENU')
 
   return (
     <div
@@ -136,6 +141,11 @@ export default function OrderCard({
 
       {(order.status === 'DONE' || order.status === 'CANCELED') && (
         <div className="mt-4 flex gap-4">
+          {isDoneWithoutMenuItems && (
+            <button type="button" onClick={() => onCancel(order.orderId)} disabled={pending} className={CANCEL_BUTTON_CLASS}>
+              취소
+            </button>
+          )}
           <button type="button" onClick={() => onRestore(order.orderId)} disabled={pending} className={ACTION_BUTTON_CLASS}>
             되돌리기
           </button>
