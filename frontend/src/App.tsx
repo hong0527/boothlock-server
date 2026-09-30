@@ -22,7 +22,6 @@ import SettlementPage from './pages/settings/SettlementPage'
 import TableQrPage from './pages/settings/TableQrPage'
 import SettingsPage from './pages/SettingsPage'
 import TableHomePage from './pages/TableHomePage'
-import PaymentInfoPage from './pages/customer/PaymentInfoPage'
 import OrderHistoryPage from './pages/customer/OrderHistoryPage'
 
 function App() {
@@ -68,7 +67,9 @@ function App() {
         <Route path="/cart" element={<CartPage />} />
         <Route path="/session-expired" element={<SessionExpiredPage />} />
 
-        <Route path="/payment-info" element={<PaymentInfoPage />} />
+        {/* 손님 결제 안내 화면은 없앴다 — 손님이 그 화면만 보고 따로 이체하면서 결제가 꼬였다(2026-09-30 현장 피드백).
+            라우트는 남긴다 — 이미 열려 있던 화면·뒤로가기로 들어와도 백지 대신 주문내역으로 보낸다(/signup과 같은 이유) */}
+        <Route path="/payment-info" element={<Navigate to="/order-history" replace />} />
         <Route path="/order-history" element={<OrderHistoryPage />} />
       </Routes>
     </CartProvider>
