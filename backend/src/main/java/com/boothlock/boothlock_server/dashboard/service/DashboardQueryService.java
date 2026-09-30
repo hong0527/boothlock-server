@@ -5,7 +5,6 @@ import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
 import com.boothlock.boothlock_server.dashboard.repository.StaffCallRepository;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
-import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
 import com.boothlock.boothlock_server.order.service.OrderNumberingService;
@@ -60,7 +59,9 @@ public class DashboardQueryService {
 
     /**
      * 부스는 JWT로만 정한다 — STAFF·ADMIN 허용, 무토큰 401, SUPER_ADMIN 403 (명세서 §1.2·§7-21).
-     * activeSessionOnly는 tableId의 하위 옵션이다 — 테이블 없이 "활성 세션만"은 뜻이 없으므로 조용히 무시하지 않고 400.
+     * activeSessionOnly=true: tableId가 있으면 그 테이블의, 없으면 부스 전체 테이블의 열린 세션 주문만.
+     * 테이블 없이 부르는 쪽은 테이블-홈 카드다 — 예전엔 400이라 프론트가 영업일 주문 전체(상한까지)를 5초마다 받아 세션별로 걸렀고,
+     * 저녁으로 갈수록 폴링이 무거워졌다. 지금 앉은 손님들 주문만 받으면 크기가 하루 누적과 무관하다.
      * activeSessionOnly=true에 businessDate를 생략하면 영업일 필터를 걸지 않는다(열린 세션의 주문 전부 — O24 대상과 같은 범위).
      */
     @Transactional(readOnly = true)
@@ -68,9 +69,6 @@ public class DashboardQueryService {
                                            LocalDate businessDate, String q, Long tableId, boolean activeSessionOnly) {
         Long boothId = staffAuthenticator.authenticate(authorization).getBooth().getId();
 
-        if (activeSessionOnly && tableId == null) {
-            throw new InvalidRequestException("activeSessionOnly는 tableId와 함께 써야 합니다.");
-        }
         if (tableId != null) {
             // 필터 결과가 빈 목록인 것과 "그런 테이블 없음"을 구분한다 — 미존재·타 부스·삭제 테이블은 404 (명세서 O10)
             tableLookup.requireTableOfBooth(tableId, boothId);

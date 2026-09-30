@@ -69,7 +69,7 @@ public class DashboardController {
                     + "businessDate를 생략하면 현재 영업일(06:00 경계). tableId를 주면 그 테이블의 모든 세션 주문만 반환하고, "
                     + "미존재·타 부스 테이블은 404. activeSessionOnly=true를 tableId와 함께 주면 그 테이블의 종료 안 된 세션 주문만 "
                     + "(세션이 없으면 빈 목록) — 이때 businessDate를 생략하면 영업일로 거르지 않아 06:00 전에 받은 미결제도 함께 나온다(O24 대상과 같은 범위). "
-                    + "tableId 없이 activeSessionOnly=true는 400.")
+                    + "tableId 없이 activeSessionOnly=true면 부스 전체 테이블의 종료 안 된 세션 주문만(테이블-홈 카드용).")
     @GetMapping("/admin/orders")
     public DashboardResponse getDashboard(
             @RequestHeader("Authorization") String authorization,

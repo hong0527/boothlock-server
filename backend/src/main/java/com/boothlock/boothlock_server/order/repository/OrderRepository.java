@@ -185,7 +185,8 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
      * tableId 필터: OrderEntity.sessionId는 연관 매핑이 아니라 raw Long이라 o.session.table.id 같은 경로 탐색이
      * 컴파일되지 않는다 — TableSessionEntity를 서브쿼리로 이어 찾는다 (명세서 O10 "구현 주의")
      * activeSessionOnly: tableId와 함께 true면 그 테이블의 종료 안 된 세션(ended_at IS NULL and ended_at_key = 0) 주문만 —
-     * 결제 모달이 "지금 앉은 손님" 주문만 보는 수단이다(O24 대상 범위와 같은 세션 조건). tableId 없이 true인 요청은 서비스가 400으로 막는다.
+     * 결제 모달이 "지금 앉은 손님" 주문만 보는 수단이다(O24 대상 범위와 같은 세션 조건). tableId 없이 true면 부스 전체의 열린 세션 주문만 —
+     * 테이블-홈 카드가 영업일 주문 전체 대신 이걸 받는다(s2 서브쿼리, 같은 세션 조건).
      * ended_at_key = 0을 함께 거는 이유는 TableSessionRepository 주석(uq_session_active 인덱스)과 같다.
      * excludeHidden: 삭제(hide) 처리된 취소 주문을 DB 단계에서부터 뺄지 — limit과 같은 문장 안에서 걸어야 한다.
      * WHERE 없이 애플리케이션에서만 걸러내면(예: Java stream filter) "최근 N건"을 자른 뒤에 hidden을 지우는 꼴이 되어,
@@ -205,6 +206,9 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
                   select s.id from TableSessionEntity s
                   where s.table.id = :tableId and s.table.booth.id = :boothId
                     and (:activeSessionOnly = false or (s.endedAt is null and s.endedAtKey = 0))))
+              and (:tableId is not null or :activeSessionOnly = false or o.sessionId in (
+                  select s2.id from TableSessionEntity s2
+                  where s2.table.booth.id = :boothId and s2.endedAt is null and s2.endedAtKey = 0))
               and (:excludeHidden = false or o.hidden = false)
             order by o.createdAt desc, o.id desc
             """)
