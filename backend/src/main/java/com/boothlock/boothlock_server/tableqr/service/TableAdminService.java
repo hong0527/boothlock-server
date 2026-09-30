@@ -21,6 +21,8 @@ import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableGridPositionRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMergeRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMoveRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusListResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusResponse;
@@ -603,6 +605,103 @@ public class TableAdminService {
 
         table.regenerateToken(SecureTokenGenerator.generate());
         return toResponse(table);
+    }
+
+    /**
+     * O25 자리 이동(명세서 밖 파일럿) — 한 테이블의 활성 세션을 다른(비어 있는) 테이블로 옮긴다.
+     * QR(table_token)은 두 테이블 모두 그대로다 — 손님은 세션 토큰으로 인증되므로(TableSessionAuthService)
+     * 옮긴 뒤에도 재스캔이 필요 없다. 다음 요청부터 인증 계층의 라이브 조인이 새 테이블 라벨을 돌려준다
+     * (TableSessionEntity.reassignTable 참고).
+     *
+     * <p>두 테이블 행을 id 오름차순으로 잠근다(deleteTable·addSingleTable과 같은 방식의 교착 방지) —
+     * A→B, B→A로 동시에 교차 이동을 시도해도 한쪽이 먼저 두 행을 다 잠그고 끝낸다. 대상(target)에 이미
+     * 활성 세션이 있으면(다른 손님이 앉음) 409 — uq_session_active(table_id, ended_at_key) 위반을
+     * 저장 단계 500이 아니라 여기서 먼저 막는다.
+     */
+    @Transactional
+    public TableStatusListResponse moveSession(String authorization, Long sourceTableId, TableMoveRequest request) {
+        BoothEntity staffBooth = authenticatedBooth(authorization);
+        if (request == null || request.targetTableId() == null) {
+            throw new InvalidRequestException("targetTableId가 필요합니다.");
+        }
+        Long targetTableId = request.targetTableId();
+        if (sourceTableId.equals(targetTableId)) {
+            throw new InvalidRequestException("같은 테이블로는 이동할 수 없습니다.");
+        }
+
+        TableEntity[] locked = lockTablePairInIdOrder(staffBooth.getId(), sourceTableId, targetTableId);
+        TableEntity source = locked[0];
+        TableEntity target = locked[1];
+
+        List<TableSessionEntity> sourceOpen = tableSessionRepository.findOpenByTableIdForUpdate(source.getId());
+        if (sourceOpen.isEmpty()) {
+            throw new InvalidStateException("이동할 자리가 비어 있습니다.");
+        }
+        if (!tableSessionRepository.findOpenByTableIdForUpdate(target.getId()).isEmpty()) {
+            throw new InvalidStateException("이동할 자리가 이미 사용 중입니다.");
+        }
+
+        sourceOpen.getFirst().reassignTable(target);
+        source.vacate();
+        target.occupy();
+
+        return new TableStatusListResponse(toStatusResponses(List.of(source, target)));
+    }
+
+    /**
+     * O26 자리 합석(명세서 밖 파일럿) — source 테이블의 모든 주문을 target 세션으로 옮기고 source 세션을
+     * 종료한다. 각 주문의 status·paymentStatus는 그대로 둔다(TableCheckoutOrderRepository.reassignOrdersToSession) —
+     * 합석은 "누구 자리에서 났나"만 바꾼다. source 쪽 손님의 세션 토큰은 이 순간부터 종료된 세션이라
+     * 다음 요청은 410(재스캔 안내)이다 — 남은 안내는 운영자 몫이다(2026-09-30 팀 결정). source에 남아
+     * 있던 미확인 호출은 O6 퇴실과 같은 방식으로 확인 처리한다. 잠금 순서는 moveSession과 같다.
+     */
+    @Transactional
+    public TableStatusListResponse mergeSessions(String authorization, TableMergeRequest request) {
+        BoothEntity staffBooth = authenticatedBooth(authorization);
+        if (request == null || request.sourceTableId() == null || request.targetTableId() == null) {
+            throw new InvalidRequestException("sourceTableId와 targetTableId가 필요합니다.");
+        }
+        Long sourceTableId = request.sourceTableId();
+        Long targetTableId = request.targetTableId();
+        if (sourceTableId.equals(targetTableId)) {
+            throw new InvalidRequestException("같은 테이블끼리는 합석할 수 없습니다.");
+        }
+
+        TableEntity[] locked = lockTablePairInIdOrder(staffBooth.getId(), sourceTableId, targetTableId);
+        TableEntity source = locked[0];
+        TableEntity target = locked[1];
+
+        List<TableSessionEntity> sourceOpen = tableSessionRepository.findOpenByTableIdForUpdate(source.getId());
+        List<TableSessionEntity> targetOpen = tableSessionRepository.findOpenByTableIdForUpdate(target.getId());
+        if (sourceOpen.isEmpty() || targetOpen.isEmpty()) {
+            throw new InvalidStateException("합석하려면 두 테이블 모두 사용 중이어야 합니다.");
+        }
+        Long sourceSessionId = sourceOpen.getFirst().getId();
+        Long targetSessionId = targetOpen.getFirst().getId();
+
+        tableCheckoutOrderRepository.reassignOrdersToSession(sourceSessionId, targetSessionId, staffBooth.getId());
+        staffCallRepository.ackUnackedCallsOfSessions(List.of(sourceSessionId));
+
+        tableSessionRepository.endSession(sourceSessionId, seatIdlePolicy.now());
+        source.vacate();
+
+        return new TableStatusListResponse(toStatusResponses(List.of(source, target)));
+    }
+
+    /**
+     * 자리 이동·합석 공용 — 두 테이블 행을 id 오름차순으로 잠근다. 반환 배열은 항상 [firstArgTable, secondArgTable]
+     * 순서다(잠금 순서와는 별개) — 호출자가 어느 쪽이 source/target인지 헷갈리지 않게.
+     */
+    private TableEntity[] lockTablePairInIdOrder(Long boothId, Long tableIdA, Long tableIdB) {
+        Long lowerId = Math.min(tableIdA, tableIdB);
+        Long higherId = Math.max(tableIdA, tableIdB);
+        TableEntity lower = tableRepository.findActiveByIdAndBoothIdForUpdate(lowerId, boothId)
+                .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다."));
+        TableEntity higher = tableRepository.findActiveByIdAndBoothIdForUpdate(higherId, boothId)
+                .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다."));
+        TableEntity a = tableIdA.equals(lowerId) ? lower : higher;
+        TableEntity b = tableIdB.equals(lowerId) ? lower : higher;
+        return new TableEntity[] {a, b};
     }
 
     private BoothEntity authenticatedBooth(String authorization) {

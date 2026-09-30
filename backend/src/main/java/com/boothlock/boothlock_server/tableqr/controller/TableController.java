@@ -8,6 +8,8 @@ import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableGridPositionRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMergeRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMoveRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionResponse;
@@ -193,5 +195,30 @@ public class TableController {
                                            @Parameter(description = "true면 미결제·승인대기가 남은 퇴실을 409로 거절한다(\"결제 완료\" 버튼). 기본 false(\"테이블 비우기\")")
                                            @RequestParam(defaultValue = "false") boolean requireSettled) {
         return tableAdminService.checkoutTable(authorization, tableId, requireSettled);
+    }
+
+    /**
+     * O25 자리 이동(명세서 밖 파일럿) — QR(table_token)은 두 테이블 모두 그대로다. 손님은 세션 토큰으로
+     * 인증되므로 재스캔이 필요 없다. 대상 테이블이 이미 사용 중이면 409.
+     */
+    @Operation(summary = "O25 자리 이동", description = "tableId(source)의 활성 세션을 targetTableId로 옮긴다. 손님 세션 토큰은 그대로 유효하다"
+            + "(재스캔 불필요, QR도 그대로). source가 비어 있거나 target이 이미 사용 중이면 409.")
+    @PostMapping("/admin/tables/{tableId}/move")
+    public TableStatusListResponse moveSession(@RequestHeader("Authorization") String authorization,
+                                                @PathVariable Long tableId,
+                                                @RequestBody TableMoveRequest request) {
+        return tableAdminService.moveSession(authorization, tableId, request);
+    }
+
+    /**
+     * O26 자리 합석(명세서 밖 파일럿) — sourceTableId의 모든 주문을 targetTableId 세션으로 옮기고 source 세션을
+     * 종료한다(source 손님 세션 토큰은 이후 410). 두 테이블 모두 사용 중이어야 한다(409).
+     */
+    @Operation(summary = "O26 자리 합석", description = "sourceTableId의 모든 주문을 targetTableId 세션으로 옮기고 source 세션을 종료한다. "
+            + "결제·환불 상태는 주문별로 그대로 유지된다. 두 테이블 모두 활성 세션이 있어야 한다(409).")
+    @PostMapping("/admin/tables/merge")
+    public TableStatusListResponse mergeSessions(@RequestHeader("Authorization") String authorization,
+                                                  @RequestBody TableMergeRequest request) {
+        return tableAdminService.mergeSessions(authorization, request);
     }
 }

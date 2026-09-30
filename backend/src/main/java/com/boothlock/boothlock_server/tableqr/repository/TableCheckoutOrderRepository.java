@@ -109,4 +109,21 @@ public interface TableCheckoutOrderRepository extends Repository<OrderEntity, Lo
             @Param("reason") String reason,
             @Param("canceledBy") String canceledBy,
             @Param("canceledAt") LocalDateTime canceledAt);
+
+    /**
+     * O26 자리 합석(명세서 밖 파일럿) — source 세션의 주문을 전부 target 세션 밑으로 옮긴다. 각 주문의
+     * status·paymentStatus는 그대로 둔다 — 합석은 "누구 자리에서 났나"만 바꾸고 결제·환불 여부는 건드리지
+     * 않는다. orderNo(테이블 접두 채번)도 그대로다 — 이미 낸 번호를 다시 매기지 않는다(주문 이력 불변 원칙).
+     * 호출자(TableAdminService.mergeSessions)가 두 세션 행을 잠근 트랜잭션 안에서 부른다
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("""
+            update OrderEntity o
+               set o.sessionId = :targetSessionId
+             where o.boothId = :boothId
+               and o.sessionId = :sourceSessionId
+            """)
+    int reassignOrdersToSession(@Param("sourceSessionId") Long sourceSessionId,
+                                 @Param("targetSessionId") Long targetSessionId,
+                                 @Param("boothId") Long boothId);
 }

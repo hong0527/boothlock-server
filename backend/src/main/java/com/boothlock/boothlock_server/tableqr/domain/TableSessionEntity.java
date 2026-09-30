@@ -119,4 +119,15 @@ public class TableSessionEntity {
     public void updatePartySize(int partySize) {
         this.partySize = partySize;
     }
+
+    /**
+     * O25 자리 이동(명세서 밖 파일럿) — 이 세션이 속한 물리 테이블을 바꾼다. QR(table_token)은 두 테이블
+     * 모두 그대로다 — 손님은 세션 토큰(X-Session-Token)으로 인증되지 table_id로 인증되지 않으므로
+     * (TableSessionAuthService), 옮긴 뒤에도 재스캔이 필요 없다. 다음 요청부터 인증 계층의 라이브 조인이
+     * 새 테이블 라벨을 그대로 돌려준다. 호출자(TableAdminService.moveSession)가 대상 테이블에 활성 세션이
+     * 없음을 먼저 확인해야 한다(uq_session_active(table_id, ended_at_key) 위반 방지)
+     */
+    public void reassignTable(TableEntity newTable) {
+        this.table = Objects.requireNonNull(newTable, "newTable must not be null");
+    }
 }

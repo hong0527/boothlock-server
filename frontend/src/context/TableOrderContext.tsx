@@ -41,6 +41,13 @@ type TableOrderContextValue = {
   /** 테이블 삭제(숨김 처리) — 사용 중이거나 마지막 번호가 아니면 서버가 409로 거부한다.
    * 성공(404=이미 지워짐 포함) 여부를 돌려준다 — 일괄 삭제 시 호출자가 어디서 멈출지 판단하는 데 쓴다 */
   deleteTable: (tableId: number) => Promise<boolean>
+  /** O25 자리 이동(명세서 밖 파일럿) — sourceTableId의 손님을 targetTableId(빈 자리)로 옮긴다. QR은 그대로라
+   * 손님은 재스캔이 필요 없다. 대상이 이미 사용 중이면 409 — 실패 사유를 그대로 보여주고 false를 돌려준다.
+   * 세션이 옮겨가면 그 세션 주문의 소속 테이블이 통째로 바뀌므로 부분 갱신 대신 전체를 다시 읽는다 */
+  moveSession: (sourceTableId: number, targetTableId: number) => Promise<boolean>
+  /** O26 자리 합석(명세서 밖 파일럿) — sourceTableId의 모든 주문을 targetTableId 세션으로 옮기고 source 세션을
+   * 종료한다(그 손님 폰은 이후 재스캔 안내). 두 테이블 모두 사용 중이어야 한다(409). */
+  mergeTables: (sourceTableId: number, targetTableId: number) => Promise<boolean>
 }
 
 const TableOrderContext = createContext<TableOrderContextValue | null>(null)
@@ -200,6 +207,38 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
     return true
   }
 
+  const moveSession: TableOrderContextValue['moveSession'] = async (sourceTableId, targetTableId) => {
+    const res = await apiFetch(`/api/v1/admin/tables/${sourceTableId}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetTableId }),
+    })
+    if (!res.ok) {
+      const body: { error?: { message?: string } } | null = await res.json().catch(() => null)
+      setError(body?.error?.message ?? `자리를 이동하지 못했어요 (${res.status})`)
+      return false
+    }
+    setError(null)
+    await refetch()
+    return true
+  }
+
+  const mergeTables: TableOrderContextValue['mergeTables'] = async (sourceTableId, targetTableId) => {
+    const res = await apiFetch('/api/v1/admin/tables/merge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceTableId, targetTableId }),
+    })
+    if (!res.ok) {
+      const body: { error?: { message?: string } } | null = await res.json().catch(() => null)
+      setError(body?.error?.message ?? `자리를 합석하지 못했어요 (${res.status})`)
+      return false
+    }
+    setError(null)
+    await refetch()
+    return true
+  }
+
   const placeUnplacedTable: TableOrderContextValue['placeUnplacedTable'] = async (tableId) => {
     const placed = tables.filter((t) => t.posX != null && t.posY != null) as (TableStatusInfo & {
       posX: number
@@ -222,6 +261,8 @@ export function TableOrderProvider({ children }: { children: ReactNode }) {
         placeUnplacedTable,
         commitGridPosition,
         deleteTable,
+        moveSession,
+        mergeTables,
       }}
     >
       {children}

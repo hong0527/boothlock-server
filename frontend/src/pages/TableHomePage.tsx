@@ -32,7 +32,8 @@ type GridPos = { row: number | null; col: number | null }
 type DragState = { tableId: number; clientX: number; clientY: number; target: { row: number; col: number } }
 
 export default function TableHomePage() {
-  const { tables, error, loaded, refetch, addTable, commitGridPosition, deleteTable } = useTableOrders()
+  const { tables, error, loaded, refetch, addTable, commitGridPosition, deleteTable, moveSession, mergeTables } =
+    useTableOrders()
   const [editMode, setEditMode] = useState(false)
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
   // 편집 모드 중 드래그로 바꾼(아직 저장 안 한) 행/열 — "저장하기"를 눌러야 서버에 반영된다
@@ -41,6 +42,10 @@ export default function TableHomePage() {
   // 일괄 삭제 선택 모드 — "테이블 삭제"를 누르면 켜진다. 편집 모드(드래그 배치)와 동시에 켤 수 없다
   const [deleteMode, setDeleteMode] = useState(false)
   const [selectedForDelete, setSelectedForDelete] = useState<ReadonlySet<number>>(() => new Set())
+  // 자리 이동·합석 — 편집 모드 밖에서만 켤 수 있다(카드를 눌러 두 테이블을 순서대로 고르는 2단계 선택).
+  // 'move'는 대상이 빈 자리여야 하고, 'merge'는 둘 다 사용 중이어야 한다 — 첫 클릭에서 바로 걸러 안내한다
+  const [relocateMode, setRelocateMode] = useState<'move' | 'merge' | null>(null)
+  const [relocateSource, setRelocateSource] = useState<number | null>(null)
   // 추가·삭제·배치 저장 중 연타를 막는다 — 안 막으면 "테이블 추가"는 두 개 생기고, 삭제는 DELETE가 두 번 나간다
   const [tableActionBusy, setTableActionBusy] = useState(false)
   const [tableError, setTableError] = useState<string | null>(null)
@@ -158,6 +163,62 @@ export default function TableHomePage() {
     } else {
       setSelectedForDelete(new Set(tables.filter((t) => !succeededIds.has(t.id)).map((t) => t.id)))
     }
+  }
+
+  const enterRelocateMode = (mode: 'move' | 'merge') => {
+    setRelocateMode(mode)
+    setRelocateSource(null)
+    setTableError(null)
+  }
+
+  const cancelRelocateMode = () => {
+    setRelocateMode(null)
+    setRelocateSource(null)
+  }
+
+  // 자리 이동·합석 카드 클릭 — 첫 클릭은 source를 고르고, 둘째 클릭에서 실행한다.
+  // 'move'는 source가 사용 중이어야 하고 target은 비어 있어야 한다(반대면 안내만 하고 모드는 유지).
+  // 'merge'는 둘 다 사용 중이어야 한다. 같은 카드를 다시 누르면 선택을 취소한다(다시 고를 수 있게)
+  const handleRelocateClick = async (tableId: number) => {
+    if (!relocateMode || tableActionBusy) return
+    const clicked = tables.find((t) => t.id === tableId)
+    if (!clicked) return
+
+    if (relocateSource === null) {
+      if (clicked.status !== 'OCCUPIED') {
+        setTableError('먼저 손님이 있는 테이블을 골라주세요.')
+        return
+      }
+      setRelocateSource(tableId)
+      setTableError(null)
+      return
+    }
+    if (relocateSource === tableId) {
+      setRelocateSource(null)
+      return
+    }
+
+    const needsEmptyTarget = relocateMode === 'move'
+    if (needsEmptyTarget ? clicked.status !== 'EMPTY' : clicked.status !== 'OCCUPIED') {
+      setTableError(needsEmptyTarget ? '비어 있는 테이블로만 이동할 수 있어요.' : '합석은 사용 중인 테이블끼리만 가능해요.')
+      return
+    }
+
+    const confirmMessage =
+      relocateMode === 'move'
+        ? null // 되돌리기 쉬운 동작이라 한 번 더 묻지 않는다(다시 이동하면 그만이다)
+        : '두 테이블의 주문을 하나로 합칠까요? 옮겨지는 테이블 손님의 화면은 재스캔 안내로 바뀌어요.'
+    if (confirmMessage && !window.confirm(confirmMessage)) return
+
+    setTableActionBusy(true)
+    const ok =
+      relocateMode === 'move' ? await moveSession(relocateSource, tableId) : await mergeTables(relocateSource, tableId)
+    setTableActionBusy(false)
+    if (ok) {
+      setRelocateSource(null)
+      setRelocateMode(null)
+    }
+    // 실패하면 에러 문구만 띄우고(moveSession/mergeTables가 이미 setError) 모드는 유지 — 다른 테이블로 다시 시도할 수 있게
   }
 
   // 포인터 위치를 그리드 컨테이너 기준 칸(행/열)으로 바꾼다 — 카드 중심이 손가락/커서 아래 오게 카드 절반만큼 보정.
@@ -308,17 +369,29 @@ export default function TableHomePage() {
               저장하기
             </PillButton>
           </>
+        ) : relocateMode ? (
+          <>
+            <span className="flex items-center px-2 text-sm text-neutral-500">
+              {relocateSource === null
+                ? relocateMode === 'move'
+                  ? '옮길 손님이 있는 테이블을 먼저 고르세요'
+                  : '합칠 두 테이블 중 하나를 먼저 고르세요'
+                : relocateMode === 'move'
+                  ? '이동할 빈 테이블을 고르세요'
+                  : '합석할 나머지 테이블을 고르세요'}
+            </span>
+            <PillButton type="button" onClick={cancelRelocateMode} disabled={tableActionBusy}>
+              취소
+            </PillButton>
+          </>
         ) : (
           <>
-            {/* TODO: 자리 이동·자리 합석 — 스키마·동시성 설계가 더 필요해 아직 기능이 없다. 눌리지도 않는 버튼이 보이면
-                운영자가 되는 기능인 줄 알고 헷갈려 해서(2026-09-30 파일럿 피드백) 기능이 생길 때까지 숨긴다.
-            <PillButton type="button" disabled>
+            <PillButton type="button" onClick={() => enterRelocateMode('move')} disabled={tables.length < 2}>
               자리 이동
             </PillButton>
-            <PillButton type="button" disabled>
+            <PillButton type="button" onClick={() => enterRelocateMode('merge')} disabled={tables.length < 2}>
               자리 합석
             </PillButton>
-            */}
             <PillButton type="button" onClick={() => setEditMode(true)}>
               테이블 편집
             </PillButton>
@@ -380,14 +453,15 @@ export default function TableHomePage() {
               table={table}
               editMode={editMode}
               onClick={() => {
-                if (deleteMode) toggleDeleteSelect(table.id)
+                if (relocateMode) void handleRelocateClick(table.id)
+                else if (deleteMode) toggleDeleteSelect(table.id)
                 else if (!editMode) setSelectedTableId(table.id)
               }}
               now={now}
               onDragStart={editMode && !deleteMode ? startDrag(table.id) : undefined}
               dragging={drag?.tableId === table.id}
-              selectMode={deleteMode}
-              selected={selectedForDelete.has(table.id)}
+              selectMode={deleteMode || relocateMode !== null}
+              selected={deleteMode ? selectedForDelete.has(table.id) : relocateSource === table.id}
             />
           </div>
         ))}
