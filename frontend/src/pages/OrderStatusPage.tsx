@@ -69,7 +69,7 @@ export default function OrderStatusPage() {
   const activeTabRef = useRef<ViewTab>('ACTIVE')
   // 지금 앉은 손님들의 완료 주문 — "추가 주문" 배지 판정용. 완료 탭 전체(하루 누적)는 그 탭을 볼 때만 받는다
   const [openSessionDone, setOpenSessionDone] = useState<OrderSummary[]>([])
-  // 완료·취소 탭을 한 번이라도 불러왔는가 — 안 불러온 탭은 건수를 표시하지 않는다(0건으로 오해하지 않게)
+  // 완료·취소 탭을 한 번이라도 불러왔는가 — 누른 직후 응답 전에는 건수를 표시하지 않는다(0건으로 오해하지 않게)
   const [loadedHistoryTabs, setLoadedHistoryTabs] = useState<ReadonlySet<OrderStatus>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
   // 버튼 작업(완료·취소·복구·호출확인) 오류는 따로 둔다 — error는 폴링이 성공할 때마다 지워서, 한데 두면
@@ -188,8 +188,11 @@ export default function OrderStatusPage() {
     [ordersByStatus, activeTab],
   )
 
+  // 완료·취소 건수는 그 탭을 보고 있을 때만 — 그 목록은 볼 때만 받으므로, 다른 탭에서 보이는 숫자는 마지막으로 본 값에 멈춰 틀린다
   const tabCount = (tab: ViewTab) =>
-    tab === 'ACTIVE' ? counts.PENDING_APPROVAL + counts.RECEIVED : loadedHistoryTabs.has(tab) ? counts[tab] : ''
+    tab === 'ACTIVE'
+      ? counts.PENDING_APPROVAL + counts.RECEIVED
+      : tab === activeTab && loadedHistoryTabs.has(tab) ? counts[tab] : ''
 
   // 완료·취소 탭으로 가면 그 탭 목록을 바로 받는다(폴링 주기를 기다리지 않게). 이후 그 탭을 보는 동안은 폴링이 같이 받는다
   const selectTab = (tab: ViewTab) => {
