@@ -26,6 +26,7 @@ import {
 import { onResume } from '../lib/onResume'
 import { isAlertPreferred, subscribeAlertPreference, turnAlertsOff, turnAlertsOn } from '../lib/staffAlert'
 import AlertSwitch from '../components/AlertSwitch'
+import { fetchServedItems, setItemServed, withPendingToggles, type ServedByOrder } from '../lib/servedItems'
 
 // 서버(O10)에서 읽어 오는 상태 — 승인대기를 맨 앞에 둔다(첫 응답의 calls·새 주문 알림 기준, 아래 refetchAll)
 const TABS: { status: OrderStatus; label: string }[] = [
@@ -83,6 +84,13 @@ export default function OrderStatusPage() {
 
   const pollGuard = useRef(createPollGuard())
 
+  // 진행 카드의 메뉴별 "나감" 체크 — 같은 부스 기기끼리 서버(메모리)로 공유한다. 폴링으로 받은 서버 값과,
+  // 아직 응답을 못 받은 내 체크(key "orderId:itemId")를 따로 두고 그릴 때 합친다 — 요청 중에 도착한 폴링 응답이 방금 누른 체크를 되돌리지 않게
+  const [servedFromServer, setServedFromServer] = useState<ServedByOrder>(() => new Map())
+  const [pendingToggles, setPendingToggles] = useState<ReadonlyMap<string, { orderId: number; itemId: number; served: boolean }>>(
+    () => new Map(),
+  )
+
   // 알림 빠른 켜고 끔 — 설정은 safeStorage에 남겨 새로고침해도 유지한다(설정 화면의 알림 설정과 같은 값 하나).
   // 새 주문·호출 감시와 알림음은 이 화면이 아니라 앱 공통 StaffAlertWatcher가 한다 — 어느 직원 화면에서든 울리게
   const [alertOn, setAlertOn] = useState(() => isAlertPreferred())
@@ -105,11 +113,13 @@ export default function OrderStatusPage() {
       // 커질수록 폴링이 무거워져(저녁 부하) 그 탭을 보고 있을 때만 받는다
       const viewing = activeTabRef.current
       const historyStatus: OrderStatus | null = viewing === 'ACTIVE' ? null : viewing
-      const [pendingRes, receivedRes, openDoneRes, historyRes] = await Promise.all([
+      const [pendingRes, receivedRes, openDoneRes, historyRes, served] = await Promise.all([
         fetchDashboard('PENDING_APPROVAL'),
         fetchDashboard('RECEIVED'),
         fetchDashboard('DONE', true),
         historyStatus ? fetchDashboard(historyStatus) : Promise.resolve(null),
+        // 체크는 보조 정보다 — 이것만 실패했다고 주문 목록까지 "불러오지 못했어요"가 되면 안 된다. 실패하면 직전 값을 둔다
+        fetchServedItems().catch(() => null),
       ])
       if (!pollGuard.current.isLatest(runId) || !mountedRef.current) return
       setOrdersByStatus((prev) => ({
@@ -119,6 +129,7 @@ export default function OrderStatusPage() {
         ...(historyStatus && historyRes ? { [historyStatus]: historyRes.orders } : {}),
       }))
       setOpenSessionDone(openDoneRes.orders)
+      if (served) setServedFromServer(served)
       if (historyStatus && historyRes) {
         setLoadedHistoryTabs((prev) => (prev.has(historyStatus) ? prev : new Set([...prev, historyStatus])))
       }
@@ -209,6 +220,36 @@ export default function OrderStatusPage() {
     for (const order of [...Object.values(ordersByStatus).flat(), ...openSessionDone]) byId.set(order.orderId, order)
     return additionalOrderIds([...byId.values()])
   }, [ordersByStatus, openSessionDone])
+
+  const servedByOrder = useMemo(() => withPendingToggles(servedFromServer, pendingToggles), [servedFromServer, pendingToggles])
+
+  // "나감" 체크 — 바로 화면에 반영하고 서버에 보낸다. 실패하면 되돌리고 알린다(다음 폴링이 서버 값으로 맞춘다)
+  const toggleServed = async (orderId: number, itemId: number, served: boolean) => {
+    const key = `${orderId}:${itemId}`
+    setPendingToggles((prev) => new Map(prev).set(key, { orderId, itemId, served }))
+    let ok = false
+    try {
+      const res = await setItemServed(orderId, itemId, served)
+      ok = res.ok
+      if (ok) {
+        const body: { orderId: number; itemIds: number[] } = await res.json()
+        setServedFromServer((prev) => new Map(prev).set(body.orderId, new Set(body.itemIds)))
+        setActionError(null)
+      } else {
+        setActionError(`나간 메뉴 체크를 저장하지 못했어요 (${res.status})`)
+      }
+    } catch {
+      if (getAuthToken()) setActionError('나간 메뉴 체크를 저장하지 못했어요. 네트워크 상태를 확인해주세요.')
+    } finally {
+      // 같은 항목을 그 사이 다시 눌렀으면 그 요청의 대기값은 남긴다
+      setPendingToggles((prev) => {
+        if (prev.get(key)?.served !== served) return prev
+        const next = new Map(prev)
+        next.delete(key)
+        return next
+      })
+    }
+  }
 
   // O15 호출 확인 — 성공하면 서버 calls에서 빠진다. 폴링을 기다리지 않고 바로 지운다(멱등이라 중복 눌림도 안전)
   const acknowledgeCall = async (callId: number) => {
@@ -388,6 +429,8 @@ export default function OrderStatusPage() {
             onRestore={restoreOrder}
             onRefundDone={isAdmin ? refundDone : undefined}
             additionalOrder={additionalIds.has(order.orderId)}
+            servedItemIds={servedByOrder.get(order.orderId)}
+            onToggleServed={toggleServed}
           />
         ))}
         {visibleOrders.length === 0 && !error && (

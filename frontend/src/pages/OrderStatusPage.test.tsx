@@ -400,8 +400,8 @@ async function pollWith(pending: OrderSummary[], calls: { callId: number; tableL
   hooks.effects.splice(0)
   hooks.mounted = false
   render()
-  // 폴링 조회(승인대기·진행·지금 세션 완료) 셋이 모두 나간 뒤, 응답 파싱(json)·상태 반영까지 끝나도록 한 틱 더 기다린다
-  await vi.waitFor(() => expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(3))
+  // 폴링 조회(승인대기·진행·지금 세션 완료·나간 메뉴 체크) 넷이 모두 나간 뒤, 응답 파싱(json)·상태 반영까지 끝나도록 한 틱 더 기다린다
+  await vi.waitFor(() => expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(4))
   await new Promise((resolve) => setTimeout(resolve, 10))
 }
 
@@ -489,7 +489,7 @@ describe('알림 — 주문현황의 몫(빠른 켜고 끔·탭 제목). 새 주
     hooks.effects.splice(0)
     hooks.mounted = false
     render()
-    await vi.waitFor(() => expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(4))
     unmount()
     expect(fakeDocument.title).toBe('부스락')
     release()
