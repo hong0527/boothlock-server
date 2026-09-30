@@ -64,4 +64,49 @@ public interface TableCheckoutOrderRepository extends Repository<OrderEntity, Lo
             @Param("reason") String reason,
             @Param("canceledBy") String canceledBy,
             @Param("canceledAt") LocalDateTime canceledAt);
+
+    /**
+     * O6 퇴실 때 면제할 자릿세 주문 — 종료하는 세션에 살아 있는 메뉴 주문이 하나도 없으면(주문했다가 "안 먹겠다"로 거절·취소)
+     * 그 세션의 미입금 자릿세 전용 주문(살아 있는 자릿세 항목만 남은 DONE+UNPAID)을 고른다. 음식을 하나라도 먹었으면 대상이 아니다.
+     * 자릿세는 조리할 게 없어 처음부터 DONE이라 자동 거절(승인대기)·자동 완료(접수) 어느 쪽에도 안 걸려, 비운 뒤에도
+     * 완료 탭에 "자릿세·미결제"로 영영 남았다. 입금된 자릿세는 건드리지 않는다(돌려줄지는 운영자가 O13으로 정한다).
+     * 고르기와 취소를 나눈다 — MySQL은 UPDATE 대상 테이블을 같은 문장의 서브쿼리에서 읽지 못한다(1093)
+     */
+    @Query("""
+            select o.id from OrderEntity o
+             where o.boothId = :boothId
+               and o.sessionId in :sessionIds
+               and o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.DONE
+               and o.paymentStatus = com.boothlock.boothlock_server.global.domain.PaymentStatus.UNPAID
+               and exists (select 1 from OrderEntity f join f.items fi
+                            where f = o and fi.canceled = false
+                              and fi.itemType = com.boothlock.boothlock_server.order.domain.OrderItemType.SEAT_FEE)
+               and not exists (select 1 from OrderEntity x join x.items xi
+                                where x = o and xi.canceled = false
+                                  and xi.itemType <> com.boothlock.boothlock_server.order.domain.OrderItemType.SEAT_FEE)
+               and not exists (select 1 from OrderEntity m join m.items mi
+                                where m.sessionId = o.sessionId and m.boothId = o.boothId
+                                  and m.status <> com.boothlock.boothlock_server.global.domain.OrderStatus.CANCELED
+                                  and mi.canceled = false
+                                  and mi.itemType = com.boothlock.boothlock_server.order.domain.OrderItemType.MENU)
+            """)
+    List<Long> findWaivableSeatFeeOrderIdsOfSessions(@Param("sessionIds") List<Long> sessionIds, @Param("boothId") Long boothId);
+
+    /** 위에서 고른 자릿세 주문을 면제(CANCELED)한다 — 조건을 다시 걸어 그 사이 입금 확인된 건은 건드리지 않는다 */
+    @Modifying(flushAutomatically = true)
+    @Query("""
+            update OrderEntity o
+               set o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.CANCELED,
+                   o.cancelReason = :reason,
+                   o.canceledBy = :canceledBy,
+                   o.canceledAt = :canceledAt
+             where o.id in :orderIds
+               and o.status = com.boothlock.boothlock_server.global.domain.OrderStatus.DONE
+               and o.paymentStatus = com.boothlock.boothlock_server.global.domain.PaymentStatus.UNPAID
+            """)
+    int waiveSeatFeeOrders(
+            @Param("orderIds") List<Long> orderIds,
+            @Param("reason") String reason,
+            @Param("canceledBy") String canceledBy,
+            @Param("canceledAt") LocalDateTime canceledAt);
 }

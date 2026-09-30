@@ -25,6 +25,8 @@ export type TableCheckoutResult = {
   completedOrderCount?: number
   /** 이 퇴실("테이블 비우기")로 자동 거절된 승인대기(O28) 주문 수(v0.6.12). 입금된 건은 '환불필요'로 넘어간다 */
   rejectedPendingCount?: number
+  /** 메뉴 주문이 하나도 안 남아(전부 거절·취소) 함께 면제된 미입금 자릿세 주문 수 */
+  waivedSeatFeeCount?: number
   warning?: string
 }
 

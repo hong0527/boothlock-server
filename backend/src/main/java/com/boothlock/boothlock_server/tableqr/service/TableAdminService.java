@@ -81,6 +81,8 @@ public class TableAdminService {
     /** O6 퇴실 시 남은 승인대기(O28) 주문 자동 거절 — cancel_reason VARCHAR(100)·canceled_by VARCHAR(50) 한도 안 (v0.6.10) */
     private static final String CHECKOUT_AUTO_REJECT_REASON = "테이블 퇴실로 자동 거절";
     private static final String CHECKOUT_AUTO_REJECT_BY = "SYSTEM";
+    /** O6 퇴실 시 메뉴 없이 남은 미입금 자릿세 면제 사유 (cancel_reason VARCHAR(100)) */
+    private static final String CHECKOUT_SEAT_FEE_WAIVE_REASON = "주문 없이 퇴실해 자릿세 면제";
 
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
@@ -509,6 +511,15 @@ public class TableAdminService {
         if (requireSettled && rejectedPendingCount > 0) {
             throw new CheckoutPendingApprovalException(rejectedPendingCount);
         }
+        // 주문했다가 "안 먹겠다"로 메뉴가 전부 거절·취소된 세션은 자릿세도 면제한다 — 자릿세 주문은 처음부터 DONE이라 위 거절·아래 자동 완료
+        // 어느 쪽에도 안 걸려, 비운 뒤 완료 탭에 "자릿세·미결제"로 영영 남았다. 거절 뒤에 골라야 방금 거절한 메뉴가 빠진 상태로 판정된다.
+        // requireSettled 경로는 미입금 자릿세가 있으면 위에서 이미 409라 여기 대상이 없다. 면제한 건은 위 미결제 집계에서 뺀다
+        List<Long> waivableSeatFeeIds = endingSessionIds.isEmpty() ? List.of()
+                : tableCheckoutOrderRepository.findWaivableSeatFeeOrderIdsOfSessions(endingSessionIds, staffBooth.getId());
+        int waivedSeatFeeCount = waivableSeatFeeIds.isEmpty() ? 0
+                : tableCheckoutOrderRepository.waiveSeatFeeOrders(
+                        waivableSeatFeeIds, CHECKOUT_SEAT_FEE_WAIVE_REASON, CHECKOUT_AUTO_REJECT_BY, now);
+        unpaidOrderCount -= waivedSeatFeeCount;
         table.vacate();
         int completedOrderCount = endingSessionIds.isEmpty() ? 0
                 : tableCheckoutOrderRepository.completeReceivedOrdersOfSessions(endingSessionIds, staffBooth.getId());
@@ -520,7 +531,7 @@ public class TableAdminService {
 
         String warning = unpaidOrderCount > 0 ? "미결제 주문 " + unpaidOrderCount + "건 있음" : null;
         return new TableCheckoutResponse(unpaidOrderCount > 0, table.getId(), table.getLabel(), table.getStatus(),
-                completedOrderCount, rejectedPendingCount, warning);
+                completedOrderCount, rejectedPendingCount, waivedSeatFeeCount, warning);
     }
 
     /**

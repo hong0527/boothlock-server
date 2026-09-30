@@ -10,6 +10,7 @@ import com.boothlock.boothlock_server.menu.repository.MenuRepository;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
+import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.order.repository.DailyCounterRepository;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
@@ -152,6 +153,28 @@ class TablePosApiTests {
         OrderEntity order = new OrderEntity(owner.getId(), sessionId, "X" + orderSeq, LocalDate.of(2020, 1, 1),
                 orderSeq, "idem-pos-" + orderSeq, 8000, false, now());
         order.startPendingApproval();
+        return orderRepository.save(order);
+    }
+
+    /** 첫 주문 때 자동으로 생기는 자릿세 전용 주문 — 조리할 게 없어 DONE+UNPAID로 시작한다(OrderWriter.saveSeatFeeOrder) */
+    private OrderEntity seatFeeOrder(BoothEntity owner, Long sessionId) {
+        orderSeq++;
+        OrderEntity order = new OrderEntity(owner.getId(), sessionId, "X" + orderSeq, LocalDate.of(2020, 1, 1),
+                orderSeq, null, 6000, false, now());
+        order.startAsNoCooking();
+        order.addItem(OrderItemEntity.seatFee(3000, 2));
+        return orderRepository.save(order);
+    }
+
+    /** 메뉴 항목이 든 주문 — pending이면 승인대기, 아니면 접수 */
+    private OrderEntity menuOrder(BoothEntity owner, Long sessionId, boolean pending) {
+        orderSeq++;
+        OrderEntity order = new OrderEntity(owner.getId(), sessionId, "X" + orderSeq, LocalDate.of(2020, 1, 1),
+                orderSeq, "idem-pos-" + orderSeq, 8000, false, now());
+        if (pending) {
+            order.startPendingApproval();
+        }
+        order.addItem(new OrderItemEntity(1L, "김치전", 8000, 1));
         return orderRepository.save(order);
     }
 
@@ -425,7 +448,8 @@ class TablePosApiTests {
                 .andReturn().getResponse().getContentAsString();
         // 프론트가 이미 받는 unpaidWarning은 유지하고 명세 O6의 id·label·status를 더한다. warning은 미결제 없으면 필드째 없다.
         // rejectedPendingCount(자동 거절한 승인대기 수)는 completedOrderCount처럼 0이어도 싣는다
-        assertEquals(Set.of("unpaidWarning", "id", "label", "status", "completedOrderCount", "rejectedPendingCount"),
+        assertEquals(Set.of("unpaidWarning", "id", "label", "status", "completedOrderCount", "rejectedPendingCount",
+                        "waivedSeatFeeCount"),
                 fieldNames(objectMapper.readTree(body)));
 
         TableSessionEntity ended = reloadSession(session.getId());
@@ -562,6 +586,73 @@ class TablePosApiTests {
         OrderEntity reloadedUnpaid = orderRepository.findById(unpaidPending.getId()).orElseThrow();
         assertEquals(OrderStatus.CANCELED, reloadedUnpaid.getStatus());
         assertEquals(PaymentStatus.UNPAID, reloadedUnpaid.getPaymentStatus());
+    }
+
+    /**
+     * 주문했다가 "안 먹겠다"로 비우기 — 메뉴(승인대기)는 자동 거절되고, 메뉴가 하나도 안 남았으니 미입금 자릿세도 면제된다.
+     * 예전엔 자릿세가 처음부터 DONE이라 거절·자동 완료 어디에도 안 걸려 완료 탭에 "자릿세·미결제"로 영영 남았다
+     */
+    @Test
+    void o6VacateWaivesUnpaidSeatFeeWhenNoMenuOrderRemains() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity seatFee = seatFeeOrder(booth, session.getId());
+        OrderEntity pendingMenu = menuOrder(booth, session.getId(), true);
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rejectedPendingCount").value(1))
+                .andExpect(jsonPath("$.waivedSeatFeeCount").value(1))
+                .andExpect(jsonPath("$.unpaidWarning").value(false))     // 면제한 자릿세는 미결제 경고에서 빠진다
+                .andExpect(jsonPath("$.warning").doesNotExist());
+
+        assertEquals(OrderStatus.CANCELED, orderRepository.findById(pendingMenu.getId()).orElseThrow().getStatus());
+        OrderEntity waived = orderRepository.findById(seatFee.getId()).orElseThrow();
+        assertEquals(OrderStatus.CANCELED, waived.getStatus());
+        assertEquals(PaymentStatus.UNPAID, waived.getPaymentStatus());
+        assertEquals("주문 없이 퇴실해 자릿세 면제", waived.getCancelReason());
+        assertEquals("SYSTEM", waived.getCanceledBy());
+    }
+
+    /** 음식을 먹었으면(살아 있는 메뉴 주문이 있으면) 자릿세는 그대로 미결제로 남는다 — 비우기는 받을 돈을 없애지 않는다 */
+    @Test
+    void o6VacateKeepsSeatFeeWhenAMenuOrderRemains() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity seatFee = seatFeeOrder(booth, session.getId());
+        menuOrder(booth, session.getId(), false);          // 접수(승인됨) — 먹은 주문
+        menuOrder(booth, session.getId(), true);           // 추가 주문은 승인대기 — 거절돼도 위 주문이 남는다
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rejectedPendingCount").value(1))
+                .andExpect(jsonPath("$.waivedSeatFeeCount").value(0))
+                .andExpect(jsonPath("$.warning").value("미결제 주문 2건 있음"));
+
+        OrderEntity kept = orderRepository.findById(seatFee.getId()).orElseThrow();
+        assertEquals(OrderStatus.DONE, kept.getStatus());
+        assertEquals(PaymentStatus.UNPAID, kept.getPaymentStatus());
+    }
+
+    /** 이미 입금된 자릿세는 면제하지 않는다 — 돌려줄지는 운영자가 O13으로 정한다 */
+    @Test
+    void o6VacateDoesNotTouchPaidSeatFee() throws Exception {
+        TableEntity table = table(booth, "A-1", true);
+        TableSessionEntity session = openSession(table, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        OrderEntity seatFee = seatFeeOrder(booth, session.getId());
+        assertEquals(1, orderRepository.markPaid(seatFee.getId(), booth.getId(), PaymentMethod.BANK_TRANSFER, "admin", now()));
+        menuOrder(booth, session.getId(), true);
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", table.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.waivedSeatFeeCount").value(0));
+
+        OrderEntity paid = orderRepository.findById(seatFee.getId()).orElseThrow();
+        assertEquals(OrderStatus.DONE, paid.getStatus());
+        assertEquals(PaymentStatus.PAID, paid.getPaymentStatus());
     }
 
     /** 승인대기가 없으면 rejectedPendingCount는 0으로 실린다(필드가 빠지지 않는다 — 프론트가 숫자로 읽는다) */

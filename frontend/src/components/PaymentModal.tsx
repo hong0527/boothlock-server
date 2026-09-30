@@ -603,6 +603,9 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     if (rejectedPending > 0) {
       notices.push(`승인대기 주문 ${rejectedPending}건이 자동 거절됐어요. 입금확인된 건은 주문현황에서 '환불필요'로 확인해 주세요.`)
     }
+    if ((result?.waivedSeatFeeCount ?? 0) > 0) {
+      notices.push('남은 메뉴 주문이 없어 자릿세도 면제(취소)됐어요.')
+    }
     if (notices.length > 0) window.alert(notices.join('\n'))
     onCheckedOut()
     return true

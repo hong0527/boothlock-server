@@ -10,8 +10,10 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  * completedOrderCount는 이 퇴실로 완료(DONE) 처리한 남은 접수 주문 수다(0이어도 싣는다).
  * rejectedPendingCount는 이 퇴실("테이블 비우기")로 자동 거절한 승인대기(O28) 주문 수다(0이어도 싣는다) — 운영자 화면이
  * "승인대기 N건이 거절됐다"고 알리는 데 쓴다. requireSettled=true면 승인대기가 있을 때 409라 여기는 늘 0이다.
+ * waivedSeatFeeCount는 메뉴 주문이 하나도 안 남아(전부 거절·취소) 함께 면제(취소)한 미입금 자릿세 주문 수다(0이어도 싣는다).
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record TableCheckoutResponse(boolean unpaidWarning, Long id, String label, TableStatus status,
-                                    int completedOrderCount, int rejectedPendingCount, String warning) {
+                                    int completedOrderCount, int rejectedPendingCount, int waivedSeatFeeCount,
+                                    String warning) {
 }
