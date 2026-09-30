@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import AddedToCartToast from '../../components/customer/AddedToCartToast'
 import CategoryTabs, { type MenuCategory } from '../../components/customer/CategoryTabs'
 import CustomerBottomNav from '../../components/customer/CustomerBottomNav'
 import CustomerTopBar from '../../components/customer/CustomerTopBar'
@@ -7,6 +8,7 @@ import StaffCallConfirmModal from '../../components/customer/StaffCallConfirmMod
 import { useCart } from '../../context/CartContext'
 import { customerApiFetch } from '../../lib/customerApiFetch'
 import { getSessionInfo } from '../../lib/customerSession'
+import { useAddedToCartToast } from '../../lib/useAddedToCartToast'
 import { useStaffCallModal } from '../../lib/useStaffCallModal'
 import type { CustomerMenuItem } from '../../types/customer'
 
@@ -18,6 +20,8 @@ const CATEGORY_ORDER: Record<string, number> = { MAIN: 0, SIDE: 1, DRINK: 2 }
 export default function MenuOrderPage() {
   const sessionInfo = getSessionInfo()
   const { addItem, totalQty } = useCart()
+  // 배지 숫자만으로는 육안으로 담겼는지 확인하기 어렵다는 피드백(2026-09-30) — 담을 때마다 잠깐 확인 토스트를 띄운다
+  const { entry: addedEntry, show: showAdded } = useAddedToCartToast()
 
   const [menus, setMenus] = useState<CustomerMenuItem[]>([])
   const [boothName, setBoothName] = useState(sessionInfo?.boothName ?? '')
@@ -74,7 +78,15 @@ export default function MenuOrderPage() {
 
       <div className="flex flex-col gap-4 px-6 py-5">
         {visibleMenus.map((menu) => (
-          <MenuListItem key={menu.id} menu={menu} orderingDisabled={!isOpen} onAdd={() => addItem(menu)} />
+          <MenuListItem
+            key={menu.id}
+            menu={menu}
+            orderingDisabled={!isOpen}
+            onAdd={() => {
+              addItem(menu)
+              showAdded(`${menu.name} 담았어요`)
+            }}
+          />
         ))}
         {visibleMenus.length === 0 && !error && (
           <p className="py-20 text-center text-body-1 text-neutral-400">메뉴가 없어요.</p>
@@ -82,6 +94,7 @@ export default function MenuOrderPage() {
       </div>
 
       <CustomerBottomNav cartCount={totalQty} onCallStaff={openCallConfirm} />
+      <AddedToCartToast entry={addedEntry} />
 
       {showCallConfirm && (
         <StaffCallConfirmModal onConfirm={handleCallStaff} onCancel={closeCallConfirm} />
