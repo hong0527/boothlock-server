@@ -119,7 +119,16 @@ public class MenuImageUploadService {
 
         try {
             byte[] bytes = file.getBytes();
-            if (isSvg(bytes) || !isAllowedImage(bytes)) {
+            if (isSvg(bytes)) {
+                throw new InvalidRequestException("지원하지 않는 파일 형식입니다.");
+            }
+            // JDK 기본 ImageIO는 WebP 디코더가 없다(추가 플러그인 의존성 없음, 2026-09-29 실측 —
+            // 매직바이트만 보고 통과시키면 decode() 단계에서 리더를 못 찾아 항상 실패해 "지원하지 않는 파일
+            // 형식"이 뜨는데, 원인이 확장자가 아니라 코덱 부재라 안내가 안 된다). 오해 없게 여기서 바로 끊는다.
+            if (isWebp(bytes)) {
+                throw new InvalidRequestException("웹피(WebP) 이미지는 지원하지 않습니다. JPG 또는 PNG로 다시 저장해 올려주세요.");
+            }
+            if (!isAllowedImage(bytes)) {
                 throw new InvalidRequestException("지원하지 않는 파일 형식입니다.");
             }
             return bytes;
@@ -198,8 +207,9 @@ public class MenuImageUploadService {
         return target;
     }
 
+    /** WebP는 별도로 먼저 걸러 전용 안내를 준다(readAndValidate 참고) — 여기 남으면 의미가 없다 */
     private boolean isAllowedImage(byte[] bytes) {
-        return isJpeg(bytes) || isPng(bytes) || isWebp(bytes);
+        return isJpeg(bytes) || isPng(bytes);
     }
 
     private boolean isJpeg(byte[] bytes) {

@@ -142,6 +142,28 @@ class MenuUploadApiTests {
                 .andExpect(jsonPath("$.error.message").value("지원하지 않는 파일 형식입니다."));
     }
 
+    /**
+     * WebP는 매직바이트로는 진짜 이미지지만, JDK 기본 ImageIO에는 WebP 리더가 없어(추가 의존성 없음,
+     * 2026-09-29 실측) 디코딩 자체가 항상 실패한다 — 그래서 decode() 단계가 아니라 검증 단계에서
+     * 전용 안내로 먼저 끊는다(MenuImageUploadService.readAndValidate 참고).
+     * 아래 바이트는 Pillow로 만든 실제 200x150 WebP 원본(RIFF/WEBP 헤더 포함)이다.
+     */
+    @Test
+    void rejectsWebpWithDedicatedMessage() throws Exception {
+        byte[] webp = java.util.Base64.getDecoder().decode(
+                "UklGRowAAABXRUJQVlA4IIAAAABwCgCdASrIAJYAPm02mUmkIyKhIEgAgA2JaW7hdqlwH4AAAJ7Xoq4QZBDVUmu20XCDIIaqk122"
+                + "i4QZBDVUmu20XCDIIaqk122i4QZBDVUmu20XCDIIaqk122i30AD+/3A9///kFywuuRr//8gP+QH/ID/+PimZpRyCAgAAAAAAAA==");
+        MockMultipartFile file = new MockMultipartFile("file", "photo.webp", "image/webp", webp);
+
+        mockMvc.perform(multipart("/api/v1/admin/uploads")
+                        .file(file)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.error.message").value(
+                        "웹피(WebP) 이미지는 지원하지 않습니다. JPG 또는 PNG로 다시 저장해 올려주세요."));
+    }
+
     @Test
     void rejectsMissingAuthorizationBeforeSavingFile() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
