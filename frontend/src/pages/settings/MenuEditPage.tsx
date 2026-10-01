@@ -42,6 +42,7 @@ export default function MenuEditPage() {
   const [previewUrl, setPreviewUrl] = useState<string | undefined>(undefined)
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // 등록 도중 저장(POST) 성공 + 품절 반영(PATCH) 실패 시, 재시도가 같은 이름으로 또 POST하지 않도록
   const [createdId, setCreatedId] = useState<number | null>(null)
@@ -179,6 +180,24 @@ export default function MenuEditPage() {
     }
   }
 
+  // 삭제는 되돌릴 수 없어 한 번 더 묻는다. 지난 주문 내역은 메뉴명·가격이 따로 남아 있어 영향이 없다
+  const handleDelete = async () => {
+    if (!editingId || saving || deleting) return
+    if (!window.confirm(`"${name}" 메뉴를 삭제할까요?\n삭제하면 되돌릴 수 없어요. 지난 주문 내역은 그대로 남아요.`)) return
+    setError(null)
+    setDeleting(true)
+    try {
+      const res = await apiFetch(`/api/v1/admin/menus/${editingId}`, { method: 'DELETE' })
+      // 404 = 다른 기기에서 이미 삭제했다 — 목록으로 돌아가면 같은 결과다
+      if (!res.ok && res.status !== 404) throw new Error(`삭제에 실패했어요 (${res.status})`)
+      navigate(listPath)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '삭제에 실패했어요.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const displayImage = previewUrl ?? imageUrl
 
   return (
@@ -265,9 +284,20 @@ export default function MenuEditPage() {
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
-        <PrimaryButton type="submit" disabled={saving || uploading} className="mt-2 disabled:opacity-40">
+        <PrimaryButton type="submit" disabled={saving || uploading || deleting} className="mt-2 disabled:opacity-40">
           {uploading ? '사진 업로드 중...' : saving ? '저장 중...' : '저장하기'}
         </PrimaryButton>
+
+        {editingId && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={saving || deleting}
+            className="h-[60px] w-full rounded-xl border border-red-200 bg-white text-base leading-[1.5] tracking-[-0.04em] text-red-600 disabled:opacity-40"
+          >
+            {deleting ? '삭제 중...' : '메뉴 삭제'}
+          </button>
+        )}
       </form>
     </div>
   )

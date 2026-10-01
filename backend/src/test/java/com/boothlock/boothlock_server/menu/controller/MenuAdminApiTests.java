@@ -26,6 +26,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -449,6 +450,54 @@ class MenuAdminApiTests {
                         .content(objectMapper.writeValueAsString(Map.of("visible", false))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void deleteMenuRemovesItAndFreesTheName() throws Exception {
+        MenuEntity menu = menuRepository.save(new MenuEntity(booth, "김치찌개", 9000, null, null, true));
+
+        mockMvc.perform(delete("/api/v1/admin/menus/{menuId}", menu.getId())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+
+        assertThat(menuRepository.findById(menu.getId())).isEmpty();
+        // 같은 이름으로 다시 등록할 수 있다 — 부스 내 이름 유니크 제약이 지운 행에 붙잡히지 않는다
+        mockMvc.perform(post("/api/v1/admin/menus")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("name", "김치찌개", "price", 9500))))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void deleteMenuNotFoundWhenAlreadyDeleted() throws Exception {
+        mockMvc.perform(delete("/api/v1/admin/menus/{menuId}", 999999L)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void deleteMenuNotFoundForOtherBoothAndKeepsIt() throws Exception {
+        MenuEntity menu = menuRepository.save(new MenuEntity(otherBooth, "타코", 7000, null, null, true));
+
+        mockMvc.perform(delete("/api/v1/admin/menus/{menuId}", menu.getId())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+
+        assertThat(menuRepository.findById(menu.getId())).isPresent();
+    }
+
+    @Test
+    void deleteMenuRequiresAuth() throws Exception {
+        MenuEntity menu = menuRepository.save(new MenuEntity(booth, "김치찌개", 9000, null, null, true));
+
+        mockMvc.perform(delete("/api/v1/admin/menus/{menuId}", menu.getId()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+
+        assertThat(menuRepository.findById(menu.getId())).isPresent();
     }
 
     @Test
