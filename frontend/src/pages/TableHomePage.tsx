@@ -17,7 +17,7 @@ import { useNow } from '../lib/useNow'
 import { shouldShowTableEmptyState } from '../lib/tableEmptyState'
 import { readApiError } from '../lib/apiError'
 import { getAuthToken } from '../lib/auth'
-import { moveTable } from '../lib/orderActions'
+import { mergeTable, moveTable } from '../lib/orderActions'
 import { compareTableLabels, displayTableLabel } from '../lib/tableLabel'
 import type { TableStatusInfo } from '../types/table'
 
@@ -33,6 +33,49 @@ type GridPos = { row: number | null; col: number | null }
 // (렌더 중 gridRef.current를 읽지 않기 위해) — clientX/Y는 커서를 그대로 따라가는 미리보기용 원시 좌표
 type DragState = { tableId: number; clientX: number; clientY: number; target: { row: number; col: number } }
 
+type SeatMode = 'move' | 'merge'
+
+/** 자리 이동·합석의 문구와 요청 — 클릭 흐름(출발 → 도착)은 같고 도착 조건과 서버 동작만 다르다 */
+const SEAT_ACTIONS: Record<
+  SeatMode,
+  {
+    name: string
+    targetHasGuests: boolean
+    wrongTargetMessage: string
+    pickFromMessage: string
+    pickTargetMessage: (from: string) => string
+    confirmMessage: (from: string, dest: string) => string
+    doneMessage: (dest: string) => string
+    request: (from: TableStatusInfo, to: TableStatusInfo) => Promise<Response>
+  }
+> = {
+  move: {
+    name: '자리 이동',
+    targetHasGuests: false,
+    wrongTargetMessage: '빈 테이블로만 옮길 수 있어요. 손님 있는 테이블과 합치려면 자리 합석을 써주세요.',
+    pickFromMessage: '옮길 손님이 있는 테이블을 눌러주세요.',
+    pickTargetMessage: (from) => `${from}번 손님을 옮길 빈 테이블을 눌러주세요.`,
+    confirmMessage: (from, dest) => `${from}번 손님을 ${dest}번으로 옮길까요?\n주문·미결제·자릿세가 그대로 따라가요.`,
+    doneMessage: (dest) => `${dest}번으로 옮겼어요. 손님께 ${dest}번 QR을 찍어도 된다고 안내해 주세요.`,
+    request: (from, to) => moveTable(from.id, to.id),
+  },
+  merge: {
+    name: '자리 합석',
+    targetHasGuests: true,
+    wrongTargetMessage: '손님이 있는 테이블과만 합칠 수 있어요. 빈 테이블로 옮기려면 자리 이동을 써주세요.',
+    pickFromMessage: '합칠 손님이 있는 테이블을 눌러주세요(이 테이블은 비워져요).',
+    pickTargetMessage: (from) => `${from}번 손님을 합칠 테이블(손님 있는 테이블)을 눌러주세요.`,
+    confirmMessage: (from, dest) =>
+      `${from}번 손님을 ${dest}번으로 합칠까요?\n` +
+      `· 계산이 ${dest}번 하나로 합쳐져요(되돌릴 수 없어요).\n` +
+      `· ${from}번 손님 폰은 연결이 끊겨요. ${dest}번 QR을 다시 찍으면 합친 주문으로 이어져요.\n` +
+      `· ${from}번은 빈자리가 돼요. ${from}번 QR을 찍으면 새 주문으로 따로 잡혀요.`,
+    doneMessage: (dest) => `${dest}번으로 합쳤어요. 합친 손님께 ${dest}번 QR을 다시 찍어 달라고 안내해 주세요.`,
+    // 화면이 본 두 세션으로 고정한다 — 그 사이 손님이 바뀌었으면 서버가 409로 막는다(handleSeatPick이 출발·도착에 손님이 있는지 먼저 본다)
+    request: (from, to) => mergeTable(from.id, to.id, from.session?.id ?? -1, to.session?.id ?? -1),
+  },
+}
+
 export default function TableHomePage() {
   const { tables, error, loaded, refetch, addTable, commitGridPosition, deleteTable } = useTableOrders()
   const [editMode, setEditMode] = useState(false)
@@ -46,9 +89,9 @@ export default function TableHomePage() {
   // 추가·삭제·배치 저장 중 연타를 막는다 — 안 막으면 "테이블 추가"는 두 개 생기고, 삭제는 DELETE가 두 번 나간다
   const [tableActionBusy, setTableActionBusy] = useState(false)
   const [tableError, setTableError] = useState<string | null>(null)
-  // 자리 이동 모드 — 손님 있는 테이블(출발) → 빈 테이블(도착) 순서로 누른다. 결제 모달 상단 "자리 이동"과 같은 API다
-  const [moveMode, setMoveMode] = useState(false)
-  const [moveFromId, setMoveFromId] = useState<number | null>(null)
+  // 자리 이동·합석 모드 — 손님 있는 테이블(출발) → 도착 테이블 순서로 누른다. 이동은 결제 모달 상단 "자리 이동"과 같은 API다
+  const [seatMode, setSeatMode] = useState<SeatMode | null>(null)
+  const [seatFromId, setSeatFromId] = useState<number | null>(null)
   // 경과시간 색상 판정 기준 시각 — 2시간 임계값 판정이라 촘촘한 갱신은 필요 없다(최대 30초 늦게 빨강)
   const now = useNow(30_000)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -278,51 +321,57 @@ export default function TableHomePage() {
     if (failedTableIds.size === 0) setEditMode(false) // 전부 성공했을 때만 편집 모드를 닫는다
   }
 
-  const exitMoveMode = () => {
-    setMoveMode(false)
-    setMoveFromId(null)
+  const exitSeatMode = () => {
+    setSeatMode(null)
+    setSeatFromId(null)
     setTableError(null)
   }
 
-  // 첫 클릭은 출발(손님 있는 테이블), 두 번째는 도착(빈 테이블). 화면 판정은 안내용이고 최종 판정은 서버가 한다(유휴 정리 필요·동시 착석 등)
-  const handleMovePick = async (table: TableStatusInfo) => {
-    if (tableActionBusy) return
+  // 첫 클릭은 출발(손님 있는 테이블), 두 번째는 도착 — 이동은 빈 테이블, 합석은 손님 있는 테이블.
+  // 화면 판정은 안내용이고 최종 판정은 서버가 한다(유휴 정리 필요·동시 착석 등)
+  const handleSeatPick = async (table: TableStatusInfo) => {
+    if (tableActionBusy || !seatMode) return
+    const action = SEAT_ACTIONS[seatMode]
     setTableError(null)
-    const from = moveFromId === null ? null : (tables.find((t) => t.id === moveFromId) ?? null)
+    const from = seatFromId === null ? null : (tables.find((t) => t.id === seatFromId) ?? null)
     if (!from) {
       if (!table.session) {
         setTableError('손님이 있는 테이블을 먼저 골라주세요.')
         return
       }
-      setMoveFromId(table.id)
+      setSeatFromId(table.id)
       return
     }
     if (table.id === from.id) {
-      setMoveFromId(null) // 같은 테이블을 다시 누르면 출발 선택 취소
+      setSeatFromId(null) // 같은 테이블을 다시 누르면 출발 선택 취소
       return
     }
-    if (table.session || table.status !== 'EMPTY') {
-      setTableError('빈 테이블로만 옮길 수 있어요.')
+    const targetHasGuests = !!table.session || table.status !== 'EMPTY'
+    if (targetHasGuests !== action.targetHasGuests) {
+      setTableError(action.wrongTargetMessage)
       return
     }
     const fromLabel = displayTableLabel(from.label)
     const dest = displayTableLabel(table.label)
-    if (!window.confirm(`${fromLabel}번 손님을 ${dest}번으로 옮길까요?\n주문·미결제·자릿세가 그대로 따라가요.`)) return
+    if (!window.confirm(action.confirmMessage(fromLabel, dest))) return
     setTableActionBusy(true)
     try {
-      const res = await moveTable(from.id, table.id)
+      const res = await action.request(from, table)
       if (!res.ok) {
         const { message } = await readApiError(res)
-        setTableError(message ? `자리 이동 실패: ${message}` : `자리 이동에 실패했어요 (${res.status})`)
+        setTableError(message ? `${action.name} 실패: ${message}` : `${action.name}에 실패했어요 (${res.status})`)
         refetch()
         return
       }
-      window.alert(`${dest}번으로 옮겼어요. 손님께 ${dest}번 QR을 찍어도 된다고 안내해 주세요.`)
-      exitMoveMode()
+      // 합석 응답의 자릿세 안내(warnings) — 운영자가 결제 화면에서 고칠 것이라 완료 알림에 함께 띄운다. 이동 응답엔 없다
+      const body = (await res.json().catch(() => null)) as { warnings?: string[] } | null
+      const warnings = body?.warnings ?? []
+      window.alert(action.doneMessage(dest) + warnings.map((w) => `\n\n⚠️ ${w}`).join(''))
+      exitSeatMode()
       refetch()
     } catch {
       // 401은 apiFetch가 로그인 화면으로 보내는 중이라 문구를 띄우지 않는다. 응답만 못 받았을 수 있어 새로고침으로 실제 상태를 본다
-      if (getAuthToken()) setTableError('자리 이동 응답을 받지 못했어요. 화면이 새로고침되면 옮겨졌는지 확인해주세요.')
+      if (getAuthToken()) setTableError(`${action.name} 응답을 받지 못했어요. 화면이 새로고침되면 반영됐는지 확인해주세요.`)
       refetch()
     } finally {
       setTableActionBusy(false)
@@ -364,16 +413,17 @@ export default function TableHomePage() {
               저장하기
             </PillButton>
           </>
-        ) : moveMode ? (
-          <PillButton type="button" onClick={exitMoveMode} disabled={tableActionBusy}>
-            이동 취소
+        ) : seatMode ? (
+          <PillButton type="button" onClick={exitSeatMode} disabled={tableActionBusy}>
+            {SEAT_ACTIONS[seatMode].name} 취소
           </PillButton>
         ) : (
           <>
-            {/* 자리 합석은 만들지 않는다 — 눌리지도 않는 버튼이 보이면 운영자가 되는 기능인 줄 알고 헷갈려 해서
-                (2026-09-30 파일럿 피드백) 숨긴다 */}
-            <PillButton type="button" onClick={() => setMoveMode(true)}>
+            <PillButton type="button" onClick={() => setSeatMode('move')}>
               자리 이동
+            </PillButton>
+            <PillButton type="button" onClick={() => setSeatMode('merge')}>
+              자리 합석
             </PillButton>
             <PillButton type="button" onClick={() => setEditMode(true)}>
               테이블 편집
@@ -382,11 +432,13 @@ export default function TableHomePage() {
         )}
       </div>
 
-      {moveMode && (
+      {seatMode && (
         <p className="px-10 pb-2 text-base font-semibold text-neutral-900">
-          {moveFromId === null
-            ? '옮길 손님이 있는 테이블을 눌러주세요.'
-            : `${displayTableLabel(tables.find((t) => t.id === moveFromId)?.label ?? '')}번 손님을 옮길 빈 테이블을 눌러주세요.`}
+          {seatFromId === null
+            ? SEAT_ACTIONS[seatMode].pickFromMessage
+            : SEAT_ACTIONS[seatMode].pickTargetMessage(
+                displayTableLabel(tables.find((t) => t.id === seatFromId)?.label ?? ''),
+              )}
         </p>
       )}
 
@@ -438,7 +490,7 @@ export default function TableHomePage() {
           <div
             key={table.id}
             // 자리 이동 출발로 고른 테이블 — 카드 배색(손님 있음/빈 자리)은 그대로 두고 테두리로만 표시한다
-            className={`absolute rounded-2xl ${moveMode && moveFromId === table.id ? 'ring-4 ring-red-500' : ''}`}
+            className={`absolute rounded-2xl ${seatMode && seatFromId === table.id ? 'ring-4 ring-red-500' : ''}`}
             style={{ left: (pos.col - 1) * GRID_CELL_PITCH, top: (pos.row - 1) * GRID_CELL_PITCH }}
           >
             <TableGridCard
@@ -446,7 +498,7 @@ export default function TableHomePage() {
               editMode={editMode}
               onClick={() => {
                 if (deleteMode) toggleDeleteSelect(table.id)
-                else if (moveMode) void handleMovePick(table)
+                else if (seatMode) void handleSeatPick(table)
                 else if (!editMode) setSelectedTableId(table.id)
               }}
               now={now}

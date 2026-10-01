@@ -13,6 +13,8 @@ import com.boothlock.boothlock_server.global.error.InvalidRequestException;
 import com.boothlock.boothlock_server.global.error.InvalidStateException;
 import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.global.seat.SeatIdlePolicy;
+import com.boothlock.boothlock_server.order.repository.OrderRepository;
+import com.boothlock.boothlock_server.order.service.OrderWriter;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableStatus;
@@ -21,12 +23,15 @@ import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableGridPositionRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMergeRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMergeResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableMoveRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableMoveResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusListResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusResponse;
 import com.boothlock.boothlock_server.tableqr.repository.TableCheckoutOrderRepository;
+import com.boothlock.boothlock_server.tableqr.repository.TableMergeCallRepository;
 import com.boothlock.boothlock_server.tableqr.repository.TableRepository;
 import com.boothlock.boothlock_server.tableqr.repository.TableSequenceRepository;
 import com.boothlock.boothlock_server.tableqr.repository.TableSessionRepository;
@@ -85,6 +90,8 @@ public class TableAdminService {
     private static final String CHECKOUT_AUTO_REJECT_BY = "SYSTEM";
     /** O6 퇴실 시 메뉴 없이 남은 미입금 자릿세 면제 사유 (cancel_reason VARCHAR(100)) */
     private static final String CHECKOUT_SEAT_FEE_WAIVE_REASON = "주문 없이 퇴실해 자릿세 면제";
+    /** 합석 인원 상한 — 자릿세 항목 수량을 결제 모달에서 고칠 수 있는 상한(1~30)과 같게. 넘으면 30으로 기록하고 알린다 */
+    private static final int MAX_MERGED_PARTY_SIZE = 30;
 
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
@@ -97,6 +104,9 @@ public class TableAdminService {
     private final TableCheckoutOrderRepository tableCheckoutOrderRepository;
     private final EntityManager entityManager;
     private final StaffCallRepository staffCallRepository;
+    private final TableMergeCallRepository tableMergeCallRepository;
+    private final OrderWriter orderWriter;
+    private final OrderRepository orderRepository;
 
     public TableAdminService(BoothJwtProvider jwtProvider,
                               BoothInfoService boothInfoService,
@@ -108,7 +118,10 @@ public class TableAdminService {
                               TableSequenceRepository tableSequenceRepository,
                               TableCheckoutOrderRepository tableCheckoutOrderRepository,
                               EntityManager entityManager,
-                              StaffCallRepository staffCallRepository) {
+                              StaffCallRepository staffCallRepository,
+                              TableMergeCallRepository tableMergeCallRepository,
+                              OrderWriter orderWriter,
+                              OrderRepository orderRepository) {
         this.jwtProvider = jwtProvider;
         this.boothInfoService = boothInfoService;
         this.tableRepository = tableRepository;
@@ -120,6 +133,9 @@ public class TableAdminService {
         this.tableCheckoutOrderRepository = tableCheckoutOrderRepository;
         this.entityManager = entityManager;
         this.staffCallRepository = staffCallRepository;
+        this.tableMergeCallRepository = tableMergeCallRepository;
+        this.orderWriter = orderWriter;
+        this.orderRepository = orderRepository;
     }
 
     /**
@@ -557,31 +573,13 @@ public class TableAdminService {
         if (toTableId.equals(fromTableId)) {
             throw new InvalidRequestException("같은 테이블로는 옮길 수 없습니다.");
         }
-        // 두 테이블 행을 id 작은 순으로 잠근다 — A→B와 B→A 이동이 겹쳐도 교착하지 않게
-        Map<Long, TableEntity> locked = new java.util.HashMap<>();
-        for (Long id : java.util.stream.Stream.of(fromTableId, toTableId).sorted().toList()) {
-            locked.put(id, tableRepository.findActiveByIdAndBoothIdForUpdate(id, staffBooth.getId())
-                    .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다.")));
-        }
+        Map<Long, TableEntity> locked = lockTablesInIdOrder(staffBooth.getId(), fromTableId, toTableId);
         TableEntity from = locked.get(fromTableId);
         TableEntity to = locked.get(toTableId);
 
-        List<TableSessionEntity> fromSessions = tableSessionRepository.findOpenByTableIdForUpdate(from.getId());
-        if (fromSessions.isEmpty()) {
-            throw new InvalidStateException("옮길 손님이 없는 테이블입니다.");
-        }
-        // 유니크 제약이 깨진 데이터(열린 세션 둘 이상)는 하나만 옮기면 A가 EMPTY인데 세션이 남는다 — 옮기지 않고 비우기로 정리하게 한다
-        if (fromSessions.size() > 1) {
-            throw new InvalidStateException("테이블 세션 상태가 올바르지 않습니다. 테이블 비우기로 정리한 뒤 다시 시도해주세요.");
-        }
-        TableSessionEntity session = fromSessions.getFirst();
         // 유휴 만료 세션(정리 필요 — 손님이 떠난 자리)은 옮기지 않는다 — 옮기면 활동 시각이 갱신돼 떠난 손님 세션이 B에서 되살아나,
         // B에 앉은 새 손님이 앞 손님 주문을 복원받는다
-        SeatIdlePolicy.Criteria criteria = seatIdlePolicy.criteria();
-        if (!criteria.isActive(session, tableUnpaidOrderRepository.existsUnpaidOrPendingApprovalOrderOn(
-                session.getId(), staffBooth.getId(), criteria.businessDate()))) {
-            throw new InvalidStateException("손님이 떠난 것으로 보이는 테이블입니다(정리 필요). 테이블 비우기로 정리해주세요.");
-        }
+        TableSessionEntity session = requireActiveSession(from, staffBooth, seatIdlePolicy.criteria(), "옮길 손님이 없는 테이블입니다.");
         if (!tableSessionRepository.findOpenByTableIdForUpdate(to.getId()).isEmpty()) {
             throw new InvalidStateException("이미 손님이 있는 테이블로는 옮길 수 없습니다. 빈 테이블을 골라주세요.");
         }
@@ -594,6 +592,139 @@ public class TableAdminService {
         from.vacate();
         to.occupy();
         return new TableMoveResponse(session.getId(), from.getId(), from.getLabel(), to.getId(), to.getLabel());
+    }
+
+    /**
+     * 자리 합석(명세서 밖) — A 테이블 손님(세션)을 손님 있는 B 테이블 세션으로 합친다. B 세션만 남고 계산서가 하나가 된다.
+     * A 세션의 주문(상태 무관)·직원 호출을 B 세션으로 옮기고, 진행 중 주문(승인대기·접수)의 카드 스냅샷을 B로 바꾸고(주문번호는 입금 대조용이라 그대로),
+     * 인원수를 더한 뒤 A 세션을 끝내고 A 테이블을 비운다 — A QR은 다음 손님용 새 세션이다(자리 이동과 같은 규칙).
+     * A 일행 폰은 퇴실 때처럼 끊긴다(410) — B QR을 다시 찍으면 B 세션(합친 계산서)으로 이어진다. 토큰을 B로 넘겨주지 않는 이유:
+     * 합석 순간에 걸친 요청(인증은 A, 쓰기는 합석 뒤)까지 이어 주려면 주문·호출·취소 경로가 모두 합석을 알아야 해서, 끊고 다시 찍게 하는 쪽을 택했다.
+     *
+     * <p>둘 다 손님(활성 세션)이 있어야 한다 — B가 비었으면 자리 이동을, 유휴 만료(정리 필요) 세션이면 비우기를 안내한다(409).
+     * 요청의 두 세션 id가 지금 열린 세션과 다르면 409 — 운영자 화면이 갱신되기 전에 한쪽이 바뀌었으면 모르는 일행끼리 합치지 않는다.
+     * 잠금은 자리 이동과 같다: 두 테이블 행을 id 작은 순으로 → 두 테이블의 열린 세션 행. A→B·B→A 합석이 겹쳐도 테이블 잠금에서 줄을 선다.
+     * 자릿세는 응답 warnings로 운영자에게 고칠 것을 알린다(seatFeeWarnings). 되돌리기(분리)는 없다
+     */
+    @Transactional
+    public TableMergeResponse mergeTable(String authorization, Long fromTableId, TableMergeRequest request) {
+        BoothEntity staffBooth = authenticatedBooth(authorization);
+        if (request == null || request.toTableId() == null || request.fromSessionId() == null || request.toSessionId() == null) {
+            throw new InvalidRequestException("합칠 테이블(toTableId)과 두 테이블의 세션(fromSessionId·toSessionId)이 필요합니다.");
+        }
+        Long toTableId = request.toTableId();
+        if (toTableId.equals(fromTableId)) {
+            throw new InvalidRequestException("같은 테이블끼리는 합칠 수 없습니다.");
+        }
+        Map<Long, TableEntity> locked = lockTablesInIdOrder(staffBooth.getId(), fromTableId, toTableId);
+        TableEntity from = locked.get(fromTableId);
+        TableEntity to = locked.get(toTableId);
+
+        SeatIdlePolicy.Criteria criteria = seatIdlePolicy.criteria();
+        TableSessionEntity fromSession = requireActiveSession(from, staffBooth, criteria, "합칠 손님이 없는 테이블입니다.");
+        TableSessionEntity toSession = requireActiveSession(to, staffBooth, criteria,
+                "손님이 없는 테이블입니다. 빈 테이블로 옮기려면 자리 이동을 써주세요.");
+        if (!fromSession.getId().equals(request.fromSessionId()) || !toSession.getId().equals(request.toSessionId())) {
+            throw new InvalidStateException("테이블 손님이 바뀌었어요. 화면을 새로고침한 뒤 다시 골라주세요.");
+        }
+
+        LocalDateTime now = seatIdlePolicy.now();
+        Integer partySize = mergedPartySize(fromSession.getPartySize(), toSession.getPartySize());
+        // 옮기기 전에 판정한다 — 옮긴 뒤에는 B 세션에 A의 자릿세 항목이 들어와 판정 근거가 섞인다
+        List<String> warnings = seatFeeWarnings(staffBooth, from, fromSession, to, toSession, now);
+        if (partySize != null && partySize > MAX_MERGED_PARTY_SIZE) {
+            warnings.add("합친 인원이 " + partySize + "명이라 " + MAX_MERGED_PARTY_SIZE + "명으로 기록했어요. 자릿세는 결제 화면에서 맞춰주세요.");
+            partySize = MAX_MERGED_PARTY_SIZE;
+        }
+
+        tableCheckoutOrderRepository.moveOrdersToSession(fromSession.getId(), toSession.getId(), staffBooth.getId());
+        tableMergeCallRepository.moveCallsToSession(fromSession.getId(), toSession);
+        tableCheckoutOrderRepository.relabelInProgressOrdersOfSession(toSession.getId(), staffBooth.getId(), to.getLabel());
+        if (partySize != null) {
+            toSession.updatePartySize(partySize);
+        }
+        fromSession.end(now);
+        toSession.touch(now);
+        from.vacate();
+        to.occupy();
+        return new TableMergeResponse(toSession.getId(), from.getId(), from.getLabel(), to.getId(), to.getLabel(),
+                partySize, warnings);
+    }
+
+    /** 자리 이동·합석 공통 — 두 테이블 행을 id 작은 순으로 잠근다. A→B와 B→A가 겹쳐도 교착하지 않게. 타 부스·삭제 테이블은 404 */
+    private Map<Long, TableEntity> lockTablesInIdOrder(Long boothId, Long firstTableId, Long secondTableId) {
+        Map<Long, TableEntity> locked = new java.util.HashMap<>();
+        for (Long id : java.util.stream.Stream.of(firstTableId, secondTableId).sorted().toList()) {
+            locked.put(id, tableRepository.findActiveByIdAndBoothIdForUpdate(id, boothId)
+                    .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다.")));
+        }
+        return locked;
+    }
+
+    /**
+     * 자리 이동·합석 공통 — 테이블의 열린 세션을 잠가 읽고, 없으면 noGuestMessage로 409.
+     * 둘 이상(유니크 제약이 깨진 데이터)이면 하나만 다루면 세션이 남으므로 비우기로 정리하게 한다(409).
+     * 유휴 만료(정리 필요 — 손님이 떠난 자리)도 409 — 옮기거나 합치면 떠난 손님 주문이 되살아나 남의 자리·계산서에 섞인다
+     */
+    private TableSessionEntity requireActiveSession(TableEntity table, BoothEntity staffBooth,
+                                                    SeatIdlePolicy.Criteria criteria, String noGuestMessage) {
+        List<TableSessionEntity> sessions = tableSessionRepository.findOpenByTableIdForUpdate(table.getId());
+        if (sessions.isEmpty()) {
+            throw new InvalidStateException(noGuestMessage);
+        }
+        if (sessions.size() > 1) {
+            throw new InvalidStateException("테이블 세션 상태가 올바르지 않습니다. 테이블 비우기로 정리한 뒤 다시 시도해주세요.");
+        }
+        TableSessionEntity session = sessions.getFirst();
+        if (!criteria.isActive(session, tableUnpaidOrderRepository.existsUnpaidOrPendingApprovalOrderOn(
+                session.getId(), staffBooth.getId(), criteria.businessDate()))) {
+            throw new InvalidStateException("손님이 떠난 것으로 보이는 테이블입니다(정리 필요). 테이블 비우기로 정리해주세요.");
+        }
+        return session;
+    }
+
+    /**
+     * 합석 뒤 자릿세가 자동으로 맞게 청구되지 않는 일행 안내 — 부스가 자릿세를 안 받으면 빈 목록.
+     * 합친 뒤 B의 다음 첫 주문이 자릿세를 자동으로 만드는 건 "어느 세션에도 자릿세 항목이 없고 B가 유휴 인계로 이어받지도 않았을 때"뿐이고,
+     * 그때 합친 인원(B partySize)만큼 청구한다(OrderWriter.save). 일행마다 "내야 하나(처리 전)"와 "자동으로 붙나"를 비교해
+     * 어긋나면 알린다 — 처리 전인데 안 붙으면 추가 자릿세, 이미 냈는데(유휴 인계로 낸 경우 포함) 붙으면 그만큼 빼기, 인원을 몰라 빠지면 추가
+     */
+    private List<String> seatFeeWarnings(BoothEntity booth, TableEntity from, TableSessionEntity fromSession,
+                                         TableEntity to, TableSessionEntity toSession, LocalDateTime now) {
+        List<String> warnings = new ArrayList<>();
+        if (booth.getSeatFeePerPerson() <= 0) {
+            return warnings;
+        }
+        boolean toHandled = orderWriter.isSeatFeeHandled(toSession.getId(), now);
+        boolean autoCharge = !orderRepository.existsSeatFeeItem(fromSession.getId()) && !toHandled;
+        // 둘 다 인원을 모르면 B 세션에도 인원이 없어 다음 주문 때 인원 선택(PARTY_SIZE_REQUIRED)으로 합친 인원을 다시 묻는다
+        if (autoCharge && fromSession.getPartySize() == null && toSession.getPartySize() == null) {
+            return warnings;
+        }
+        addSeatFeeWarning(warnings, from, fromSession.getPartySize(),
+                orderWriter.isSeatFeeHandled(fromSession.getId(), now), autoCharge, to);
+        addSeatFeeWarning(warnings, to, toSession.getPartySize(), toHandled, autoCharge, to);
+        return warnings;
+    }
+
+    private static void addSeatFeeWarning(List<String> warnings, TableEntity party, Integer partySize, boolean handled,
+                                          boolean autoCharge, TableEntity to) {
+        boolean chargedLater = autoCharge && partySize != null;
+        String who = partySize == null ? party.getLabel() + " 일행(인원 미선택)" : party.getLabel() + " 일행(" + partySize + "명)";
+        if (!handled && !chargedLater) {
+            warnings.add(who + "의 자릿세가 청구되지 않아요. " + to.getLabel() + " 결제 화면 기타 탭에서 추가 자릿세로 넣어주세요.");
+        } else if (handled && chargedLater) {
+            warnings.add(who + "은 이미 자릿세를 냈는데 다음 첫 주문 자릿세에 함께 붙어요. 그때 " + to.getLabel()
+                    + " 결제 화면에서 자릿세 줄을 " + partySize + "명만큼 줄여주세요.");
+        }
+    }
+
+    /** 둘 다 모르면 null(인원 선택 화면이 다시 묻는다), 한쪽만 알면 그 값, 둘 다 알면 합 */
+    private static Integer mergedPartySize(Integer a, Integer b) {
+        if (a == null) {
+            return b;
+        }
+        return b == null ? a : a + b;
     }
 
     /**

@@ -117,6 +117,19 @@ export function moveTable(tableId: number, toTableId: number) {
 }
 
 /**
+ * 자리 합석(명세서 밖) — 이 테이블 손님(세션)을 손님 있는 테이블 세션으로 합친다. 대상 세션만 남고 계산서가 하나가 되며 이 테이블은 비워진다.
+ * 합쳐진 손님 폰은 끊기고(퇴실과 같음) 대상 테이블 QR을 다시 찍으면 합친 계산서로 이어진다. 되돌릴 수 없다.
+ * 두 세션 id는 화면이 본 값 — 그 사이 손님이 바뀌었으면 서버가 409로 막는다. 자릿세를 고쳐야 하면 응답 warnings로 알린다
+ */
+export function mergeTable(tableId: number, toTableId: number, fromSessionId: number, toSessionId: number) {
+  return apiFetch(`/api/v1/admin/tables/${tableId}/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ toTableId, fromSessionId, toSessionId }),
+  })
+}
+
+/**
  * O6 퇴실·초기화 — 세션 종료(손님 토큰 즉시 410)+테이블 비움. 주문 데이터는 그대로.
  * 테이블 갈래 개정 후에는 활성 세션이 없어도 200(멱등)이고, 미결제가 있으면 응답에 warning이 실린다.
  * 개정 전 구현은 세션이 없으면 410을 내므로 호출부는 410도 "이미 비어 있음"으로 처리한다

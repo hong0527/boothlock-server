@@ -8,6 +8,8 @@ import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableGridPositionRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMergeRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMergeResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableMoveRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableMoveResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
@@ -205,5 +207,17 @@ public class TableController {
                                   @PathVariable Long tableId,
                                   @RequestBody(required = false) TableMoveRequest request) {
         return tableAdminService.moveTable(authorization, tableId, request);
+    }
+
+    @Operation(summary = "자리 합석 (명세서 밖)",
+            description = "이 테이블 손님(세션)을 손님 있는 테이블(toTableId) 세션으로 합친다. 대상 세션만 남고 주문·호출·인원이 합쳐지며(계산서 하나), "
+            + "이 테이블은 비워진다. 합쳐진 일행 폰은 끊기고(410) 대상 테이블 QR을 다시 찍으면 합친 세션으로 이어진다. 되돌리기는 없다. "
+            + "fromSessionId·toSessionId는 화면이 본 두 세션 — 지금 열린 세션과 다르면 409. 자릿세를 고쳐야 하면 warnings로 알린다. "
+            + "어느 쪽이든 손님이 없거나 정리가 필요하면 409, 필수 값 누락·같은 테이블이면 400, 타 부스·삭제 테이블은 404.")
+    @PostMapping("/admin/tables/{tableId}/merge")
+    public TableMergeResponse merge(@RequestHeader("Authorization") String authorization,
+                                    @PathVariable Long tableId,
+                                    @RequestBody(required = false) TableMergeRequest request) {
+        return tableAdminService.mergeTable(authorization, tableId, request);
     }
 }

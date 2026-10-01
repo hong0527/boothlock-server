@@ -5,6 +5,9 @@ import com.boothlock.boothlock_server.booth.domain.StaffAccountEntity;
 import com.boothlock.boothlock_server.booth.domain.StaffRole;
 import com.boothlock.boothlock_server.booth.repository.BoothRepository;
 import com.boothlock.boothlock_server.booth.repository.StaffAccountRepository;
+import com.boothlock.boothlock_server.dashboard.domain.CallReason;
+import com.boothlock.boothlock_server.dashboard.domain.StaffCallEntity;
+import com.boothlock.boothlock_server.dashboard.repository.StaffCallRepository;
 import com.boothlock.boothlock_server.menu.domain.MenuEntity;
 import com.boothlock.boothlock_server.menu.repository.MenuRepository;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
@@ -78,6 +81,7 @@ class TablePosApiTests {
     @Autowired DailyCounterRepository dailyCounterRepository;
     @Autowired MenuRepository menuRepository;
     @Autowired OrderWriter orderWriter;
+    @Autowired StaffCallRepository staffCallRepository;
 
     private BoothEntity booth;
     private BoothEntity otherBooth;
@@ -102,6 +106,7 @@ class TablePosApiTests {
     }
 
     private void cleanUp() {
+        staffCallRepository.deleteAll();   // 세션을 참조(FK)하므로 세션보다 먼저 — 합석 테스트가 호출을 만든다
         orderRepository.deleteAll();
         dailyCounterRepository.deleteAll();
         menuRepository.deleteAll();
@@ -1168,6 +1173,160 @@ class TablePosApiTests {
         mockMvc.perform(post("/api/v1/admin/tables/{tableId}/move", a.getId())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"toTableId\":" + b.getId() + "}"))
                 .andExpect(status().isUnauthorized());                          // 로그인 없음
+    }
+
+    // ── 자리 합석(명세서 밖) ─────────────────────────────
+
+    /** 운영자 화면처럼 두 테이블의 지금 열린 세션 id를 함께 보낸다(없으면 -1) */
+    private org.springframework.test.web.servlet.ResultActions merge(TableEntity from, TableEntity to) throws Exception {
+        return mergeWith(from.getId(), to.getId(), openSessionIdOrNone(from), openSessionIdOrNone(to));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions mergeWith(Long fromTableId, Long toTableId,
+                                                                         Long fromSessionId, Long toSessionId) throws Exception {
+        return mockMvc.perform(post("/api/v1/admin/tables/{tableId}/merge", fromTableId)
+                .header("Authorization", "Bearer " + login("admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"toTableId\":" + toTableId + ",\"fromSessionId\":" + fromSessionId
+                        + ",\"toSessionId\":" + toSessionId + "}"));
+    }
+
+    private Long openSessionIdOf(TableEntity table) {
+        return tableSessionRepository.findOpenByTableId(table.getId()).orElseThrow().getId();
+    }
+
+    private Long openSessionIdOrNone(TableEntity table) {
+        return tableSessionRepository.findOpenByTableId(table.getId()).map(TableSessionEntity::getId).orElse(-1L);
+    }
+
+    /**
+     * A 손님을 B 손님과 합친다 — A의 주문·호출이 B 세션으로 옮겨가고(계산서 하나) 인원이 더해지며, A 세션은 끝나고 A는 빈 테이블이 된다.
+     * A 일행 폰(옛 토큰)은 퇴실 때처럼 끊기고, B QR을 찍으면 합친 계산서로 이어진다. A QR은 새 손님
+     */
+    @Test
+    void mergeCombinesOrdersCallsAndPartyIntoTheTargetSession() throws Exception {
+        TableEntity a = table(booth, "A-1", false);
+        TableEntity b = table(booth, "B-1", false);
+        String tokenA = scan(a.getTableToken(), false);
+        String tokenB = scan(b.getTableToken(), false);
+        Long sessionA = openSessionIdOf(a);
+        Long sessionB = openSessionIdOf(b);
+        tableSessionRepository.updatePartySizeIfActive(sessionA, 2);
+        tableSessionRepository.updatePartySizeIfActive(sessionB, 3);
+        seatFeeOrder(booth, sessionA);
+        OrderEntity aMenu = menuOrder(booth, sessionA, false);
+        seatFeeOrder(booth, sessionB);
+        menuOrder(booth, sessionB, false);
+        StaffCallEntity call = staffCallRepository.save(new StaffCallEntity(reloadSession(sessionA), CallReason.HELP, now()));
+
+        merge(a, b)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessionId").value(sessionB))
+                .andExpect(jsonPath("$.partySize").value(5))
+                .andExpect(jsonPath("$.warnings.length()").value(0));   // 양쪽 자릿세 처리됨
+
+        OrderEntity movedMenu = orderRepository.findById(aMenu.getId()).orElseThrow();
+        assertEquals(sessionB, movedMenu.getSessionId());
+        assertEquals("B-1", movedMenu.getTableLabel());                         // 진행 중 주문 카드도 B로
+        assertEquals(aMenu.getOrderNo(), movedMenu.getOrderNo());               // 주문번호는 입금 대조용이라 그대로
+        assertEquals(sessionB, staffCallRepository.findById(call.getId()).orElseThrow().getSession().getId());
+        assertNotNull(reloadSession(sessionA).getEndedAt());
+        assertEquals(TableStatus.EMPTY, reloadTable(a.getId()).getStatus());
+        assertEquals(TableStatus.OCCUPIED, reloadTable(b.getId()).getStatus());
+
+        // A 일행 폰(옛 토큰)은 퇴실 때처럼 끊긴다
+        mockMvc.perform(get("/api/v1/orders").header("X-Session-Token", tokenA))
+                .andExpect(status().isGone());
+        // B QR을 찍으면 남은 세션(합친 계산서, 주문 4건)으로 이어진다 — A 일행이 다시 찍어도 같은 세션
+        assertEquals(tokenB, scan(b.getTableToken(), true));
+        mockMvc.perform(get("/api/v1/orders").header("X-Session-Token", tokenB))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orders.length()").value(4));
+        // A QR은 새 손님
+        assertNotEquals(tokenA, scan(a.getTableToken(), false));
+    }
+
+    /** 한쪽 일행만 자릿세가 처리된 채 합치면 나머지 일행 몫은 자동으로 붙지 않는다 — 운영자에게 추가 자릿세를 넣으라고 알린다 */
+    @Test
+    void mergeWarnsWhenOnlyOnePartysSeatFeeWasCharged() throws Exception {
+        TableEntity a = table(booth, "A-1", false);
+        TableEntity b = table(booth, "B-1", false);
+        scan(a.getTableToken(), false);
+        scan(b.getTableToken(), false);
+        Long sessionA = openSessionIdOf(a);
+        tableSessionRepository.updatePartySizeIfActive(sessionA, 2);
+        tableSessionRepository.updatePartySizeIfActive(openSessionIdOf(b), 3);
+        seatFeeOrder(booth, sessionA);
+        menuOrder(booth, sessionA, false);   // B는 인원만 고르고 아직 주문 전
+
+        merge(a, b)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.warnings.length()").value(1))
+                .andExpect(jsonPath("$.warnings[0]").value(org.hamcrest.Matchers.containsString("B-1 일행(3명)")));
+    }
+
+    /** 인원을 아직 안 고른 일행을 합치면 그 일행 자릿세는 인원을 몰라 빠진다 — 운영자에게 알린다 */
+    @Test
+    void mergeWarnsWhenAPartysSizeIsUnknown() throws Exception {
+        TableEntity a = table(booth, "A-1", false);
+        TableEntity b = table(booth, "B-1", false);
+        scan(a.getTableToken(), false);   // A는 QR만 찍고 인원 선택 전
+        scan(b.getTableToken(), false);
+        Long sessionB = openSessionIdOf(b);
+        tableSessionRepository.updatePartySizeIfActive(sessionB, 3);
+        seatFeeOrder(booth, sessionB);
+        menuOrder(booth, sessionB, false);
+
+        merge(a, b)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.partySize").value(3))
+                .andExpect(jsonPath("$.warnings.length()").value(1))
+                .andExpect(jsonPath("$.warnings[0]").value(org.hamcrest.Matchers.containsString("A-1 일행(인원 미선택)")));
+    }
+
+    /**
+     * 운영자 화면이 본 세션과 지금 세션이 다르면(그 사이 퇴실하고 새 손님이 앉음) 합치지 않는다 — 되돌릴 수 없어 모르는 일행끼리 합쳐지면 안 된다
+     */
+    @Test
+    void mergeRejectsStaleSessionIds() throws Exception {
+        TableEntity a = table(booth, "A-1", false);
+        TableEntity b = table(booth, "B-1", false);
+        scan(a.getTableToken(), false);
+        scan(b.getTableToken(), false);
+        Long sessionA = openSessionIdOf(a);
+        Long sessionB = openSessionIdOf(b);
+
+        mergeWith(a.getId(), b.getId(), sessionA + 999, sessionB)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+        mergeWith(a.getId(), b.getId(), sessionA, sessionB + 999)
+                .andExpect(status().isConflict());
+
+        assertNull(reloadSession(sessionA).getEndedAt());                       // 아무것도 바뀌지 않는다
+        assertEquals(TableStatus.OCCUPIED, reloadTable(a.getId()).getStatus());
+    }
+
+    @Test
+    void mergeRejectsInvalidRequests() throws Exception {
+        TableEntity a = table(booth, "A-1", true);
+        TableEntity b = table(booth, "B-1", false);
+        TableEntity foreign = table(otherBooth, "C-1", false);
+        Long sessionA = openSession(a, "sess-a1", now().minusMinutes(30), now().minusMinutes(1)).getId();
+
+        merge(a, b).andExpect(status().isConflict());                            // B에 손님이 없다 — 자리 이동을 쓴다
+        merge(b, a).andExpect(status().isConflict());                            // 합칠 손님이 없다
+        merge(a, a).andExpect(status().isBadRequest());                          // 같은 테이블
+        merge(a, foreign).andExpect(status().isNotFound());                      // 남의 부스 테이블
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/merge", a.getId())
+                        .header("Authorization", "Bearer " + login("admin"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"toTableId\":" + b.getId() + "}"))
+                .andExpect(status().isBadRequest());                             // 세션 id 없음
+        // 손님이 떠난 것으로 보이는 B(유휴 만료)와는 합치지 않는다 — 떠난 손님 주문이 남의 계산서에 섞인다
+        TableSessionEntity idle = openSession(b, "sess-idle", now().minusDays(1), now().minusDays(1));
+        mergeWith(a.getId(), b.getId(), sessionA, idle.getId())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+        assertNull(reloadSession(idle.getId()).getEndedAt());                  // 아무것도 바뀌지 않는다
     }
 
     private String scan(String tableToken, boolean expectRestored) throws Exception {
