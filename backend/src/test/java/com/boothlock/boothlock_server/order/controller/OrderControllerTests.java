@@ -227,6 +227,69 @@ class OrderControllerTests {
         assertEquals(1, orderRepository.count());
     }
 
+    // ── 최소주문금액 (명세서 밖, 파일럿) ─────────────────
+
+    private void setMinOrderAmount(int amount) {
+        booth.updateMinOrderAmount(amount);
+        boothRepository.save(booth);
+    }
+
+    @Test
+    void firstOrderBelowMinOrderAmountIsConflict() throws Exception {
+        setMinOrderAmount(20000);
+        mockMvc.perform(post("/api/v1/orders")
+                        .header(SESSION_HEADER, MY_TOKEN).header("Idempotency-Key", "idem-min-low")
+                        .contentType(MediaType.APPLICATION_JSON).content(orderBody(kimchiId, 2)))   // 16,000원
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("20,000원")));
+        assertEquals(0, orderRepository.count());
+    }
+
+    @Test
+    void seatFeeDoesNotCountTowardMinOrderAmount() throws Exception {
+        // 메뉴 16,000 + 자릿세 2명×3,000 = 22,000이어도 메뉴 합계로만 본다
+        booth.updateSeatFeePerPerson(3000);
+        setMinOrderAmount(20000);
+        mockMvc.perform(post("/api/v1/orders")
+                        .header(SESSION_HEADER, MY_TOKEN).header("Idempotency-Key", "idem-min-seat")
+                        .contentType(MediaType.APPLICATION_JSON).content(orderBody(kimchiId, 2)))
+                .andExpect(status().isConflict());
+        assertEquals(0, orderRepository.count());                                    // 자릿세 주문도 안 생긴다
+    }
+
+    @Test
+    void onlyFirstOrderMustMeetMinOrderAmount() throws Exception {
+        setMinOrderAmount(20000);
+        mockMvc.perform(post("/api/v1/orders")
+                        .header(SESSION_HEADER, MY_TOKEN).header("Idempotency-Key", "idem-min-first")
+                        .contentType(MediaType.APPLICATION_JSON).content(orderBody(kimchiId, 3)))   // 24,000원
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/v1/orders")
+                        .header(SESSION_HEADER, MY_TOKEN).header("Idempotency-Key", "idem-min-second")
+                        .contentType(MediaType.APPLICATION_JSON).content(orderBody(colaId, 1)))     // 추가 주문은 5,000원도 된다
+                .andExpect(status().isCreated());
+        // 다른 테이블은 자기 첫 주문 검사를 따로 받는다
+        mockMvc.perform(post("/api/v1/orders")
+                        .header(SESSION_HEADER, OTHER_TOKEN).header("Idempotency-Key", "idem-min-other")
+                        .contentType(MediaType.APPLICATION_JSON).content(orderBody(colaId, 1)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void canceledFirstOrderDoesNotExemptNextOrder() throws Exception {
+        // 첫 주문을 취소하고 소액만 다시 넣는 우회를 막는다
+        OrderEntity first = seedOrder(mySessionId, 1);
+        first.cancelByCustomer(NOW.plusMinutes(2));
+        orderRepository.save(first);
+        setMinOrderAmount(20000);
+
+        mockMvc.perform(post("/api/v1/orders")
+                        .header(SESSION_HEADER, MY_TOKEN).header("Idempotency-Key", "idem-min-after-cancel")
+                        .contentType(MediaType.APPLICATION_JSON).content(orderBody(colaId, 1)))
+                .andExpect(status().isConflict());
+    }
+
     // ── 세션 인증 (C3·C4·C5 공통) ───────────────────────
 
     @Test

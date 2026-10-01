@@ -29,8 +29,10 @@ CREATE TABLE booth (
   map_y           INT          NULL,
   next_table_seq  INT          NOT NULL DEFAULT 1,          -- 엔티티 columnDefinition "integer default 1" (문서 v1.3 미기재 — 테이블 자동 채번 O2)
   seat_fee_per_person INT      NOT NULL DEFAULT 3000,       -- 자릿세 1인당 금액(명세서 밖, 파일럿). 0 = 자릿세 없음. O17로 변경
+  min_order_amount INT         NOT NULL DEFAULT 0,          -- 테이블 첫 주문 최소금액(명세서 밖, 파일럿, 자릿세 제외). 0 = 제한 없음. O17로 변경
   PRIMARY KEY (id),
-  CONSTRAINT chk_booth_seat_fee CHECK (seat_fee_per_person BETWEEN 0 AND 100000)
+  CONSTRAINT chk_booth_seat_fee CHECK (seat_fee_per_person BETWEEN 0 AND 100000),
+  CONSTRAINT chk_booth_min_order CHECK (min_order_amount BETWEEN 0 AND 1000000)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE staff_account (

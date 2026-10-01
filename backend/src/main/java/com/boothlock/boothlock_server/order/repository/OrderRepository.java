@@ -115,6 +115,21 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     }
 
     /**
+     * 최소주문금액 판정(명세서 밖, 파일럿) — 이 세션에 살아 있는 메뉴 주문이 있는가. 취소된 주문·취소된 항목은 세지 않는다 —
+     * 첫 주문을 취소하고 소액만 다시 주문하는 우회를 막는다. 자릿세·기타 항목만 든 주문도 세지 않는다. 수기 주문(O14)의 메뉴는 센다.
+     * 잠금 없이 본다: 같은 테이블 폰 두 대가 동시에 첫 주문을 넣으면 둘 다 검사를 받을 뿐이라(더 엄격한 쪽) 잠글 이유가 없다
+     */
+    @Query("select count(o) > 0 from OrderEntity o join o.items i "
+            + "where o.sessionId = :sessionId and o.status <> :canceled and i.itemType = :menu and i.canceled = false")
+    boolean existsActiveMenuOrder(@Param("sessionId") Long sessionId,
+                                  @Param("canceled") OrderStatus canceled,
+                                  @Param("menu") OrderItemType menu);
+
+    default boolean existsActiveMenuOrder(Long sessionId) {
+        return existsActiveMenuOrder(sessionId, OrderStatus.CANCELED, OrderItemType.MENU);
+    }
+
+    /**
      * 이 세션에 자릿세 항목이 한 번이라도 만들어졌는가 — 취소된 것도 센다. 첫 메뉴 주문(OrderWriter.save)이 자릿세 주문을
      * 새로 만들지 정하는 기준이다: 운영자가 자릿세 주문을 취소한 것은 면제로 보고 다음 주문에 다시 청구하지 않는다
      */
