@@ -7,15 +7,13 @@ import MenuListItem from '../../components/customer/MenuListItem'
 import StaffCallConfirmModal from '../../components/customer/StaffCallConfirmModal'
 import { useCart } from '../../context/CartContext'
 import { customerApiFetch } from '../../lib/customerApiFetch'
+import { sortMenusForBoard } from '../../lib/menuOrder'
 import { getSessionInfo } from '../../lib/customerSession'
 import { useAddedToCartToast } from '../../lib/useAddedToCartToast'
 import { useStaffCallModal } from '../../lib/useStaffCallModal'
 import type { CustomerMenuItem } from '../../types/customer'
 
 type MenuBoardResponse = { boothName: string; isOpen: boolean; menus: CustomerMenuItem[] }
-
-// '전체' 탭에서 메인메뉴 → 사이드 → 음료 순으로 보여준다. 분류 없는 메뉴는 맨 뒤
-const CATEGORY_ORDER: Record<string, number> = { MAIN: 0, SIDE: 1, DRINK: 2 }
 
 export default function MenuOrderPage() {
   const sessionInfo = getSessionInfo()
@@ -52,13 +50,11 @@ export default function MenuOrderPage() {
     }
   }, [])
 
-  const visibleMenus = useMemo(() => {
-    if (category !== 'ALL') return menus.filter((menu) => menu.category === category)
-    // Array.sort는 안정 정렬이라 같은 분류 안에서의 원래 순서는 그대로 유지된다
-    return [...menus].sort(
-      (a, b) => (CATEGORY_ORDER[a.category ?? ''] ?? 99) - (CATEGORY_ORDER[b.category ?? ''] ?? 99),
-    )
-  }, [menus, category])
+  // 분류(메인 → 사이드 → 음료) 안에서 가격 높은 순 — 규칙은 lib/menuOrder
+  const visibleMenus = useMemo(
+    () => sortMenusForBoard(menus, category === 'ALL' ? undefined : category),
+    [menus, category],
+  )
 
   return (
     <div className="min-h-screen w-full bg-neutral-50 pb-[97px]">
