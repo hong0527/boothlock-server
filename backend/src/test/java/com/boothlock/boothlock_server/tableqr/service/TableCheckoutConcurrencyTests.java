@@ -134,6 +134,39 @@ class TableCheckoutConcurrencyTests {
         }
     }
 
+    /**
+     * 자리 이동(A→B)과 B QR 스캔·A QR 스캔·A 퇴실이 겹쳐도 — 유니크 위반·예상 밖 예외가 없고, 끝난 뒤 테이블마다 열린 세션은 최대 1개,
+     * status는 열린 세션 유무와 맞는다. 이동이 먼저면 B 스캔은 옮긴 세션을 복원하고, B 스캔이 먼저면 이동은 409다
+     */
+    @Test
+    void moveRacingScansAndCheckoutLeavesConsistentState() throws Exception {
+        for (int round = 0; round < ROUNDS; round++) {
+            TableEntity a = tableRepository.save(new TableEntity(booth, "MA" + round, "tok-move-a-" + round));
+            TableEntity b = tableRepository.save(new TableEntity(booth, "MB" + round, "tok-move-b-" + round));
+            tableSessionService.createOrRestore(new TableSessionCreateRequest(a.getTableToken()));
+
+            List<Object> results = race(4, (i, moveDone) -> switch (i) {
+                case 0 -> () -> tableAdminService.moveTable(authorization, a.getId(),
+                        new com.boothlock.boothlock_server.tableqr.dto.TableMoveRequest(b.getId()));
+                case 1 -> () -> tableSessionService.createOrRestore(new TableSessionCreateRequest(b.getTableToken()));
+                case 2 -> () -> tableSessionService.createOrRestore(new TableSessionCreateRequest(a.getTableToken()));
+                default -> () -> tableAdminService.checkoutTable(authorization, a.getId(), false);
+            });
+
+            for (Object result : results) {
+                // 이동이 B 스캔에 밀리면 409(InvalidStateException) — 그 외 예외는 없어야 한다
+                assertTrue(!(result instanceof Throwable) || result instanceof InvalidStateException, "예상 밖 예외: " + result);
+            }
+            for (TableEntity t : List.of(a, b)) {
+                // 둘 이상이면 Optional 조회가 IncorrectResultSize로 터진다 — 그 자체가 실패다
+                int open = tableSessionRepository.findOpenByTableId(t.getId()).isPresent() ? 1 : 0;
+                TableStatus expected = open == 1 ? TableStatus.OCCUPIED : TableStatus.EMPTY;
+                // 퇴실 없이 유휴 만료로 끝난 세션은 OCCUPIED로 남을 수 있지만(정리 필요), 이 테스트엔 유휴가 없다
+                assertEquals(expected, tableRepository.findById(t.getId()).orElseThrow().getStatus(), "status 불일치: " + t.getLabel());
+            }
+        }
+    }
+
     @Test
     void checkoutRacingRescansNeverViolatesUniqueAndLeavesConsistentState() throws Exception {
         AtomicInteger scansDuringRace = new AtomicInteger();

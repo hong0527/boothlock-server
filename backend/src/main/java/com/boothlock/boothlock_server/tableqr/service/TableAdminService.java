@@ -21,6 +21,8 @@ import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableGridPositionRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMoveRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMoveResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusListResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableStatusResponse;
@@ -532,6 +534,66 @@ public class TableAdminService {
         String warning = unpaidOrderCount > 0 ? "미결제 주문 " + unpaidOrderCount + "건 있음" : null;
         return new TableCheckoutResponse(unpaidOrderCount > 0, table.getId(), table.getLabel(), table.getStatus(),
                 completedOrderCount, rejectedPendingCount, waivedSeatFeeCount, warning);
+    }
+
+    /**
+     * 자리 이동(명세서 밖) — A 테이블 손님(열린 세션)을 빈 B 테이블로 옮긴다. 세션을 끊고 새로 만들지 않고 세션의 테이블만 바꾼다:
+     * 주문·미결제·자릿세·승인대기·직원 호출이 전부 세션에 붙어 있어 그대로 따라가고, 손님 폰 토큰도 그대로라 끊기지 않는다.
+     * 이동 뒤 B QR을 찍으면 C1이 B의 열린 세션(=이 세션)을 복원하고, A는 열린 세션이 없어 다음 손님 스캔에 새 세션이 열린다.
+     * 주문번호(A3-17)는 바꾸지 않는다 — 입금자명 대조에 쓰이는 값이다. 진행 중 주문(승인대기·접수)의 테이블 스냅샷만 B로 바꿔
+     * 주문현황 카드가 새 자리를 가리키게 한다(완료·취소 주문은 A 기록 그대로). 이동 뒤 새 주문은 처음부터 B로 찍힌다.
+     *
+     * <p>A는 주문이 있어도 된다. B는 빈 테이블만 — 열린 세션이 조금이라도 있으면(유휴 포함) 409다. 합석은 하지 않는다.
+     * 잠금: 두 테이블 행을 id 작은 순으로(A→B·B→A 이동이 겹쳐도 교착하지 않게) → 두 테이블의 열린 세션 행.
+     * C1 세션 생성·O6 퇴실·O14 수기 주문도 "테이블 행 → 세션 행" 순서라 이동과 겹치면 줄을 선다
+     */
+    @Transactional
+    public TableMoveResponse moveTable(String authorization, Long fromTableId, TableMoveRequest request) {
+        BoothEntity staffBooth = authenticatedBooth(authorization);
+        Long toTableId = request == null ? null : request.toTableId();
+        if (toTableId == null) {
+            throw new InvalidRequestException("옮길 테이블(toTableId)이 필요합니다.");
+        }
+        if (toTableId.equals(fromTableId)) {
+            throw new InvalidRequestException("같은 테이블로는 옮길 수 없습니다.");
+        }
+        // 두 테이블 행을 id 작은 순으로 잠근다 — A→B와 B→A 이동이 겹쳐도 교착하지 않게
+        Map<Long, TableEntity> locked = new java.util.HashMap<>();
+        for (Long id : java.util.stream.Stream.of(fromTableId, toTableId).sorted().toList()) {
+            locked.put(id, tableRepository.findActiveByIdAndBoothIdForUpdate(id, staffBooth.getId())
+                    .orElseThrow(() -> new NotFoundException("테이블을 찾을 수 없습니다.")));
+        }
+        TableEntity from = locked.get(fromTableId);
+        TableEntity to = locked.get(toTableId);
+
+        List<TableSessionEntity> fromSessions = tableSessionRepository.findOpenByTableIdForUpdate(from.getId());
+        if (fromSessions.isEmpty()) {
+            throw new InvalidStateException("옮길 손님이 없는 테이블입니다.");
+        }
+        // 유니크 제약이 깨진 데이터(열린 세션 둘 이상)는 하나만 옮기면 A가 EMPTY인데 세션이 남는다 — 옮기지 않고 비우기로 정리하게 한다
+        if (fromSessions.size() > 1) {
+            throw new InvalidStateException("테이블 세션 상태가 올바르지 않습니다. 테이블 비우기로 정리한 뒤 다시 시도해주세요.");
+        }
+        TableSessionEntity session = fromSessions.getFirst();
+        // 유휴 만료 세션(정리 필요 — 손님이 떠난 자리)은 옮기지 않는다 — 옮기면 활동 시각이 갱신돼 떠난 손님 세션이 B에서 되살아나,
+        // B에 앉은 새 손님이 앞 손님 주문을 복원받는다
+        SeatIdlePolicy.Criteria criteria = seatIdlePolicy.criteria();
+        if (!criteria.isActive(session, tableUnpaidOrderRepository.existsUnpaidOrPendingApprovalOrderOn(
+                session.getId(), staffBooth.getId(), criteria.businessDate()))) {
+            throw new InvalidStateException("손님이 떠난 것으로 보이는 테이블입니다(정리 필요). 테이블 비우기로 정리해주세요.");
+        }
+        if (!tableSessionRepository.findOpenByTableIdForUpdate(to.getId()).isEmpty()) {
+            throw new InvalidStateException("이미 손님이 있는 테이블로는 옮길 수 없습니다. 빈 테이블을 골라주세요.");
+        }
+
+        if (tableSessionRepository.moveOpenSession(session.getId(), to, seatIdlePolicy.now()) == 0) {
+            throw new InvalidStateException("테이블 상태가 바뀌었습니다. 새로고침 후 다시 시도해주세요.");   // 잠금 아래라 도달하지 않는다 — 방어
+        }
+        // 진행 중 주문(승인대기·접수)의 카드도 새 자리로 — 주문번호는 그대로(입금 대조), 완료·취소 주문은 옛 자리 기록으로 둔다
+        tableCheckoutOrderRepository.relabelInProgressOrdersOfSession(session.getId(), staffBooth.getId(), to.getLabel());
+        from.vacate();
+        to.occupy();
+        return new TableMoveResponse(session.getId(), from.getId(), from.getLabel(), to.getId(), to.getLabel());
     }
 
     /**

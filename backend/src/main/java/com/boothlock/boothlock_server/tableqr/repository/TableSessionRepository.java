@@ -1,5 +1,6 @@
 package com.boothlock.boothlock_server.tableqr.repository;
 
+import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -83,6 +84,19 @@ public interface TableSessionRepository extends JpaRepository<TableSessionEntity
     @Modifying
     @Query("update TableSessionEntity s set s.lastActivityAt = :at where s.id = :id and s.endedAtKey = 0 and s.endedAt is null")
     int touchIfActive(@Param("id") Long id, @Param("at") LocalDateTime at);
+
+    /**
+     * 자리 이동(명세서 밖) — 열린 세션을 다른 테이블 소속으로 옮기고 활동 시각을 갱신한다. 세션 id·토큰은 그대로라 주문·자릿세·승인대기·호출이
+     * 따라가고 손님 폰도 끊기지 않는다. 활동 시각을 갱신해 이동 직후 새 자리 QR 스캔이 유휴로 판정돼 새 세션이 열리지 않게 한다.
+     * 조건부라 그 사이 퇴실로 닫혔으면 0건이다. 호출자(TableAdminService.moveTable)가 두 테이블 행과 세션 행을 잠근 뒤 부른다
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("""
+            update TableSessionEntity s
+               set s.table = :to, s.lastActivityAt = :at
+             where s.id = :id and s.endedAtKey = 0 and s.endedAt is null
+            """)
+    int moveOpenSession(@Param("id") Long id, @Param("to") TableEntity to, @Param("at") LocalDateTime at);
 
     /**
      * PartySizePage 제출(자릿세 파일럿 전용, 명세서 밖) — 조건부 UPDATE, 세션 인증(TableSessionAuthService.authenticate)

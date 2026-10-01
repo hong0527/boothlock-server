@@ -8,6 +8,8 @@ import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableBulkCreateResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableCheckoutResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TableGridPositionRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMoveRequest;
+import com.boothlock.boothlock_server.tableqr.dto.TableMoveResponse;
 import com.boothlock.boothlock_server.tableqr.dto.TablePositionRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionCreateRequest;
 import com.boothlock.boothlock_server.tableqr.dto.TableSessionResponse;
@@ -193,5 +195,15 @@ public class TableController {
                                            @Parameter(description = "true면 미결제·승인대기가 남은 퇴실을 409로 거절한다(\"결제 완료\" 버튼). 기본 false(\"테이블 비우기\")")
                                            @RequestParam(defaultValue = "false") boolean requireSettled) {
         return tableAdminService.checkoutTable(authorization, tableId, requireSettled);
+    }
+
+    @Operation(summary = "자리 이동 (명세서 밖)",
+            description = "이 테이블의 손님(열린 세션)을 빈 테이블(toTableId)로 옮긴다. 세션·토큰이 그대로라 주문·미결제·자릿세가 따라가고 손님 폰도 끊기지 않는다. "
+            + "옮길 손님이 없거나 대상 테이블에 손님(열린 세션)이 있으면 409, 같은 테이블이면 400, 타 부스·삭제 테이블은 404.")
+    @PostMapping("/admin/tables/{tableId}/move")
+    public TableMoveResponse move(@RequestHeader("Authorization") String authorization,
+                                  @PathVariable Long tableId,
+                                  @RequestBody(required = false) TableMoveRequest request) {
+        return tableAdminService.moveTable(authorization, tableId, request);
     }
 }
