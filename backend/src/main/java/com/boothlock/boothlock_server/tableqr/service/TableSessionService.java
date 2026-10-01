@@ -127,7 +127,7 @@ public class TableSessionService {
         return new TableSessionResponse(
                 session.getSessionToken(),
                 new TableSessionResponse.Booth(table.getBooth().getName(), table.getBooth().isOpen(),
-                        table.getBooth().getSeatFeePerPerson()),
+                        table.getBooth().getSeatFeePerPerson(), table.getBooth().getMinOrderAmount()),
                 new TableSessionResponse.Table(table.getLabel()),
                 restored,
                 session.getPartySize(),

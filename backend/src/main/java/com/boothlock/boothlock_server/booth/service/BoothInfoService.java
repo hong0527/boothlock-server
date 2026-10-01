@@ -65,7 +65,8 @@ public class BoothInfoService {
                 booth.getCategory(),
                 booth.getMapX(),
                 booth.getMapY(),
-                booth.getSeatFeePerPerson());
+                booth.getSeatFeePerPerson(),
+                booth.getMinOrderAmount());
     }
 
     public StaffAccountEntity authenticate(Jwt jwt) {

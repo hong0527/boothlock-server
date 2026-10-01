@@ -9,6 +9,8 @@ export type CustomerSessionInfo = {
   seatFeeCharged?: boolean
   /** 부스가 정한 1인당 자릿세(인원 선택 화면 안내용). 0이면 자릿세 없음. 예전에 저장된 세션엔 없다 */
   seatFeePerPerson?: number
+  /** 부스가 정한 첫 주문 최소금액(자릿세 제외, 장바구니 안내용). 0이면 제한 없음. 예전에 저장된 세션엔 없다 */
+  minOrderAmount?: number
 }
 /** 메뉴 분류 — 백엔드 MenuService 허용값(MAIN·SIDE·DRINK, #53)과 같다. 분류 없는 메뉴는 null */
 export type MenuCategoryCode = 'MAIN' | 'SIDE' | 'DRINK'

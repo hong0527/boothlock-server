@@ -153,6 +153,38 @@ class BoothSettingsApiTests {
     }
 
     @Test
+    void minOrderAmountDefaultsToZeroAndAdminCanChangeIt() throws Exception {
+        String token = login("admin");
+        mockMvc.perform(get("/api/v1/admin/booth").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.minOrderAmount").value(0));   // 0 = 제한 없음 — 기존 부스는 지금처럼 동작
+
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"minOrderAmount\":20000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.minOrderAmount").value(20000));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"-1", "1000001", "20000.5", "\"20000\"", "null"})
+    void minOrderAmountMustBeIntegerInRange(String value) throws Exception {
+        String token = login("admin");
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"minOrderAmount\":" + value + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
+    void staffCannotChangeMinOrderAmount() throws Exception {
+        String token = login("staff");
+        mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"minOrderAmount\":20000}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+    }
+
+    @Test
     void staffCannotChangeDepositorName() throws Exception {
         String token = login("staff");
         mockMvc.perform(patch("/api/v1/admin/booth").header("Authorization", "Bearer " + token)

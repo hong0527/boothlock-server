@@ -60,6 +60,11 @@ public class BoothEntity {
 
     public static final int DEFAULT_SEAT_FEE_PER_PERSON = 3000;
 
+    // 최소주문금액(명세서 밖, 파일럿) — 테이블 세션의 첫 메뉴 주문만 이 금액 이상이어야 한다(자릿세 제외, 메뉴 합계 기준).
+    // 0이면 제한 없음. DB 기본값 0 — 이 컬럼이 생기기 전 부스 행은 지금처럼 제한 없이 동작한다
+    @Column(name = "min_order_amount", nullable = false, columnDefinition = "integer default 0")
+    private int minOrderAmount;
+
     protected BoothEntity() {
     }
 
@@ -145,4 +150,8 @@ public class BoothEntity {
     public int getSeatFeePerPerson() { return seatFeePerPerson; }
     /** 범위 검사(0~MAX)는 쓰기 경로(O17)가 한다. 바꿔도 이미 청구된 자릿세 항목은 그때 단가 그대로 남는다 */
     public void updateSeatFeePerPerson(int seatFeePerPerson) { this.seatFeePerPerson = seatFeePerPerson; }
+
+    public int getMinOrderAmount() { return minOrderAmount; }
+    /** 범위 검사(0~MAX)는 쓰기 경로(O17)가 한다. 바꾸면 그 뒤 첫 주문부터 적용된다 — 이미 주문한 테이블의 추가 주문은 영향 없다 */
+    public void updateMinOrderAmount(int minOrderAmount) { this.minOrderAmount = minOrderAmount; }
 }

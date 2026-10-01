@@ -6,7 +6,7 @@ import TopNav from '../../components/TopNav'
 import { assetUrl } from '../../lib/apiBase'
 import { apiFetch } from '../../lib/apiFetch'
 import type { MenuItem } from '../../types/menu'
-import SeatFeeSetting from './SeatFeeSetting'
+import BoothAmountSetting from './BoothAmountSetting'
 
 export default function MenuListPage() {
   const [menus, setMenus] = useState<MenuItem[]>([])
@@ -34,7 +34,24 @@ export default function MenuListPage() {
 
       <div className="mx-auto flex w-full max-w-[600px] flex-col gap-4 px-6 py-10">
         {error && <p className="text-sm text-red-600">{error}</p>}
-        {etcMode && <SeatFeeSetting />}
+        {etcMode && (
+          <BoothAmountSetting
+            field="seatFeePerPerson"
+            title="자릿세"
+            caption="자동 청구 · 1인당"
+            max={100_000}
+            description="손님이 인원을 고르고 첫 주문을 넣을 때 테이블 주문내역에 따로 함께 올라가요. 0원이면 받지 않아요. 인원이 틀리면 테이블 결제 화면에서 자릿세 줄을 +/-로 고치고, 취소하면 면제돼요."
+          />
+        )}
+        {etcMode && (
+          <BoothAmountSetting
+            field="minOrderAmount"
+            title="최소주문금액"
+            caption="테이블 첫 주문 · 자릿세 제외"
+            max={1_000_000}
+            description="테이블의 첫 주문은 메뉴 합계가 이 금액 이상이어야 해요. 추가 주문은 금액 제한이 없어요. 0원이면 제한 없어요."
+          />
+        )}
         {etcMode && (
           <p className="mt-4 text-sm text-neutral-400">
             테이블 결제 화면의 기타 탭에서 눌러 추가하는 항목이에요(손님 메뉴판에는 안 보여요). 할인·쿠폰은 금액 앞에 -를

@@ -28,6 +28,8 @@ public class BoothSettingsService {
     public static final int MAP_COORDINATE_MAX = 10_000;
     /** 자릿세 1인당 상한 — 오타(30000 → 300000) 방지용. 운영 스키마 CHECK(chk_booth_seat_fee)와 같은 값 */
     public static final int SEAT_FEE_MAX = 100_000;
+    /** 최소주문금액 상한 — 오타 방지용. 운영 스키마 CHECK(chk_booth_min_order)와 같은 값 */
+    public static final int MIN_ORDER_AMOUNT_MAX = 1_000_000;
     private final BoothJwtProvider jwtProvider;
     private final BoothInfoService boothInfoService;
     private final BoothRepository boothRepository;
@@ -79,7 +81,12 @@ public class BoothSettingsService {
         if (request.has("seatFeePerPerson")) {
             // 손님에게 청구되는 금액이라 계좌와 같은 신뢰 등급 — ADMIN만 바꾼다
             requireAdmin(staff);
-            booth.updateSeatFeePerPerson(seatFee(request));
+            booth.updateSeatFeePerPerson(amount(request, "seatFeePerPerson", SEAT_FEE_MAX));
+        }
+        if (request.has("minOrderAmount")) {
+            // 손님 주문을 막는 값이라 자릿세와 같은 신뢰 등급 — ADMIN만 바꾼다
+            requireAdmin(staff);
+            booth.updateMinOrderAmount(amount(request, "minOrderAmount", MIN_ORDER_AMOUNT_MAX));
         }
 
         return BoothInfoService.toResponse(booth, boothRepository.countTablesByBoothId(booth.getId()));
@@ -124,7 +131,7 @@ public class BoothSettingsService {
             if (!name.equals("name") && !name.equals("operatingHours") && !name.equals("isOpen")
                     && !name.equals("bankAccount") && !name.equals("depositorName")
                     && !name.equals("category") && !name.equals("mapX") && !name.equals("mapY")
-                    && !name.equals("seatFeePerPerson"))
+                    && !name.equals("seatFeePerPerson") && !name.equals("minOrderAmount"))
                 throw new InvalidRequestException("지원하지 않는 필드입니다: " + name);
         });
     }
@@ -153,12 +160,12 @@ public class BoothSettingsService {
         return node.intValue();
     }
 
-    /** 0~SEAT_FEE_MAX 정수만 — 소수·문자열·null은 거부한다(0이 "안 받음"이라 null로 지우기는 둘 필요가 없다) */
-    private int seatFee(JsonNode request) {
-        JsonNode node = request.get("seatFeePerPerson");
+    /** 0~max 정수만 — 소수·문자열·null은 거부한다(0이 "안 받음/제한 없음"이라 null로 지우기는 둘 필요가 없다) */
+    private int amount(JsonNode request, String field, int max) {
+        JsonNode node = request.get(field);
         if (node == null || !node.isIntegralNumber() || !node.canConvertToInt()
-                || node.intValue() < 0 || node.intValue() > SEAT_FEE_MAX)
-            throw new InvalidRequestException("seatFeePerPerson은 0~" + SEAT_FEE_MAX + " 정수여야 합니다.");
+                || node.intValue() < 0 || node.intValue() > max)
+            throw new InvalidRequestException(field + "은 0~" + max + " 정수여야 합니다.");
         return node.intValue();
     }
 
