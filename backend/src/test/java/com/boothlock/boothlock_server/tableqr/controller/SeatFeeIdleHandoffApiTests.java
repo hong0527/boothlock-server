@@ -5,6 +5,7 @@ import com.boothlock.boothlock_server.order.OrderRaceTestFixture;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.domain.OrderItemType;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
+import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 
 import org.junit.jupiter.api.AfterEach;
@@ -351,6 +352,30 @@ class SeatFeeIdleHandoffApiTests {
         assertEquals(MENU_PRICE, rescan.get("inheritedMenuAmount").asLong(), "C4에 안 보이는 앞 세션 몫을 C1이 알려 준다");
         order(second)
                 .andExpect(status().isCreated());
+    }
+
+    @Test
+    void tableMoveAfterIdleHandoffKeepsInheritedSeatFeeAndMenuAmount() throws Exception {
+        // 유휴 인계 뒤 자리 이동 — 이동은 새 세션의 테이블만 바꾸고 앞 세션은 A에 남는다. 그래도 같은 일행이다
+        String first = scan().get("sessionToken").asString();
+        firstPartyOrdersAndPaysAll(first);
+        setMinOrderAmount(MENU_PRICE * 2);
+        makeIdle(first);
+        String second = scan().get("sessionToken").asString();
+        assertNotEquals(first, second);
+
+        TableEntity b = fx.tableRepository.save(new TableEntity(fx.booth, "B-1", "race-token-b1"));
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/move", fx.table.getId())
+                        .header("Authorization", bearer(fx.adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toTableId\":" + b.getId() + "}"))
+                .andExpect(status().isOk());
+
+        // 앞 세션 메뉴(8,000)가 합계에 들어 최소주문금액(16,000)에 걸리지 않고, 자릿세도 다시 붙지 않는다
+        order(second)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.totalAmount").value(MENU_PRICE));
+        assertTrue(seatFeeOrders(second).isEmpty(), "이동한 일행에 자릿세를 다시 청구하지 않는다");
     }
 
     @Test

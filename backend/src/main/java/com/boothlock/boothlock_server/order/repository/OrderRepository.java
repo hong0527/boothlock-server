@@ -179,20 +179,22 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     int IDLE_HANDOFF_MAX_HOPS = 3;
 
     /**
-     * 유휴 인계 선행 세션 — C1 재스캔(TableSessionWriter)이 유휴 세션을 닫고 새 세션을 열 때 두 시각에 같은 now를 쓴다
-     * (옛 ended_at == 새 started_at, 같은 테이블). O6 퇴실은 테이블 행 잠금 아래 자기 now로 닫고, 그 뒤 스캔은 그 잠금을
-     * 기다린 다음 새 now를 구하므로 퇴실로 끝난 세션은 이 조건에 걸리지 않는다(시계가 마이크로초 단위로 흐르는 한).
-     * p.id <> c.id는 같은 순간에 열리고 닫힌 세션이 자기 자신을 선행으로 잡는 것을 막는다
-     */
-    /**
      * 세션이 지금 붙어 있는 테이블의 라벨 — 자리 이동(명세서 밖)이 세션의 테이블을 바꾸므로, 주문 저장(OrderWriter.save)이
      * 세션 행을 잠근 뒤 이 값으로 주문번호 접두·테이블 스냅샷을 다시 정한다
      */
     @Query("select s.table.label from TableSessionEntity s where s.id = :sessionId")
     String findCurrentTableLabelOfSession(@Param("sessionId") Long sessionId);
 
+    /**
+     * 유휴 인계 선행 세션 — C1 재스캔(TableSessionWriter)이 유휴 세션을 닫고 새 세션을 열 때 두 시각에 같은 now를 쓴다
+     * (옛 ended_at == 새 started_at). O6 퇴실은 테이블 행 잠금 아래 자기 now로 닫고, 그 뒤 스캔은 그 잠금을
+     * 기다린 다음 새 now를 구하므로 퇴실로 끝난 세션은 이 조건에 걸리지 않는다(시계가 마이크로초 단위로 흐르는 한).
+     * 같은 테이블이 아니라 같은 부스로 묶는다 — 인계 뒤 자리 이동(TableAdminService.moveTable)은 새 세션의 테이블만 바꾸고
+     * 앞 세션은 옛 자리에 남으므로, 테이블로 묶으면 이동한 일행이 앞 세션 자릿세·메뉴 합계를 잃는다. 같은 부스의 다른 테이블
+     * 세션이 정확히 같은 µs에 닫히고 열려야 잘못 묶이므로 무시한다. p.id <> c.id는 자기 자신을 선행으로 잡는 것을 막는다
+     */
     @Query("select p.id from TableSessionEntity p, TableSessionEntity c "
-            + "where c.id in :sessionIds and p.table = c.table and p.endedAt = c.startedAt and p.id <> c.id")
+            + "where c.id in :sessionIds and p.table.booth = c.table.booth and p.endedAt = c.startedAt and p.id <> c.id")
     List<Long> findIdleHandoffPredecessorIds(@Param("sessionIds") List<Long> sessionIds);
 
     /**
