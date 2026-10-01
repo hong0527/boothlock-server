@@ -50,13 +50,25 @@ public class MenuController {
         return ResponseEntity.status(HttpStatus.CREATED).body(menuService.create(authorization, request));
     }
 
-    /** O8 수정·숨김·품절 (Must) — PATCH 부분 수정, 품절 토글은 이 API 하나. DELETE 없음 */
+    /** O8 수정·숨김·품절 (Must) — PATCH 부분 수정, 품절 토글은 이 API 하나 */
     @PatchMapping("/admin/menus/{menuId}")
     public MenuResponse updateMenu(
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long menuId,
             @RequestBody JsonNode request) {
         return menuService.update(authorization, menuId, request);
+    }
+
+    /**
+     * 메뉴 삭제 (명세서 밖) — 지난 주문은 order_item의 메뉴명·단가 스냅샷이라 영향이 없다(menu_id는 FK가 아닌 참조값).
+     * 타 부스·없는 메뉴는 404
+     */
+    @DeleteMapping("/admin/menus/{menuId}")
+    public ResponseEntity<Void> deleteMenu(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long menuId) {
+        menuService.delete(authorization, menuId);
+        return ResponseEntity.noContent().build();
     }
 
     /** O9 사진 업로드 (Must) — multipart ≤5MB, 매직바이트 검증·SVG 거부·1080px 재인코딩 */

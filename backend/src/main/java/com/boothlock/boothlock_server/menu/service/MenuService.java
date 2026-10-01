@@ -158,6 +158,18 @@ public class MenuService implements MenuLookup {
         }
     }
 
+    /**
+     * 메뉴 삭제 — 행을 지운다. 지난 주문 항목은 메뉴명·단가 스냅샷을 들고 있어 그대로 보이고 정산도 바뀌지 않는다.
+     * 손님 장바구니에 남아 있던 이 메뉴는 주문 때 C3가 "없는 메뉴"로 거른다. 같은 이름으로 다시 등록할 수 있다
+     */
+    @Transactional
+    public void delete(String authorization, Long menuId) {
+        BoothEntity booth = authenticatedBooth(authorization);
+        MenuEntity menu = menuRepository.findByIdAndBooth_Id(menuId, booth.getId())
+                .orElseThrow(() -> new NotFoundException("존재하지 않는 메뉴입니다."));
+        menuRepository.delete(menu);
+    }
+
     @Override
     @Transactional(readOnly = true)
     public List<MenuInfo> findByBoothIdAndMenuIds(Long boothId, Collection<Long> menuIds) {

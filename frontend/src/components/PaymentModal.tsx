@@ -443,7 +443,9 @@ export default function PaymentModal({ table, onClose, onCheckedOut, moveTargets
     }
     if (group.menuId == null) return
     const menu = menus.find((m) => m.id === group.menuId)
-    if (menu?.soldOut) return
+    // 삭제된 메뉴(지난 주문에만 남은 줄)는 새로 담을 수 없다 — 담으면 주문 등록이 400으로 통째로 막힌다.
+    // 메뉴 목록을 못 불러온 경우(빈 배열)까지 막지는 않는다 — 그때는 예전처럼 서버가 판정한다
+    if (menu?.soldOut || (menus.length > 0 && !menu)) return
     addToDraft(group.menuId, group.menuName, group.unitPrice)
   }
 
