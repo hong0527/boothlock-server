@@ -109,7 +109,14 @@ public class TableSessionWriter {
         // O14가 연 세션은 1µs 뒤에 시작시켜 그 일치를 일부러 깬다 — 인원수만 안 옮기면 C3의 인원수 검사가 앞 세션 자릿세를
         // "이미 냈음"으로 보고 인원을 묻지 않은 채 자릿세 없이 받는다. 컬럼을 늘리는 대신 표지 자체를 만들지 않는 쪽을 골랐다
         // (started_at은 DATETIME(6)이고 now는 µs로 잘려 있어 1µs 차이가 그대로 남는다. 유휴 판정에는 무시할 만한 차이다)
-        LocalDateTime startedAt = staffOpened && !openSessions.isEmpty() ? now.plus(1, ChronoUnit.MICROS) : now;
+        // 만료된 open session을 이 요청에서 종료하지 않은 경우에는 시작 시각을 1µs 뒤로 둔다.
+        // 직원 체크아웃 직후 새 QR 스캔은 이 분기에서 open session을 찾지 못한다. 이때 checkout의
+        // ended_at과 새 started_at이 우연히 같으면, OrderRepository가 이를 유휴 인계로 오인해
+        // 이전 손님의 자릿세·메뉴 합계를 이어받는다.
+        // 실제 유휴 인계(손님 QR 스캔이 만료된 open session을 종료한 경우)만 같은 시각을 유지한다.
+        LocalDateTime startedAt = !staffOpened && !openSessions.isEmpty()
+                ? now
+                : now.plus(1, ChronoUnit.MICROS);
         TableSessionEntity session = tableSessionRepository.saveAndFlush(
                 new TableSessionEntity(table, sessionToken, startedAt));
         // 앞 세션이 오늘 자릿세를 이미 냈거나 면제받았으면 인원수도 이어받는다 — 그래야 C1 응답에 partySize가 실려 프론트가 인원 선택을
