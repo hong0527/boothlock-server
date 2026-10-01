@@ -5,6 +5,7 @@ import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,6 +45,7 @@ public class ServedItemService {
     private final OrderRepository orderRepository;
     private final Clock clock;
 
+    @Autowired
     public ServedItemService(BoothStaffAuthenticator staffAuthenticator, OrderRepository orderRepository) {
         this(staffAuthenticator, orderRepository, Clock.systemUTC());
     }
