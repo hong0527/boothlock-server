@@ -50,7 +50,7 @@ export default function MenuOrderPage() {
     }
   }, [])
 
-  // 분류(메인 → 사이드 → 음료) 안에서 가격 낮은 순 — 규칙은 lib/menuOrder
+  // 분류(메인 → 사이드 → 음료) 안에서 가격 높은 순 — 규칙은 lib/menuOrder
   const visibleMenus = useMemo(
     () => sortMenusForBoard(menus, category === 'ALL' ? undefined : category),
     [menus, category],
