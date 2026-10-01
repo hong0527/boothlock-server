@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -115,18 +116,44 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
     }
 
     /**
-     * 최소주문금액 판정(명세서 밖, 파일럿) — 이 세션에 살아 있는 메뉴 주문이 있는가. 취소된 주문·취소된 항목은 세지 않는다 —
-     * 첫 주문을 취소하고 소액만 다시 주문하는 우회를 막는다. 자릿세·기타 항목만 든 주문도 세지 않는다. 수기 주문(O14)의 메뉴는 센다.
-     * 잠금 없이 본다: 같은 테이블 폰 두 대가 동시에 첫 주문을 넣으면 둘 다 검사를 받을 뿐이라(더 엄격한 쪽) 잠글 이유가 없다
+     * 최소주문금액 판정(명세서 밖, 파일럿) — 이 세션의 살아 있는 메뉴 합계. 취소된 주문·취소된 항목은 세지 않는다 —
+     * 첫 주문을 취소하고 소액만 다시 주문하는 우회를 막는다. 자릿세·기타 항목은 세지 않는다. 수기 주문(O14)의 메뉴는 센다
      */
-    @Query("select count(o) > 0 from OrderEntity o join o.items i "
+    @Query("select coalesce(sum(i.unitPrice * i.qty), 0) from OrderEntity o join o.items i "
             + "where o.sessionId = :sessionId and o.status <> :canceled and i.itemType = :menu and i.canceled = false")
-    boolean existsActiveMenuOrder(@Param("sessionId") Long sessionId,
-                                  @Param("canceled") OrderStatus canceled,
-                                  @Param("menu") OrderItemType menu);
+    long sumActiveMenuAmount(@Param("sessionId") Long sessionId,
+                             @Param("canceled") OrderStatus canceled,
+                             @Param("menu") OrderItemType menu);
 
-    default boolean existsActiveMenuOrder(Long sessionId) {
-        return existsActiveMenuOrder(sessionId, OrderStatus.CANCELED, OrderItemType.MENU);
+    default long sumActiveMenuAmount(Long sessionId) {
+        return sumActiveMenuAmount(sessionId, OrderStatus.CANCELED, OrderItemType.MENU);
+    }
+
+    /** sumActiveMenuAmount의 영업일 한정판 — 유휴 인계 앞 세션의 메뉴는 같은 영업일 것만 이어받는다(existsSeatFeeItemOn과 같은 이유) */
+    @Query("select coalesce(sum(i.unitPrice * i.qty), 0) from OrderEntity o join o.items i "
+            + "where o.sessionId in :sessionIds and o.businessDate = :businessDate "
+            + "and o.status <> :canceled and i.itemType = :menu and i.canceled = false")
+    long sumActiveMenuAmountOn(@Param("sessionIds") List<Long> sessionIds,
+                               @Param("businessDate") LocalDate businessDate,
+                               @Param("canceled") OrderStatus canceled,
+                               @Param("menu") OrderItemType menu);
+
+    /**
+     * 유휴 인계로 이어진 앞 세션들(최대 IDLE_HANDOFF_MAX_HOPS단계)의 이 영업일 메뉴 합계 — sessionId 자신은 보지 않는다.
+     * 퇴실 없이 임계를 넘겨 다시 찍은 같은 일행의 추가 주문이 최소주문금액에 다시 걸리지 않게 한다(자릿세 인계와 같은 기준)
+     */
+    default long sumMenuAmountInheritedFromIdleHandoff(Long sessionId, LocalDate businessDate) {
+        List<Long> predecessors = new ArrayList<>();
+        List<Long> frontier = List.of(sessionId);
+        for (int hop = 0; hop < IDLE_HANDOFF_MAX_HOPS; hop++) {
+            frontier = findIdleHandoffPredecessorIds(frontier);
+            if (frontier.isEmpty()) {
+                break;
+            }
+            predecessors.addAll(frontier);
+        }
+        return predecessors.isEmpty() ? 0
+                : sumActiveMenuAmountOn(predecessors, businessDate, OrderStatus.CANCELED, OrderItemType.MENU);
     }
 
     /**

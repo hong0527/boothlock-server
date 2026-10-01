@@ -118,6 +118,19 @@ public class OrderWriter {
                 || orderRepository.inheritsSeatFeeFromIdleHandoff(sessionId, numberingService.businessDateOf(at));
     }
 
+    /**
+     * 최소주문금액(명세서 밖, 파일럿)의 기준 합계 — 이 세션의 살아 있는 메뉴 합계 + 유휴 인계 앞 세션의 같은 영업일 메뉴 합계.
+     * 자릿세·기타 항목은 넣지 않는다. 이 합계는 0이거나 최소주문금액 이상이어야 한다(C3 주문·C5 손님 취소가 지킨다)
+     */
+    public long partyMenuAmount(Long sessionId, LocalDateTime at) {
+        return orderRepository.sumActiveMenuAmount(sessionId) + inheritedMenuAmount(sessionId, at);
+    }
+
+    /** partyMenuAmount 중 유휴 인계 앞 세션 몫 — C4는 이 세션 주문만 돌려줘 프론트가 볼 수 없어 C1 응답에 따로 싣는다 */
+    public long inheritedMenuAmount(Long sessionId, LocalDateTime at) {
+        return orderRepository.sumMenuAmountInheritedFromIdleHandoff(sessionId, numberingService.businessDateOf(at));
+    }
+
     /** 첫 메뉴 주문에 함께 만들 자릿세 — 1인당 금액(부스 설정)과 세션 인원수. 둘 중 하나라도 0이면 만들지 않는다 */
     public record SeatFee(int perPerson, int partySize) {
 
