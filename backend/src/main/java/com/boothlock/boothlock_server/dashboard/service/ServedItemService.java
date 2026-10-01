@@ -5,9 +5,11 @@ import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
@@ -41,16 +43,25 @@ public class ServedItemService {
 
     private final BoothStaffAuthenticator staffAuthenticator;
     private final OrderRepository orderRepository;
+    private final Clock clock;
 
+    @Autowired
     public ServedItemService(BoothStaffAuthenticator staffAuthenticator, OrderRepository orderRepository) {
+        this(staffAuthenticator, orderRepository, Clock.systemUTC());
+    }
+
+    /** 테스트에서는 시간을 고정해 만료 정리를 검증한다. */
+    ServedItemService(BoothStaffAuthenticator staffAuthenticator, OrderRepository orderRepository, Clock clock) {
         this.staffAuthenticator = staffAuthenticator;
         this.orderRepository = orderRepository;
+        this.clock = clock;
     }
 
     /** 부스의 체크 전체 — 주문현황 폴링이 함께 부른다 */
     public ServedItemsResponse list(String authorization) {
         Long boothId = staffAuthenticator.authenticate(authorization).getBooth().getId();
         Map<Long, Entry> orders = byBooth.getOrDefault(boothId, Map.of());
+        removeExpired(orders, clock.instant());
         return new ServedItemsResponse(orders.entrySet().stream()
                 .map(e -> toOrderServed(e.getKey(), e.getValue()))
                 .sorted(Comparator.comparing(ServedItemsResponse.OrderServed::orderId))
@@ -68,9 +79,9 @@ public class ServedItemService {
             throw new NotFoundException("주문 항목을 찾을 수 없습니다.");
         }
 
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         Map<Long, Entry> orders = byBooth.computeIfAbsent(boothId, id -> new ConcurrentHashMap<>());
-        orders.values().removeIf(entry -> entry.updatedAt().isBefore(now.minus(KEEP)));
+        removeExpired(orders, now);
         Entry updated = orders.compute(orderId, (id, prev) -> {
             Set<Long> ids = prev == null ? new HashSet<>() : new HashSet<>(prev.itemIds());
             if (served) ids.add(itemId);
@@ -82,5 +93,10 @@ public class ServedItemService {
 
     private ServedItemsResponse.OrderServed toOrderServed(Long orderId, Entry entry) {
         return new ServedItemsResponse.OrderServed(orderId, entry.itemIds().stream().sorted().toList());
+    }
+
+    /** 조회만 계속해도 만료 기록이 응답과 메모리에서 사라지게 한다. */
+    private void removeExpired(Map<Long, Entry> orders, Instant now) {
+        orders.values().removeIf(entry -> entry.updatedAt().isBefore(now.minus(KEEP)));
     }
 }
