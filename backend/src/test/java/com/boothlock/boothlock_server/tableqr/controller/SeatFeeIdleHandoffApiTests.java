@@ -331,6 +331,47 @@ class SeatFeeIdleHandoffApiTests {
         assertEquals(1, seatFeeOrders, "자릿세는 첫 세션에서 한 번만");
     }
 
+    // ── 최소주문금액 (명세서 밖, 파일럿) — 자릿세와 같은 "같은 일행" 기준 ─────────────────
+
+    private void setMinOrderAmount(int amount) {
+        jdbcTemplate.update("update booth set min_order_amount = ? where id = ?", amount, fx.booth.getId());
+    }
+
+    @Test
+    void idleHandoffCarriesMenuAmountTowardMinOrder() throws Exception {
+        // 결제까지 끝낸 일행이 퇴실 없이 임계를 넘겨 다시 찍어도 같은 일행 — 앞 세션 메뉴(8,000)가 합계에 들어 소액 추가 주문이 된다
+        String first = scan().get("sessionToken").asString();
+        firstPartyOrdersAndPaysAll(first);
+        setMinOrderAmount(MENU_PRICE * 2);
+        makeIdle(first);
+
+        JsonNode rescan = scan();
+        String second = rescan.get("sessionToken").asString();
+        assertNotEquals(first, second);
+        assertEquals(MENU_PRICE, rescan.get("inheritedMenuAmount").asLong(), "C4에 안 보이는 앞 세션 몫을 C1이 알려 준다");
+        order(second)
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void newPartyAfterCheckoutMustMeetMinOrderAgain() throws Exception {
+        // 퇴실(O6) 뒤 새로 찍은 손님은 다른 일행 — 앞 일행 주문은 합계에 들지 않는다
+        String first = scan().get("sessionToken").asString();
+        firstPartyOrdersAndPaysAll(first);
+        setMinOrderAmount(MENU_PRICE * 2);
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", fx.table.getId())
+                        .header("Authorization", bearer(fx.staffToken)))
+                .andExpect(status().isOk());
+
+        JsonNode rescan = scan();
+        String second = rescan.get("sessionToken").asString();
+        assertEquals(0, rescan.get("inheritedMenuAmount").asLong());
+        choosePartySize(second, 2);
+        order(second)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+    }
+
     /**
      * 이 PR이 만드는 핵심 모양 — 손님이 주문만 넣고(승인 전) 자리를 뜬 뒤 유휴 임계를 넘긴 경우.
      * 다른 테스트들은 자릿세 인계만 보려고 그 승인대기를 미리 거절해 두므로(firstPartyChoosesThree 주석),

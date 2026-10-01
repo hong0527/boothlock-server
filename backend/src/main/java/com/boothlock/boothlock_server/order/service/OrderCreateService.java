@@ -147,12 +147,18 @@ public class OrderCreateService {
                 })
                 .toList());
         int total = totalAmount(request, menus);
-        // 최소주문금액(명세서 밖, 파일럿)은 세션의 첫 메뉴 주문에만 — 자릿세는 별도 주문이라 total에 들지 않는다.
+        // 최소주문금액(명세서 밖, 파일럿)은 일행의 메뉴 합계(이 주문 포함) 기준 — 첫 주문이면 이 주문만으로 넘어야 하고,
+        // 이미 넘은 일행의 추가 주문은 금액과 무관하게 통과한다. 합계에는 유휴 인계 앞 세션의 같은 영업일 메뉴도 든다
+        // (OrderWriter.partyMenuAmount). 자릿세는 별도 주문이라 들지 않는다.
         // 멱등 재요청(위에서 반환)·수기 주문(createManual)은 검사하지 않는다. 400이 아니라 409 — 프론트는 C3의 400을
         // "멱등키를 새로" 신호로 받아 키를 버리는데, 이건 장바구니만 채우면 되는 상태 문제다
-        if (total < booth.getMinOrderAmount() && !orderRepository.existsActiveMenuOrder(sessionId)) {
-            throw new InvalidStateException(String.format(
-                    "첫 주문은 %,d원 이상부터 가능해요 (현재 %,d원)", booth.getMinOrderAmount(), total));
+        if (booth.getMinOrderAmount() > 0) {
+            long existing = orderWriter.partyMenuAmount(sessionId, createdAt);
+            if (existing + total < booth.getMinOrderAmount()) {
+                throw new InvalidStateException(existing == 0
+                        ? String.format("첫 주문은 %,d원 이상부터 가능해요 (현재 %,d원)", booth.getMinOrderAmount(), total)
+                        : String.format("주문 합계가 %,d원 이상이어야 해요 (현재 %,d원)", booth.getMinOrderAmount(), existing + total));
+            }
         }
 
         // 자릿세(명세서 밖, 파일럿 전용)는 메뉴 주문에 섞지 않는다 — 이 세션 첫 주문이면 저장 트랜잭션(OrderWriter.save)이 세션 행을

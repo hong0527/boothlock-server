@@ -18,6 +18,8 @@ import com.boothlock.boothlock_server.tableqr.support.SecureTokenGenerator;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+
 /**
  * C1 세션 발급 — QR 토큰 검증 → 활성 세션 있으면 복원(restored:true), 없으면 생성+테이블 사용중 전환 (명세서 C1).
  * "활성"은 SeatIdlePolicy 정의다(E1·O3와 같음). 종료 안 됐어도 유휴 만료된 세션은 복원하지 않고 종료 후 새로 발급한다 —
@@ -124,6 +126,7 @@ public class TableSessionService {
     }
 
     private TableSessionResponse toResponse(TableEntity table, TableSessionEntity session, boolean restored) {
+        LocalDateTime now = seatIdlePolicy.now();
         return new TableSessionResponse(
                 session.getSessionToken(),
                 new TableSessionResponse.Booth(table.getBooth().getName(), table.getBooth().isOpen(),
@@ -132,6 +135,7 @@ public class TableSessionService {
                 restored,
                 session.getPartySize(),
                 // C4는 이 세션 주문만 돌려줘 유휴 인계로 이어받은 자릿세를 프론트가 볼 수 없다 — 그 여부를 따로 알려 준다
-                orderWriter.isSeatFeeHandled(session.getId(), seatIdlePolicy.now()));
+                orderWriter.isSeatFeeHandled(session.getId(), now),
+                orderWriter.inheritedMenuAmount(session.getId(), now));
     }
 }

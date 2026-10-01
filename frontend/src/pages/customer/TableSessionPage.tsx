@@ -14,6 +14,8 @@ type TableSessionResponse = {
   partySize: number | null
   /** 이 세션이 자릿세를 이미 냈다고 서버가 보는가 — 유휴 인계로 이어받은 앞 세션 자릿세 포함(C4로는 안 보인다) */
   seatFeeCharged: boolean
+  /** 유휴 인계로 이어진 앞 세션의 같은 영업일 메뉴 합계 — 최소주문금액 판정용(C4로는 안 보인다) */
+  inheritedMenuAmount: number
 }
 
 export default function TableSessionPage() {
@@ -59,6 +61,7 @@ export default function TableSessionPage() {
           seatFeeCharged: data.seatFeeCharged === true,
           seatFeePerPerson: data.booth.seatFeePerPerson,
           minOrderAmount: data.booth.minOrderAmount,
+          inheritedMenuAmount: data.inheritedMenuAmount ?? 0,
         })
         // 명세서 §1.2: 토큰 교환 직후 tableToken을 주소창에서 제거 — replace 네비게이션으로 히스토리에도 안 남긴다
         // 자릿세(1인당 3,000원, 첫 주문에만 부과)가 인원수를 필요로 해서 다시 인원 선택을 거친다(2026-09-23 피드백,

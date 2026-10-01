@@ -56,7 +56,7 @@ export default function CartPage() {
   const minOrderAmount = sessionInfo?.minOrderAmount ?? 0
   // 최소주문금액도 주문내역(C4)을 봐야 첫 주문인지 안다 — 걸리는 부스일 때만 응답을 기다린다(자릿세와 같은 이유)
   const previewLoading = myOrders === undefined && (seatFeePossible || minOrderAmount > 0)
-  const shortfall = minOrderShortfall(minOrderAmount, totalAmount, myOrders)
+  const shortfall = minOrderShortfall(minOrderAmount, totalAmount, myOrders, sessionInfo?.inheritedMenuAmount ?? 0)
   const seatFee =
     !seatFeePossible || myOrders === undefined
       ? 0
@@ -84,7 +84,7 @@ export default function CartPage() {
         if (code === 'SOLD_OUT') setError('품절된 메뉴가 포함되어 있어요. 장바구니를 다시 확인해주세요.')
         else if (code === 'ORDER_RATE_LIMITED') setError('미결제 주문이 많습니다. 입금 확인 후 추가 주문해주세요.')
         else if (code === 'ORDER_CLOSED') setError('지금은 주문 접수 시간이 아니에요.')
-        // 첫 주문 최소금액 미달 — 화면이 미리 막지만, QR을 찍은 뒤 운영자가 금액을 올렸으면 서버 문구(금액 포함)로 알린다
+        // 최소주문금액 미달 — 화면이 미리 막지만, QR을 찍은 뒤 운영자가 금액을 올렸으면 서버 문구(금액 포함)로 알린다
         else if (code === 'INVALID_STATE') setError(body?.error?.message ?? '주문 금액을 다시 확인해주세요.')
         else if (code === 'PARTY_SIZE_REQUIRED') {
           // 인원 선택을 건너뛰고 들어온 세션(두 번째 폰·재스캔) — 인원을 고르고 이 화면으로 돌아온다(장바구니는 그대로)
@@ -219,7 +219,7 @@ export default function CartPage() {
         </div>
         {items.length > 0 && shortfall > 0 && (
           <p className="mb-2 text-center text-body-3 text-red-600">
-            첫 주문은 {minOrderAmount.toLocaleString()}원 이상부터 가능해요 (자릿세 제외). {shortfall.toLocaleString()}원 더
+            최소주문금액은 {minOrderAmount.toLocaleString()}원이에요 (자릿세 제외). {shortfall.toLocaleString()}원 더
             담아주세요.
           </p>
         )}

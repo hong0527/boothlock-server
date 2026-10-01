@@ -290,6 +290,48 @@ class OrderControllerTests {
                 .andExpect(status().isConflict());
     }
 
+    @Test
+    void additionalOrderIsCheckedAgainstPartyTotalNotJustExistence() throws Exception {
+        // 운영자가 첫 주문 항목을 줄여 합계가 최소금액 밑으로 내려갔으면, 추가 주문은 합계를 다시 채워야 한다
+        OrderEntity first = new OrderEntity(booth.getId(), mySessionId, "A3-1", LocalDate.of(2026, 9, 15),
+                1, "seed-small", 8000, false, NOW.plusMinutes(1));
+        first.addItem(new OrderItemEntity(kimchiId, "김치전", 8000, 1));
+        orderRepository.save(first);
+        setMinOrderAmount(20000);
+
+        mockMvc.perform(post("/api/v1/orders")
+                        .header(SESSION_HEADER, MY_TOKEN).header("Idempotency-Key", "idem-min-total-low")
+                        .contentType(MediaType.APPLICATION_JSON).content(orderBody(colaId, 1)))      // 8,000 + 5,000
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("13,000원")));
+        mockMvc.perform(post("/api/v1/orders")
+                        .header(SESSION_HEADER, MY_TOKEN).header("Idempotency-Key", "idem-min-total-ok")
+                        .contentType(MediaType.APPLICATION_JSON).content(orderBody(kimchiId, 2)))    // 8,000 + 16,000
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void customerCannotCancelDownBelowMinOrderAmount() throws Exception {
+        // 최소금액을 넘긴 첫 주문 + 소액 추가 주문 뒤 큰 주문만 취소하는 우회를 막는다
+        OrderEntity big = seedOrder(mySessionId, 1);                                 // 16,000원
+        OrderEntity small = new OrderEntity(booth.getId(), mySessionId, "A3-2", LocalDate.of(2026, 9, 15),
+                2, "seed-cola", 5000, false, NOW.plusMinutes(2));
+        small.addItem(new OrderItemEntity(colaId, "제로콜라", 5000, 1));
+        orderRepository.save(small);
+        setMinOrderAmount(15000);
+
+        mockMvc.perform(post("/api/v1/orders/{orderId}/cancel", big.getId()).header(SESSION_HEADER, MY_TOKEN))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"))
+                .andExpect(jsonPath("$.error.message").value(org.hamcrest.Matchers.containsString("15,000원")));
+        // 소액 주문을 먼저 취소하면(남는 16,000원 ≥ 15,000원) 되고, 그 뒤 큰 주문을 취소해 0원이 되는 것도 된다
+        mockMvc.perform(post("/api/v1/orders/{orderId}/cancel", small.getId()).header(SESSION_HEADER, MY_TOKEN))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/orders/{orderId}/cancel", big.getId()).header(SESSION_HEADER, MY_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELED"));
+    }
+
     // ── 세션 인증 (C3·C4·C5 공통) ───────────────────────
 
     @Test
