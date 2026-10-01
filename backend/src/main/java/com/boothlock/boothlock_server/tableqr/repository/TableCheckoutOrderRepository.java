@@ -83,6 +83,16 @@ public interface TableCheckoutOrderRepository extends Repository<OrderEntity, Lo
                                          @Param("tableLabel") String tableLabel);
 
     /**
+     * 자리 합석(명세서 밖) — 합쳐지는 세션의 주문 전부(상태 무관)를 남는 세션으로 옮긴다. 계산서가 하나로 합쳐지고, 최소주문금액(일행 메뉴 합계)·
+     * 자릿세 처리 여부·미결제 합계도 남는 세션 기준으로 이어진다. 주문번호·영업일·테이블 스냅샷은 그대로다(진행 중 주문의 스냅샷은
+     * 호출자가 relabelInProgressOrdersOfSession으로 따로 바꾼다). 호출자는 두 테이블 행과 두 세션 행을 잠근 트랜잭션에서 부른다
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("update OrderEntity o set o.sessionId = :toSessionId where o.boothId = :boothId and o.sessionId = :fromSessionId")
+    int moveOrdersToSession(@Param("fromSessionId") Long fromSessionId, @Param("toSessionId") Long toSessionId,
+                            @Param("boothId") Long boothId);
+
+    /**
      * O6 퇴실 때 면제할 자릿세 주문 — 종료하는 세션에 살아 있는 메뉴 주문이 하나도 없으면(주문했다가 "안 먹겠다"로 거절·취소)
      * 그 세션의 미입금 자릿세 전용 주문(살아 있는 자릿세 항목만 남은 DONE+UNPAID)을 고른다. 음식을 하나라도 먹었으면 대상이 아니다.
      * 자릿세는 조리할 게 없어 처음부터 DONE이라 자동 거절(승인대기)·자동 완료(접수) 어느 쪽에도 안 걸려, 비운 뒤에도
