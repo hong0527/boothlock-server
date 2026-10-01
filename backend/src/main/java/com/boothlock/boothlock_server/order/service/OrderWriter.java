@@ -46,6 +46,11 @@ public class OrderWriter {
                 && orderRepository.touchIfSessionActive(spec.sessionId(), spec.createdAt()) == 0) {
             throw new SessionExpiredException();
         }
+        // 자리 이동(명세서 밖)은 세션 행을 잠그고 테이블을 바꾼다 — 호출자가 잠금 전에 읽은 라벨은 옛 자리일 수 있어, 잠금 뒤 현재 테이블로 다시 정한다.
+        // 이동 중에 들어온 주문은 위 조건부 UPDATE에서 줄을 섰다가 이동이 커밋된 뒤 새 자리를 읽는다(READ COMMITTED)
+        if (spec.sessionId() != null) {
+            spec = spec.withTableLabel(orderRepository.findCurrentTableLabelOfSession(spec.sessionId()));
+        }
         // 할인(기타 항목의 음수 금액)은 그 테이블의 미결제 합계까지만 — 받을 돈보다 많이 깎으면 결제확인·정산에 마이너스가 남는다.
         // 세션 행을 잠근 뒤에 합계를 본다: 같은 테이블의 다른 저장·결제확인과 엇갈려 한도를 두 번 쓰지 않게
         if (spec.totalAmount() < 0) {
@@ -135,6 +140,15 @@ public class OrderWriter {
                          String idempotencyKey, int totalAmount, List<OrderItemEntity> items,
                          LocalDateTime createdAt, boolean manual) {
             this(boothId, sessionId, label, tableLabel, idempotencyKey, totalAmount, items, createdAt, manual, false, null);
+        }
+
+        /** 세션의 현재 테이블 라벨로 바꾼 사본 — 같거나(대부분) 알 수 없으면 그대로 둔다. 주문번호 접두(label)도 새 라벨로 다시 만든다 */
+        OrderSpec withTableLabel(String current) {
+            if (current == null || tableLabel == null || current.equals(tableLabel)) {
+                return this;
+            }
+            return new OrderSpec(boothId, sessionId, OrderCreateService.normalizeTableLabel(current), current,
+                    idempotencyKey, totalAmount, items, createdAt, manual, noCooking, seatFee);
         }
     }
 

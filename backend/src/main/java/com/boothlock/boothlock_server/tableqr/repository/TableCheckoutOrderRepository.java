@@ -66,6 +66,23 @@ public interface TableCheckoutOrderRepository extends Repository<OrderEntity, Lo
             @Param("canceledAt") LocalDateTime canceledAt);
 
     /**
+     * 자리 이동(명세서 밖) 때 그 손님의 진행 중 주문(승인대기·접수)의 테이블 라벨 스냅샷을 새 테이블로 바꾼다 — 주문현황 카드(O10)가
+     * 이 스냅샷으로 테이블을 보여 줘서, 안 바꾸면 이동 뒤에도 음식이 옛 자리로 나간다. 주문번호(order_no)는 입금자명 대조에 쓰여 그대로 둔다.
+     * 완료·취소 주문은 옛 자리에서 끝난 기록이라 건드리지 않는다. 호출자는 두 테이블 행과 세션 행을 잠근 트랜잭션에서 부른다(TableAdminService.moveTable)
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("""
+            update OrderEntity o
+               set o.tableLabel = :tableLabel
+             where o.boothId = :boothId
+               and o.sessionId = :sessionId
+               and o.status in (com.boothlock.boothlock_server.global.domain.OrderStatus.PENDING_APPROVAL,
+                                com.boothlock.boothlock_server.global.domain.OrderStatus.RECEIVED)
+            """)
+    int relabelInProgressOrdersOfSession(@Param("sessionId") Long sessionId, @Param("boothId") Long boothId,
+                                         @Param("tableLabel") String tableLabel);
+
+    /**
      * O6 퇴실 때 면제할 자릿세 주문 — 종료하는 세션에 살아 있는 메뉴 주문이 하나도 없으면(주문했다가 "안 먹겠다"로 거절·취소)
      * 그 세션의 미입금 자릿세 전용 주문(살아 있는 자릿세 항목만 남은 DONE+UNPAID)을 고른다. 음식을 하나라도 먹었으면 대상이 아니다.
      * 자릿세는 조리할 게 없어 처음부터 DONE이라 자동 거절(승인대기)·자동 완료(접수) 어느 쪽에도 안 걸려, 비운 뒤에도

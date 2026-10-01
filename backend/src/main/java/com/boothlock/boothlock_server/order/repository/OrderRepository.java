@@ -157,6 +157,13 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
      * 기다린 다음 새 now를 구하므로 퇴실로 끝난 세션은 이 조건에 걸리지 않는다(시계가 마이크로초 단위로 흐르는 한).
      * p.id <> c.id는 같은 순간에 열리고 닫힌 세션이 자기 자신을 선행으로 잡는 것을 막는다
      */
+    /**
+     * 세션이 지금 붙어 있는 테이블의 라벨 — 자리 이동(명세서 밖)이 세션의 테이블을 바꾸므로, 주문 저장(OrderWriter.save)이
+     * 세션 행을 잠근 뒤 이 값으로 주문번호 접두·테이블 스냅샷을 다시 정한다
+     */
+    @Query("select s.table.label from TableSessionEntity s where s.id = :sessionId")
+    String findCurrentTableLabelOfSession(@Param("sessionId") Long sessionId);
+
     @Query("select p.id from TableSessionEntity p, TableSessionEntity c "
             + "where c.id in :sessionIds and p.table = c.table and p.endedAt = c.startedAt and p.id <> c.id")
     List<Long> findIdleHandoffPredecessorIds(@Param("sessionIds") List<Long> sessionIds);

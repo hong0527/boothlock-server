@@ -324,6 +324,11 @@ public class OrderCreateService {
      * O14(ManualOrderService)가 tableId 지정 시 orderNo 접두(label)를 만드는 데도 그대로 재사용한다 — public.
      */
     public String normalizeLabel(String tableLabel) {
+        return normalizeTableLabel(tableLabel);
+    }
+
+    /** normalizeLabel의 정적판 — OrderWriter가 저장 직전 세션의 현재 테이블(자리 이동 반영)로 라벨을 다시 만들 때 쓴다 */
+    static String normalizeTableLabel(String tableLabel) {
         if (tableLabel == null || tableLabel.isBlank()) {
             throw new InvalidRequestException("테이블 정보가 없습니다");
         }

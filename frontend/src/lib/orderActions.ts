@@ -105,6 +105,18 @@ export function refundDone(orderId: number) {
 }
 
 /**
+ * 자리 이동(명세서 밖) — 이 테이블 손님(세션)을 빈 테이블로 옮긴다. 세션·토큰이 그대로라 주문·미결제가 따라가고 손님 폰도 안 끊긴다.
+ * 대상에 손님(열린 세션)이 있으면 409 — 서버가 최종 판정한다
+ */
+export function moveTable(tableId: number, toTableId: number) {
+  return apiFetch(`/api/v1/admin/tables/${tableId}/move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ toTableId }),
+  })
+}
+
+/**
  * O6 퇴실·초기화 — 세션 종료(손님 토큰 즉시 410)+테이블 비움. 주문 데이터는 그대로.
  * 테이블 갈래 개정 후에는 활성 세션이 없어도 200(멱등)이고, 미결제가 있으면 응답에 warning이 실린다.
  * 개정 전 구현은 세션이 없으면 410을 내므로 호출부는 410도 "이미 비어 있음"으로 처리한다

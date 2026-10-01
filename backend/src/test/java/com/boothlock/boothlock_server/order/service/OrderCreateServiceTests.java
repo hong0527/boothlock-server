@@ -423,8 +423,8 @@ class OrderCreateServiceTests {
     void normalizesTableLabelForOrderNo() {
         // 라벨 원본은 "A-3"이지만 주문번호는 정규화본을 쓴다 — 하이픈·공백 제거 + 대문자 (명세서 §2)
         assertEquals("A3-1", create("idem-1", request(3L, 1)).response().orderNo());
-        assertEquals("B12-2", orderCreateService.create(
-                boothId, mySession, " b 12 ", "idem-2", request(3L, 1)).response().orderNo());
+        // 저장은 세션의 현재 테이블 라벨을 쓰므로(자리 이동 반영, OrderWriter.save) 세션과 다른 라벨은 정규화 규칙만 직접 본다
+        assertEquals("B12", orderCreateService.normalizeLabel(" b 12 "));
     }
 
     @Test
@@ -451,8 +451,7 @@ class OrderCreateServiceTests {
         // 자바 \s는 전각 공백(U+3000)을 못 잡는다 — \p{Z}까지 지워야 orderNo에 공백이 남지 않는다
         assertEquals("A3-1", orderCreateService.create(
                 boothId, mySession, "A　3", "idem-1", request(3L, 1)).response().orderNo());
-        assertEquals("B7-2", orderCreateService.create(
-                boothId, mySession, "B 7", "idem-2", request(3L, 1)).response().orderNo());
+        assertEquals("B7", orderCreateService.normalizeLabel("B 7"));
     }
 
     @Test

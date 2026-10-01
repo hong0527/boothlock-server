@@ -15,7 +15,9 @@ import {
 import { planGridSave } from '../lib/gridSavePlan'
 import { useNow } from '../lib/useNow'
 import { shouldShowTableEmptyState } from '../lib/tableEmptyState'
+import { readApiError } from '../lib/apiError'
 import { getAuthToken } from '../lib/auth'
+import { moveTable } from '../lib/orderActions'
 import { compareTableLabels, displayTableLabel } from '../lib/tableLabel'
 import type { TableStatusInfo } from '../types/table'
 
@@ -44,6 +46,9 @@ export default function TableHomePage() {
   // 추가·삭제·배치 저장 중 연타를 막는다 — 안 막으면 "테이블 추가"는 두 개 생기고, 삭제는 DELETE가 두 번 나간다
   const [tableActionBusy, setTableActionBusy] = useState(false)
   const [tableError, setTableError] = useState<string | null>(null)
+  // 자리 이동 모드 — 손님 있는 테이블(출발) → 빈 테이블(도착) 순서로 누른다. 결제 모달 상단 "자리 이동"과 같은 API다
+  const [moveMode, setMoveMode] = useState(false)
+  const [moveFromId, setMoveFromId] = useState<number | null>(null)
   // 경과시간 색상 판정 기준 시각 — 2시간 임계값 판정이라 촘촘한 갱신은 필요 없다(최대 30초 늦게 빨강)
   const now = useNow(30_000)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -273,6 +278,57 @@ export default function TableHomePage() {
     if (failedTableIds.size === 0) setEditMode(false) // 전부 성공했을 때만 편집 모드를 닫는다
   }
 
+  const exitMoveMode = () => {
+    setMoveMode(false)
+    setMoveFromId(null)
+    setTableError(null)
+  }
+
+  // 첫 클릭은 출발(손님 있는 테이블), 두 번째는 도착(빈 테이블). 화면 판정은 안내용이고 최종 판정은 서버가 한다(유휴 정리 필요·동시 착석 등)
+  const handleMovePick = async (table: TableStatusInfo) => {
+    if (tableActionBusy) return
+    setTableError(null)
+    const from = moveFromId === null ? null : (tables.find((t) => t.id === moveFromId) ?? null)
+    if (!from) {
+      if (!table.session) {
+        setTableError('손님이 있는 테이블을 먼저 골라주세요.')
+        return
+      }
+      setMoveFromId(table.id)
+      return
+    }
+    if (table.id === from.id) {
+      setMoveFromId(null) // 같은 테이블을 다시 누르면 출발 선택 취소
+      return
+    }
+    if (table.session || table.status !== 'EMPTY') {
+      setTableError('빈 테이블로만 옮길 수 있어요.')
+      return
+    }
+    const fromLabel = displayTableLabel(from.label)
+    const dest = displayTableLabel(table.label)
+    if (!window.confirm(`${fromLabel}번 손님을 ${dest}번으로 옮길까요?\n주문·미결제·자릿세가 그대로 따라가요.`)) return
+    setTableActionBusy(true)
+    try {
+      const res = await moveTable(from.id, table.id)
+      if (!res.ok) {
+        const { message } = await readApiError(res)
+        setTableError(message ? `자리 이동 실패: ${message}` : `자리 이동에 실패했어요 (${res.status})`)
+        refetch()
+        return
+      }
+      window.alert(`${dest}번으로 옮겼어요. 손님께 ${dest}번 QR을 찍어도 된다고 안내해 주세요.`)
+      exitMoveMode()
+      refetch()
+    } catch {
+      // 401은 apiFetch가 로그인 화면으로 보내는 중이라 문구를 띄우지 않는다. 응답만 못 받았을 수 있어 새로고침으로 실제 상태를 본다
+      if (getAuthToken()) setTableError('자리 이동 응답을 받지 못했어요. 화면이 새로고침되면 옮겨졌는지 확인해주세요.')
+      refetch()
+    } finally {
+      setTableActionBusy(false)
+    }
+  }
+
   const draggedTable = drag ? (tables.find((t) => t.id === drag.tableId) ?? null) : null
 
   return (
@@ -308,23 +364,31 @@ export default function TableHomePage() {
               저장하기
             </PillButton>
           </>
+        ) : moveMode ? (
+          <PillButton type="button" onClick={exitMoveMode} disabled={tableActionBusy}>
+            이동 취소
+          </PillButton>
         ) : (
           <>
-            {/* TODO: 자리 이동·자리 합석 — 스키마·동시성 설계가 더 필요해 아직 기능이 없다. 눌리지도 않는 버튼이 보이면
-                운영자가 되는 기능인 줄 알고 헷갈려 해서(2026-09-30 파일럿 피드백) 기능이 생길 때까지 숨긴다.
-            <PillButton type="button" disabled>
+            {/* 자리 합석은 만들지 않는다 — 눌리지도 않는 버튼이 보이면 운영자가 되는 기능인 줄 알고 헷갈려 해서
+                (2026-09-30 파일럿 피드백) 숨긴다 */}
+            <PillButton type="button" onClick={() => setMoveMode(true)}>
               자리 이동
             </PillButton>
-            <PillButton type="button" disabled>
-              자리 합석
-            </PillButton>
-            */}
             <PillButton type="button" onClick={() => setEditMode(true)}>
               테이블 편집
             </PillButton>
           </>
         )}
       </div>
+
+      {moveMode && (
+        <p className="px-10 pb-2 text-base font-semibold text-neutral-900">
+          {moveFromId === null
+            ? '옮길 손님이 있는 테이블을 눌러주세요.'
+            : `${displayTableLabel(tables.find((t) => t.id === moveFromId)?.label ?? '')}번 손님을 옮길 빈 테이블을 눌러주세요.`}
+        </p>
+      )}
 
       {(error || tableError) && <p className="px-10 text-sm text-red-600">{error ?? tableError}</p>}
 
@@ -373,7 +437,8 @@ export default function TableHomePage() {
         {placedEntries.map(({ table, pos }) => (
           <div
             key={table.id}
-            className="absolute"
+            // 자리 이동 출발로 고른 테이블 — 카드 배색(손님 있음/빈 자리)은 그대로 두고 테두리로만 표시한다
+            className={`absolute rounded-2xl ${moveMode && moveFromId === table.id ? 'ring-4 ring-red-500' : ''}`}
             style={{ left: (pos.col - 1) * GRID_CELL_PITCH, top: (pos.row - 1) * GRID_CELL_PITCH }}
           >
             <TableGridCard
@@ -381,6 +446,7 @@ export default function TableHomePage() {
               editMode={editMode}
               onClick={() => {
                 if (deleteMode) toggleDeleteSelect(table.id)
+                else if (moveMode) void handleMovePick(table)
                 else if (!editMode) setSelectedTableId(table.id)
               }}
               now={now}
@@ -424,6 +490,8 @@ export default function TableHomePage() {
             setSelectedTableId(null)
             refetch()
           }}
+          // 자리 이동 대상 — 손님(열린 세션)이 없는 빈 테이블만. 유휴로 정리가 필요한 테이블(OCCUPIED)은 빼고, 최종 판정은 서버가 한다
+          moveTargets={tables.filter((t) => t.id !== selectedTable.id && t.status === 'EMPTY' && !t.session)}
         />
       )}
     </div>

@@ -12,6 +12,7 @@ import {
   checkoutTable,
   confirmTablePayment,
   createManualOrder,
+  moveTable,
   updateItemQty,
 } from '../lib/orderActions'
 import { isUnpaid, pendingApprovalSummary, unpaidTotal } from '../lib/sessionOrders'
@@ -25,8 +26,10 @@ import { onResume } from '../lib/onResume'
 type PaymentModalProps = {
   table: TableStatusInfo
   onClose: () => void
-  /** 퇴실(O6)까지 끝났을 때 — 호출부가 모달을 닫고 테이블 목록을 다시 읽는다 */
+  /** 퇴실(O6)까지 끝났을 때 — 호출부가 모달을 닫고 테이블 목록을 다시 읽는다. 자리 이동이 끝났을 때도 같다 */
   onCheckedOut: () => void
+  /** 자리 이동으로 옮길 수 있는 빈 테이블(열린 세션 없음) — 서버가 최종 판정한다 */
+  moveTargets?: Pick<TableStatusInfo, 'id' | 'label'>[]
 }
 
 const POLL_INTERVAL_MS = 5000
@@ -114,13 +117,15 @@ const MENU_CATEGORY_TABS: { key: 'ALL' | 'MAIN' | 'SIDE' | 'DRINK' | 'ETC'; labe
   { key: 'ETC', label: '기타' },
 ]
 
-export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentModalProps) {
+export default function PaymentModal({ table, onClose, onCheckedOut, moveTargets = [] }: PaymentModalProps) {
   const [orders, setOrders] = useState<OrderSummary[]>([])
   // 동작 실패 문구(409 등). 목록 새로고침이 성공해도 지우지 않는다 — 새로고침이 문구를 덮어 운영자가 거절 사유를 못 보던 결함(E2E F1)
   const [error, setError] = useState<string | null>(null)
   // 목록 조회 자체의 실패 문구. 동작 문구와 분리해 서로 덮어쓰지 않게 한다
   const [loadError, setLoadError] = useState<string | null>(null)
   const [checkingOut, setCheckingOut] = useState(false)
+  // 자리 이동 — 빈 테이블 고르기 줄을 펼쳤나
+  const [showMovePicker, setShowMovePicker] = useState(false)
   // 요청 진행 중엔 항목 버튼을 다 막는다 — 안 막으면 연타 시 새로고침 전 값 기준으로 요청이 겹쳐서 변경분이 씹힌다
   const [busy, setBusy] = useState(false)
 
@@ -713,6 +718,45 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
     }
   }
 
+  // 자리 이동(명세서 밖) — 이 손님(세션)을 빈 테이블로 옮긴다. 주문·미결제·자릿세가 그대로 따라가고 손님 폰도 안 끊긴다.
+  // 담아둔 수기 메뉴·수량 변경이 있으면 먼저 반영한다(비우기와 같다). 대상에 손님이 생겼으면 서버가 409로 막는다
+  const handleMove = async (to: Pick<TableStatusInfo, 'id' | 'label'>) => {
+    if (checkingOut || busy || checkoutFlowRef.current) return
+    checkoutFlowRef.current = true
+    try {
+      // 담아둔 변경 반영은 이동 요청과 따로 잡는다 — 여기서 난 실패를 "자리 이동 실패"로 알리면 운영자가 어느 단계가 실패했는지 모르고
+      // 다시 눌러 수기 주문이 두 번 들어갈 수 있다. commitPending은 자기 실패를 스스로 알리고 false를 준다(비우기·결제 완료와 같다)
+      try {
+        if (!(await commitPending())) return
+      } catch {
+        reportNoResponse('담아둔 메뉴·수량 변경 반영')
+        refetch()
+        return
+      }
+      const from = displayTableLabel(table.label)
+      const dest = displayTableLabel(to.label)
+      if (!window.confirm(`${from}번 손님을 ${dest}번으로 옮길까요?\n주문·미결제·자릿세가 그대로 따라가요. 손님은 ${dest}번 QR을 찍으면 같은 주문으로 이어져요.`)) return
+      setCheckingOut(true)
+      try {
+        const res = await moveTable(table.id, to.id)
+        if (!res.ok) {
+          const { message } = await readApiError(res)
+          setError(message ? `자리 이동 실패: ${message}` : `자리 이동에 실패했어요 (${res.status})`)
+          refetch()
+          return
+        }
+        window.alert(`${dest}번으로 옮겼어요. 손님께 ${dest}번 QR을 찍어도 된다고 안내해 주세요.`)
+        onCheckedOut()
+      } catch {
+        reportNoResponse('자리 이동')
+        refetch()
+      }
+    } finally {
+      setCheckingOut(false)
+      checkoutFlowRef.current = false
+    }
+  }
+
   // "테이블 비우기" = 입금확인 없이 O6만(남은 접수 주문 완료는 O6가 함께 한다). 미결제가 남는다는 것을 확인받는다
   const handleVacate = async () => {
     if (checkingOut || busy || checkoutFlowRef.current) return
@@ -767,6 +811,16 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
                 {formatClockTime(table.session.startedAt)}
               </span>
             )}
+            {table.session && (
+              <button
+                type="button"
+                onClick={() => setShowMovePicker((v) => !v)}
+                disabled={checkingOut || busy}
+                className="rounded-xl border border-neutral-900 px-3 py-1 text-base leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900 disabled:opacity-40"
+              >
+                자리 이동
+              </button>
+            )}
           </div>
           {/* X는 서버에 아무것도 반영하지 않고 담아둔 새 메뉴·수량 변경을 그대로 버리고 닫는다 —
               실제로 반영하려면 아래 확인·비우기·결제완료 중 하나를 눌러야 한다(commitPending) */}
@@ -782,6 +836,27 @@ export default function PaymentModal({ table, onClose, onCheckedOut }: PaymentMo
             <img src={closeIcon} alt="" className="h-9 w-9" />
           </button>
         </div>
+
+        {showMovePicker && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-neutral-200 bg-neutral-100 px-6 py-3">
+            <span className="text-sm font-semibold text-neutral-500">옮길 빈 테이블</span>
+            {moveTargets.length === 0 ? (
+              <span className="text-sm text-neutral-400">빈 테이블이 없어요.</span>
+            ) : (
+              moveTargets.map((target) => (
+                <button
+                  key={target.id}
+                  type="button"
+                  onClick={() => handleMove(target)}
+                  disabled={checkingOut || busy}
+                  className="rounded-xl bg-white px-3 py-1 text-sm font-semibold text-neutral-900 shadow-sm disabled:opacity-40"
+                >
+                  {displayTableLabel(target.label)}
+                </button>
+              ))
+            )}
+          </div>
+        )}
 
         {(error ?? loadError) && <p className="px-6 pt-3 text-sm text-red-600">{error ?? loadError}</p>}
 

@@ -14,6 +14,7 @@ import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.order.repository.DailyCounterRepository;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
+import com.boothlock.boothlock_server.order.service.OrderWriter;
 import com.boothlock.boothlock_server.tableqr.domain.TableEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableSessionEntity;
 import com.boothlock.boothlock_server.tableqr.domain.TableStatus;
@@ -76,6 +77,7 @@ class TablePosApiTests {
     @Autowired OrderRepository orderRepository;
     @Autowired DailyCounterRepository dailyCounterRepository;
     @Autowired MenuRepository menuRepository;
+    @Autowired OrderWriter orderWriter;
 
     private BoothEntity booth;
     private BoothEntity otherBooth;
@@ -1025,6 +1027,147 @@ class TablePosApiTests {
 
         assertNotNull(reloadSession(session.getId()).getEndedAt());
         assertEquals(OrderStatus.DONE, orderRepository.findById(unpaid.getId()).orElseThrow().getStatus());
+    }
+
+    // ── 자리 이동(명세서 밖) ─────────────────────────────
+
+    private org.springframework.test.web.servlet.ResultActions move(Long fromTableId, Long toTableId) throws Exception {
+        return mockMvc.perform(post("/api/v1/admin/tables/{tableId}/move", fromTableId)
+                .header("Authorization", "Bearer " + login("admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(toTableId == null ? "{}" : "{\"toTableId\":" + toTableId + "}"));
+    }
+
+    /**
+     * 주문이 있는 A 손님을 빈 B로 옮긴다 — 세션·토큰이 그대로라 손님 폰은 계속 되고 주문·미결제가 B 결제 모달로 따라간다.
+     * 이동 뒤 B QR은 같은 세션을 복원하고, A QR은 새 손님(새 세션)이다
+     */
+    @Test
+    void moveCarriesTheSessionWithItsOrdersToTheEmptyTable() throws Exception {
+        TableEntity a = table(booth, "A-1", false);
+        TableEntity b = table(booth, "B-1", false);
+        String token = scan(a.getTableToken(), false);
+        Long sessionId = tableSessionRepository.findOpenByTableId(a.getId()).orElseThrow().getId();
+        OrderEntity seatFee = seatFeeOrder(booth, sessionId);
+        OrderEntity menu = menuOrder(booth, sessionId, false);
+
+        move(a.getId(), b.getId())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessionId").value(sessionId))
+                .andExpect(jsonPath("$.fromLabel").value("A-1"))
+                .andExpect(jsonPath("$.toLabel").value("B-1"));
+
+        assertEquals(b.getId(), tableSessionRepository.findById(sessionId).orElseThrow().getTable().getId());
+        assertEquals(TableStatus.EMPTY, reloadTable(a.getId()).getStatus());
+        assertEquals(TableStatus.OCCUPIED, reloadTable(b.getId()).getStatus());
+        // 손님 폰(같은 토큰)은 끊기지 않는다
+        mockMvc.perform(get("/api/v1/orders").header("X-Session-Token", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orders.length()").value(2));
+        // 결제 모달(B 기준)에 주문·자릿세가 따라온다
+        mockMvc.perform(get("/api/v1/admin/orders").header("Authorization", "Bearer " + login("admin"))
+                        .param("tableId", b.getId().toString()).param("activeSessionOnly", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orders.length()").value(2));
+        // B QR은 같은 세션 복원, A QR은 새 세션
+        assertEquals(token, scan(b.getTableToken(), true));
+        assertNotEquals(token, scan(a.getTableToken(), false));
+        assertEquals(OrderStatus.DONE, orderRepository.findById(seatFee.getId()).orElseThrow().getStatus());
+        assertEquals(OrderStatus.RECEIVED, orderRepository.findById(menu.getId()).orElseThrow().getStatus());
+    }
+
+    /**
+     * 진행 중 주문(승인대기·접수)은 주문현황 카드가 새 자리를 가리키도록 테이블 라벨이 B로 바뀐다 — 주문번호는 입금 대조용이라 그대로.
+     * 완료 주문(자릿세)은 옛 자리 기록으로 남는다
+     */
+    @Test
+    void moveRelabelsOnlyInProgressOrdersToTheNewTable() throws Exception {
+        TableEntity a = table(booth, "A-1", false);
+        TableEntity b = table(booth, "B-1", false);
+        scan(a.getTableToken(), false);
+        Long sessionId = tableSessionRepository.findOpenByTableId(a.getId()).orElseThrow().getId();
+        OrderEntity done = seatFeeOrder(booth, sessionId);
+        OrderEntity received = menuOrder(booth, sessionId, false);
+        OrderEntity pending = menuOrder(booth, sessionId, true);
+
+        move(a.getId(), b.getId()).andExpect(status().isOk());
+
+        assertEquals("B-1", orderRepository.findById(received.getId()).orElseThrow().getTableLabel());
+        assertEquals("B-1", orderRepository.findById(pending.getId()).orElseThrow().getTableLabel());
+        assertEquals(received.getOrderNo(), orderRepository.findById(received.getId()).orElseThrow().getOrderNo());
+        assertNull(orderRepository.findById(done.getId()).orElseThrow().getTableLabel());   // 완료 주문은 건드리지 않는다
+    }
+
+    /**
+     * 이동과 겹친 주문 — 손님 요청이 이동 전에 인증을 마쳐 옛 라벨(A-1)을 들고 저장에 도착해도, 저장은 세션 행을 잠근 뒤
+     * 세션의 현재 테이블(B-1)로 주문번호·테이블 스냅샷을 정한다. 안 그러면 이동 직후 들어간 주문 하나만 A로 찍혀 옛 자리로 나간다
+     */
+    @Test
+    void orderSavedAfterMoveUsesTheNewTableEvenWithAStaleLabel() throws Exception {
+        TableEntity a = table(booth, "A-1", false);
+        TableEntity b = table(booth, "B-1", false);
+        scan(a.getTableToken(), false);
+        Long sessionId = tableSessionRepository.findOpenByTableId(a.getId()).orElseThrow().getId();
+        move(a.getId(), b.getId()).andExpect(status().isOk());
+
+        OrderEntity saved = orderWriter.save(new OrderWriter.OrderSpec(
+                booth.getId(), sessionId, "A1", "A-1", "idem-stale-label", 8000,
+                java.util.List.of(new OrderItemEntity(1L, "김치전", 8000, 1)), now(), false));
+
+        assertEquals("B-1", saved.getTableLabel());
+        assertTrue(saved.getOrderNo().startsWith("B1-"), saved.getOrderNo());
+    }
+
+    /** 옮길 자리는 빈 테이블만 — 열린 세션이 있으면(주문 없어도) 409이고 아무것도 바뀌지 않는다. 합석은 하지 않는다 */
+    @Test
+    void moveRejectsATargetThatHasAnOpenSession() throws Exception {
+        TableEntity a = table(booth, "A-1", true);
+        TableEntity b = table(booth, "B-1", true);
+        TableSessionEntity sa = openSession(a, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        TableSessionEntity sb = openSession(b, "sess-b1", now().minusMinutes(30), now().minusMinutes(1));
+
+        move(a.getId(), b.getId())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+
+        assertEquals(a.getId(), tableSessionRepository.findById(sa.getId()).orElseThrow().getTable().getId());
+        assertEquals(b.getId(), tableSessionRepository.findById(sb.getId()).orElseThrow().getTable().getId());
+        assertEquals(TableStatus.OCCUPIED, reloadTable(a.getId()).getStatus());
+    }
+
+    /**
+     * 유휴 만료(정리 필요 — 손님이 떠난 자리) 세션은 옮기지 않는다 — 옮기면 활동 시각이 갱신돼 떠난 손님 세션이 B에서 되살아나,
+     * B에 앉은 새 손님이 앞 손님 주문을 복원받는다. 아무것도 바뀌지 않는다
+     */
+    @Test
+    void moveRejectsAnIdleExpiredSession() throws Exception {
+        TableEntity a = table(booth, "A-1", true);
+        TableEntity b = table(booth, "B-1", false);
+        TableSessionEntity idle = openSession(a, "sess-idle", now().minusDays(1), now().minusDays(1));
+
+        move(a.getId(), b.getId())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+
+        assertEquals(a.getId(), tableSessionRepository.findById(idle.getId()).orElseThrow().getTable().getId());
+        assertEquals(TableStatus.EMPTY, reloadTable(b.getId()).getStatus());
+    }
+
+    @Test
+    void moveRejectsInvalidRequests() throws Exception {
+        TableEntity a = table(booth, "A-1", false);
+        TableEntity b = table(booth, "B-1", false);
+        TableEntity foreign = table(otherBooth, "C-1", false);
+
+        move(a.getId(), b.getId()).andExpect(status().isConflict());            // A에 옮길 손님이 없다
+        openSession(a, "sess-a1", now().minusMinutes(30), now().minusMinutes(1));
+        move(a.getId(), a.getId()).andExpect(status().isBadRequest());          // 같은 테이블
+        move(a.getId(), null).andExpect(status().isBadRequest());               // 대상 없음
+        move(a.getId(), foreign.getId()).andExpect(status().isNotFound());      // 남의 부스 테이블
+        move(a.getId(), 999_999L).andExpect(status().isNotFound());             // 없는 테이블
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/move", a.getId())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"toTableId\":" + b.getId() + "}"))
+                .andExpect(status().isUnauthorized());                          // 로그인 없음
     }
 
     private String scan(String tableToken, boolean expectRestored) throws Exception {
