@@ -1,6 +1,7 @@
 import { Children, isValidElement, type ReactNode } from 'react'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFetch } from '../lib/apiFetch'
+import * as kitchenSummaryLib from '../lib/kitchenMenuSummary'
 import { approveOrder, cancelOrder, completeOrder, confirmOrderPayment, refundDone, restoreOrder } from '../lib/orderActions'
 import { playCallAlert, playOrderAlert, stopAlertSounds, turnAlertsOff, turnAlertsOn, vibrate } from '../lib/staffAlert'
 import OrderStatusPage from './OrderStatusPage'
@@ -415,6 +416,42 @@ describe('주방 집계 — 상태 변화 후 즉시 조회와 5초 폴링', () 
     await poll(2)
     expect(collect(popup().children, p => p.children === '메뉴 A')).toHaveLength(1)
     expect(cards()[0].order?.items[0]).toMatchObject({ menuId: 1, menuName: '메뉴 A', qty: 2 })
+  })
+
+  it('집계 자체가 예외를 던져도 팝업 안내만 표시하고 주문 완료 UI는 계속 동작한다', async () => {
+    const summary = vi.spyOn(kitchenSummaryLib, 'kitchenMenuSummary').mockImplementation(() => { throw new Error('집계 오류') })
+    const received = menuOrder(10, 2)
+    serverOrders = [received]
+    vi.mocked(apiFetch).mockImplementation(async path => {
+      const status = String(path).match(/status=([A-Z_]+)/)?.[1]
+      return new Response(JSON.stringify({ orders: serverOrders.filter(o => o.status === status), calls: [] }), { status: 200 })
+    })
+    render()
+    await vi.waitFor(() => expect(cards()).toHaveLength(1))
+    // 팝업을 열기 전에도 집계는 렌더 중 실행된다. 실패해도 카드가 유지된다.
+    expect(summary).toHaveBeenCalled()
+    collect(render(), p => !!p.onClick && typeof p.children === 'string' && p.children.endsWith('메뉴 수량'))[0].onClick!()
+    expect(collect(popup().children, p => p.children === '메뉴 수량을 표시하지 못했어요. 잠시 후 다시 확인해주세요.')).toHaveLength(1)
+    serverOrders = [{ ...received, status: 'DONE' }]
+    await cards()[0].onComplete!(10)
+    expect(completeOrder).toHaveBeenCalledWith(10)
+    expect(cards()).toHaveLength(0)
+  })
+
+  it('null·undefined 메뉴명/수량은 제외해도 기존 주문 카드와 처리 버튼은 유지한다', async () => {
+    const received = menuOrder(10, 2)
+    const broken = { ...menuOrder(20, 3), items: [
+      { ...received.items[0], menuName: null },
+      { ...received.items[0], menuName: undefined },
+      { ...received.items[0], qty: null },
+      { ...received.items[0], qty: undefined },
+    ] } as unknown as OrderSummary
+    await start([received, broken], 2)
+    expect(cards()).toHaveLength(2)
+    serverOrders = [received, { ...broken, status: 'CANCELED' }]
+    await cards().find(p => p.order?.orderId === 20)!.onCancel!(20)
+    expectQty(2)
+    expect(cards()).toHaveLength(1)
   })
 })
 

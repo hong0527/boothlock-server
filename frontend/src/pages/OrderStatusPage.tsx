@@ -218,7 +218,14 @@ export default function OrderStatusPage() {
   )
 
   // 진행 목록은 페이지 제한 없이 기존 폴링으로 받는다. 완료·취소 탭을 보아도 같은 기준으로 집계한다.
-  const kitchenMenus = useMemo(() => kitchenMenuSummary(ordersByStatus.RECEIVED), [ordersByStatus.RECEIVED])
+  const kitchenSummary = useMemo(() => {
+    try {
+      return { menus: kitchenMenuSummary(ordersByStatus.RECEIVED), failed: false }
+    } catch {
+      return { menus: [], failed: true }
+    }
+  }, [ordersByStatus.RECEIVED])
+  const kitchenMenus = kitchenSummary.menus
   const closeKitchenSummary = () => {
     kitchenSummaryDialog.current?.close()
     setKitchenSummaryOpen(false)
@@ -589,7 +596,9 @@ export default function OrderStatusPage() {
           </div>
           <div className="min-h-0 overflow-y-auto px-5 pb-5 sm:px-8 sm:pb-8">
           {error && <p className="mt-3 text-sm text-red-600">목록 조회 오류로 최신 수량이 아닐 수 있어요. {error}</p>}
-          {kitchenMenus.length === 0 ? (
+          {kitchenSummary.failed ? (
+            <p className="py-12 text-center text-red-600">메뉴 수량을 표시하지 못했어요. 잠시 후 다시 확인해주세요.</p>
+          ) : kitchenMenus.length === 0 ? (
             <p className="py-12 text-center text-lg text-neutral-500">집계할 진행 메뉴가 없어요.</p>
           ) : (
             <table className="w-full table-fixed text-left">
@@ -600,8 +609,8 @@ export default function OrderStatusPage() {
                 </tr>
               </thead>
               <tbody>
-                {kitchenMenus.map(({ name, qty }) => (
-                  <tr key={name} className="border-b border-neutral-200">
+                {kitchenMenus.map(({ menuId, name, qty }) => (
+                  <tr key={menuId} className="border-b border-neutral-200">
                     <td className="break-words py-3 pr-4 text-[20px] leading-snug font-bold sm:py-4 sm:text-[24px]">{name}</td>
                     <td className="whitespace-nowrap py-3 text-right text-[24px] leading-tight font-extrabold tabular-nums sm:py-4 sm:text-[28px]">{qty.toLocaleString('ko-KR')}<span className="font-normal">개</span></td>
                   </tr>
