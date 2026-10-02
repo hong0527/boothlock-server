@@ -144,10 +144,11 @@ class TableCheckoutConcurrencyTests {
             TableEntity a = tableRepository.save(new TableEntity(booth, "MA" + round, "tok-move-a-" + round));
             TableEntity b = tableRepository.save(new TableEntity(booth, "MB" + round, "tok-move-b-" + round));
             tableSessionService.createOrRestore(new TableSessionCreateRequest(a.getTableToken()));
+            Long sessionId = tableSessionRepository.findOpenByTableId(a.getId()).orElseThrow().getId();
 
             List<Object> results = race(4, (i, moveDone) -> switch (i) {
                 case 0 -> () -> tableAdminService.moveTable(authorization, a.getId(),
-                        new com.boothlock.boothlock_server.tableqr.dto.TableMoveRequest(b.getId()));
+                        new com.boothlock.boothlock_server.tableqr.dto.TableMoveRequest(b.getId(), sessionId));
                 case 1 -> () -> tableSessionService.createOrRestore(new TableSessionCreateRequest(b.getTableToken()));
                 case 2 -> () -> tableSessionService.createOrRestore(new TableSessionCreateRequest(a.getTableToken()));
                 default -> () -> tableAdminService.checkoutTable(authorization, a.getId(), false);

@@ -106,13 +106,13 @@ export function refundDone(orderId: number) {
 
 /**
  * 자리 이동(명세서 밖) — 이 테이블 손님(세션)을 빈 테이블로 옮긴다. 세션·토큰이 그대로라 주문·미결제가 따라가고 손님 폰도 안 끊긴다.
- * 대상에 손님(열린 세션)이 있으면 409 — 서버가 최종 판정한다
+ * 화면에서 확인한 출발 sessionId를 보낸다. 손님이 바뀌었거나 대상에 손님이 있으면 409 — 서버가 최종 판정한다
  */
-export function moveTable(tableId: number, toTableId: number) {
+export function moveTable(tableId: number, toTableId: number, sessionId: number) {
   return apiFetch(`/api/v1/admin/tables/${tableId}/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ toTableId }),
+    body: JSON.stringify({ toTableId, sessionId }),
   })
 }
 

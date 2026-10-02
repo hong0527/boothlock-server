@@ -201,7 +201,7 @@ public class TableController {
 
     @Operation(summary = "자리 이동 (명세서 밖)",
             description = "이 테이블의 손님(열린 세션)을 빈 테이블(toTableId)로 옮긴다. 세션·토큰이 그대로라 주문·미결제·자릿세가 따라가고 손님 폰도 끊기지 않는다. "
-            + "옮길 손님이 없거나 대상 테이블에 손님(열린 세션)이 있으면 409, 같은 테이블이면 400, 타 부스·삭제 테이블은 404.")
+            + "화면에서 확인한 출발 sessionId가 필요하다(누락 400). 현재 세션과 다르거나 옮길 손님이 없거나 대상에 손님이 있으면 409, 같은 테이블이면 400, 타 부스·삭제 테이블은 404.")
     @PostMapping("/admin/tables/{tableId}/move")
     public TableMoveResponse move(@RequestHeader("Authorization") String authorization,
                                   @PathVariable Long tableId,

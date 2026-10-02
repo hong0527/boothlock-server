@@ -740,8 +740,13 @@ export default function PaymentModal({ table, onClose, onCheckedOut, moveTargets
       if (!window.confirm(`${from}번 손님을 ${dest}번으로 옮길까요?\n주문·미결제·자릿세가 그대로 따라가요. 손님은 ${dest}번 QR을 찍으면 같은 주문으로 이어져요.`)) return
       setCheckingOut(true)
       try {
-        const res = await moveTable(table.id, to.id)
+        const res = await moveTable(table.id, to.id, table.session?.id ?? -1)
         if (!res.ok) {
+          if (res.status === 409) {
+            window.alert('테이블 상태가 바뀌었어요. 새로고침된 화면에서 출발·도착 테이블을 다시 선택해주세요.')
+            onCheckedOut()
+            return
+          }
           const { message } = await readApiError(res)
           setError(message ? `자리 이동 실패: ${message}` : `자리 이동에 실패했어요 (${res.status})`)
           refetch()

@@ -570,6 +570,9 @@ public class TableAdminService {
         if (toTableId == null) {
             throw new InvalidRequestException("옮길 테이블(toTableId)이 필요합니다.");
         }
+        if (request.sessionId() == null) {
+            throw new InvalidRequestException("옮길 손님의 세션(sessionId)이 필요합니다.");
+        }
         if (toTableId.equals(fromTableId)) {
             throw new InvalidRequestException("같은 테이블로는 옮길 수 없습니다.");
         }
@@ -580,6 +583,9 @@ public class TableAdminService {
         // 유휴 만료 세션(정리 필요 — 손님이 떠난 자리)은 옮기지 않는다 — 옮기면 활동 시각이 갱신돼 떠난 손님 세션이 B에서 되살아나,
         // B에 앉은 새 손님이 앞 손님 주문을 복원받는다
         TableSessionEntity session = requireActiveSession(from, staffBooth, seatIdlePolicy.criteria(), "옮길 손님이 없는 테이블입니다.");
+        if (!session.getId().equals(request.sessionId())) {
+            throw new InvalidStateException("테이블 손님이 바뀌었어요. 화면을 새로고침한 뒤 다시 골라주세요.");
+        }
         if (!tableSessionRepository.findOpenByTableIdForUpdate(to.getId()).isEmpty()) {
             throw new InvalidStateException("이미 손님이 있는 테이블로는 옮길 수 없습니다. 빈 테이블을 골라주세요.");
         }
