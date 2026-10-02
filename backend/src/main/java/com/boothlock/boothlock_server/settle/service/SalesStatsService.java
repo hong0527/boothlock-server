@@ -8,6 +8,8 @@ import com.boothlock.boothlock_server.booth.service.BoothJwtProvider;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
 import com.boothlock.boothlock_server.global.error.ForbiddenException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
+import com.boothlock.boothlock_server.order.domain.OrderItemEntity;
+import com.boothlock.boothlock_server.order.domain.OrderItemType;
 import com.boothlock.boothlock_server.order.domain.PaymentMethod;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
 import com.boothlock.boothlock_server.order.service.OrderNumberingService;
@@ -19,7 +21,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class SalesStatsService {
@@ -70,6 +75,8 @@ public class SalesStatsService {
         long refundNeededAmount = 0;
         long refundedCount = 0;
         long refundedAmount = 0;
+        // 종류+이름으로 묶는다(정산 엑셀 요약처럼 이름 기준) — 행사 중 메뉴를 지우거나 단가를 바꿔도 판매분은 남는다
+        Map<ItemKey, long[]> qtyAndAmountByItem = new LinkedHashMap<>();
 
         for (OrderEntity order : orders) {
             long amount = order.getTotalAmount();
@@ -83,6 +90,15 @@ public class SalesStatsService {
                 } else if (order.getPaymentMethod() == PaymentMethod.CASH) {
                     cashSales += amount;
                 }
+                for (OrderItemEntity item : order.getItems()) {
+                    if (item.isCanceled()) {
+                        continue;
+                    }
+                    long[] qtyAndAmount = qtyAndAmountByItem.computeIfAbsent(
+                            new ItemKey(item.getItemType(), item.getMenuName()), k -> new long[2]);
+                    qtyAndAmount[0] += item.getQty();
+                    qtyAndAmount[1] += (long) item.getUnitPrice() * item.getQty();
+                }
             } else if (paymentStatus == PaymentStatus.REFUND_NEEDED) {
                 refundNeededCount++;
                 refundNeededAmount += amount;
@@ -92,11 +108,25 @@ public class SalesStatsService {
             }
         }
 
+        // 종류(MENU→SEAT_FEE→EXTRA) 안에서 많이 팔린 순 — 같으면 이름 순으로 고정해 새로고침마다 순서가 흔들리지 않게 한다
+        List<SalesStatsResponse.ItemSales> itemSales = qtyAndAmountByItem.entrySet().stream()
+                .map(e -> new SalesStatsResponse.ItemSales(
+                        e.getKey().itemType(), e.getKey().name(), e.getValue()[0], e.getValue()[1]))
+                .sorted(Comparator.comparing(SalesStatsResponse.ItemSales::itemType)
+                        .thenComparing(Comparator.comparingLong(SalesStatsResponse.ItemSales::qty).reversed())
+                        .thenComparing(SalesStatsResponse.ItemSales::name))
+                .toList();
+
         return new SalesStatsResponse(
+                businessDate.toString(),
                 totalSales,
                 new SalesStatsResponse.ByMethod(bankTransferSales, cashSales),
                 paidOrderCount,
                 new SalesStatsResponse.RefundSummary(refundNeededCount, refundNeededAmount),
-                new SalesStatsResponse.RefundSummary(refundedCount, refundedAmount));
+                new SalesStatsResponse.RefundSummary(refundedCount, refundedAmount),
+                itemSales);
+    }
+
+    private record ItemKey(OrderItemType itemType, String name) {
     }
 }

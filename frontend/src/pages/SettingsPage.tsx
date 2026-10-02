@@ -28,7 +28,12 @@ export default function SettingsPage() {
   const isAdmin = getStaff()?.role === 'ADMIN'
   const menuItems = [
     ...BASE_MENU_ITEMS,
-    ...(isAdmin ? [{ label: '정산 엑셀 다운로드', to: '/settings/settlement' }] : []),
+    ...(isAdmin
+      ? [
+          { label: '오늘 판매 현황', to: '/settings/sales' },
+          { label: '정산 엑셀 다운로드', to: '/settings/settlement' },
+        ]
+      : []),
     ALERT_ITEM,
     LOGOUT_ITEM,
   ]
