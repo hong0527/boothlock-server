@@ -368,7 +368,7 @@ class SeatFeeIdleHandoffApiTests {
         mockMvc.perform(post("/api/v1/admin/tables/{tableId}/move", fx.table.getId())
                         .header("Authorization", bearer(fx.adminToken))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"toTableId\":" + b.getId() + "}"))
+                        .content("{\"toTableId\":" + b.getId() + ",\"sessionId\":" + sessionIdOf(second) + "}"))
                 .andExpect(status().isOk());
 
         // 앞 세션 메뉴(8,000)가 합계에 들어 최소주문금액(16,000)에 걸리지 않고, 자릿세도 다시 붙지 않는다
