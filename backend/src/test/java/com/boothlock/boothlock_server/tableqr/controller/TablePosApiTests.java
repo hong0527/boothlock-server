@@ -1037,10 +1037,82 @@ class TablePosApiTests {
     // ── 자리 이동(명세서 밖) ─────────────────────────────
 
     private org.springframework.test.web.servlet.ResultActions move(Long fromTableId, Long toTableId) throws Exception {
+        Long sessionId = tableSessionRepository.findOpenByTableId(fromTableId).map(TableSessionEntity::getId).orElse(-1L);
+        return moveWithSession(fromTableId, toTableId, sessionId);
+    }
+
+    private org.springframework.test.web.servlet.ResultActions moveWithSession(Long fromTableId, Long toTableId,
+                                                                              Long sessionId) throws Exception {
         return mockMvc.perform(post("/api/v1/admin/tables/{tableId}/move", fromTableId)
                 .header("Authorization", "Bearer " + login("admin"))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(toTableId == null ? "{}" : "{\"toTableId\":" + toTableId + "}"));
+                .content("{\"toTableId\":" + toTableId + ",\"sessionId\":" + sessionId + "}"));
+    }
+
+    @Test
+    void moveRequiresSessionIdAndChangesNothing() throws Exception {
+        TableEntity a = table(booth, "A-1", false);
+        TableEntity b = table(booth, "B-1", false);
+        scan(a.getTableToken(), false);
+        Long sessionId = openSessionIdOf(a);
+        TableSessionEntity before = reloadSession(sessionId);
+        OrderEntity order = menuOrder(booth, sessionId, false);
+
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/move", a.getId())
+                        .header("Authorization", "Bearer " + login("admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toTableId\":" + b.getId() + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+        moveWithSession(a.getId(), b.getId(), null).andExpect(status().isBadRequest());
+
+        assertEquals(a.getId(), reloadSession(sessionId).getTable().getId());
+        assertEquals(before.getLastActivityAt(), reloadSession(sessionId).getLastActivityAt());
+        assertNull(reloadSession(sessionId).getEndedAt());
+        assertEquals(TableStatus.OCCUPIED, reloadTable(a.getId()).getStatus());
+        assertEquals(TableStatus.EMPTY, reloadTable(b.getId()).getStatus());
+        assertEquals(sessionId, orderRepository.findById(order.getId()).orElseThrow().getSessionId());
+        assertEquals(order.getTableLabel(), orderRepository.findById(order.getId()).orElseThrow().getTableLabel());
+    }
+
+    @Test
+    void moveRejectsReplacedSessionAndLeavesNewGuestsAndOrdersUntouched() throws Exception {
+        TableEntity a = table(booth, "A-1", false);
+        TableEntity b = table(booth, "B-1", false);
+        scan(a.getTableToken(), false);
+        Long oldSessionId = openSessionIdOf(a);
+        mockMvc.perform(post("/api/v1/admin/tables/{tableId}/checkout", a.getId())
+                        .header("Authorization", "Bearer " + login("admin")))
+                .andExpect(status().isOk());
+        scan(a.getTableToken(), false);
+        Long newSessionId = openSessionIdOf(a);
+        assertNotEquals(oldSessionId, newSessionId);
+        OrderEntity order = menuOrder(booth, newSessionId, false);
+        TableSessionEntity before = reloadSession(newSessionId);
+        long sessionCount = tableSessionRepository.count();
+        long orderCount = orderRepository.count();
+
+        moveWithSession(a.getId(), b.getId(), oldSessionId)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATE"));
+
+        assertEquals(TableStatus.OCCUPIED, reloadTable(a.getId()).getStatus());
+        assertEquals(TableStatus.EMPTY, reloadTable(b.getId()).getStatus());
+        assertEquals(newSessionId, openSessionIdOf(a));
+        assertTrue(tableSessionRepository.findOpenByTableId(b.getId()).isEmpty());
+        assertEquals(a.getId(), reloadSession(newSessionId).getTable().getId());
+        assertEquals(before.getLastActivityAt(), reloadSession(newSessionId).getLastActivityAt());
+        assertEquals(before.getPartySize(), reloadSession(newSessionId).getPartySize());
+        assertNull(reloadSession(newSessionId).getEndedAt());
+        assertNotNull(reloadSession(oldSessionId).getEndedAt());
+        OrderEntity unchanged = orderRepository.findById(order.getId()).orElseThrow();
+        assertEquals(newSessionId, unchanged.getSessionId());
+        assertEquals(order.getTableLabel(), unchanged.getTableLabel());
+        assertEquals(order.getStatus(), unchanged.getStatus());
+        assertEquals(order.getPaymentStatus(), unchanged.getPaymentStatus());
+        assertEquals(order.getTotalAmount(), unchanged.getTotalAmount());
+        assertEquals(sessionCount, tableSessionRepository.count());
+        assertEquals(orderCount, orderRepository.count());
     }
 
     /**

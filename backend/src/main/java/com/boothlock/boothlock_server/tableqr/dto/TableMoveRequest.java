@@ -1,5 +1,5 @@
 package com.boothlock.boothlock_server.tableqr.dto;
 
-/** 자리 이동(명세서 밖) 요청 — 손님을 옮길 빈 테이블 id */
-public record TableMoveRequest(Long toTableId) {
+/** 자리 이동 요청 — 도착 테이블과 화면에서 확인한 출발 세션 */
+public record TableMoveRequest(Long toTableId, Long sessionId) {
 }

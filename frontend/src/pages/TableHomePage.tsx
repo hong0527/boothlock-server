@@ -57,7 +57,7 @@ const SEAT_ACTIONS: Record<
     pickTargetMessage: (from) => `${from}번 손님을 옮길 빈 테이블을 눌러주세요.`,
     confirmMessage: (from, dest) => `${from}번 손님을 ${dest}번으로 옮길까요?\n주문·미결제·자릿세가 그대로 따라가요.`,
     doneMessage: (dest) => `${dest}번으로 옮겼어요. 손님께 ${dest}번 QR을 찍어도 된다고 안내해 주세요.`,
-    request: (from, to) => moveTable(from.id, to.id),
+    request: (from, to) => moveTable(from.id, to.id, from.session?.id ?? -1),
   },
   merge: {
     name: '자리 합석',
@@ -358,6 +358,12 @@ export default function TableHomePage() {
     try {
       const res = await action.request(from, table)
       if (!res.ok) {
+        if (seatMode === 'move' && res.status === 409) {
+          setSeatFromId(null)
+          await refetch()
+          setTableError('테이블 상태가 바뀌었어요. 새로고침된 화면에서 출발·도착 테이블을 다시 선택해주세요.')
+          return
+        }
         const { message } = await readApiError(res)
         setTableError(message ? `${action.name} 실패: ${message}` : `${action.name}에 실패했어요 (${res.status})`)
         refetch()
