@@ -83,6 +83,7 @@ type Props = {
   order?: OrderSummary
   additionalOrder?: boolean
   servedItemIds?: ReadonlySet<number>
+  onToggleServed?: (orderId: number, itemId: number, served: boolean) => Promise<void>
   // 알림 빠른 전환(AlertSwitch)
   on?: boolean
   onToggle?: () => void
@@ -385,7 +386,7 @@ describe('주방 집계 — 상태 변화 후 즉시 조회와 5초 폴링', () 
     expect(collect(popup().children, p => p.children === '메뉴')).toHaveLength(1)
   })
 
-  it('나감 체크를 받아도 수량은 포함하고, 자릿세·기타 항목은 계속 제외한다', async () => {
+  it('나감 체크를 받으면 수량을 제외하고, 해제 후 다시 포함하며 자릿세·기타 항목은 계속 제외한다', async () => {
     const received = menuOrder(10, 4)
     await start([received], 4)
     servedItems = [{ orderId: 10, itemIds: [10] }]
@@ -394,9 +395,35 @@ describe('주방 집계 — 상태 변화 후 즉시 조회와 5초 폴링', () 
       { itemId: 20, menuId: null, menuName: '자릿세', unitPrice: 1000, qty: 5, itemType: 'SEAT_FEE' },
       { itemId: 30, menuId: null, menuName: '기타', unitPrice: 1000, qty: 6, itemType: 'EXTRA' },
     ] }]
-    await poll(4)
+    await poll(0)
     await vi.waitFor(() => expect(cards()[0].servedItemIds?.has(10)).toBe(true))
     expect(collect(popup().children, p => p.children === '자릿세' || p.children === '기타')).toHaveLength(0)
+    servedItems = []
+    await poll(4)
+  })
+
+  it('내 나감 체크/해제는 응답 대기 중에도 팝업에 즉시 반영된다', async () => {
+    const a = menuOrder(10, 1)
+    const b = menuOrder(20, 1)
+    await start([a, b], 2)
+    const dashboardFetch = vi.mocked(apiFetch).getMockImplementation()!
+    let finish: (response: Response) => void = () => {}
+    vi.mocked(apiFetch).mockImplementation((path, init) =>
+      String(path).endsWith('/served')
+        ? new Promise<Response>(resolve => { finish = resolve })
+        : dashboardFetch(path, init),
+    )
+    const toggle = async (orderId: number, checked: boolean, expected: number) => {
+      const action = cards().find(p => p.order?.orderId === orderId)!.onToggleServed!(orderId, orderId, checked)
+      expectQty(expected)
+      finish(new Response(JSON.stringify({ orderId, itemIds: checked ? [orderId] : [] }), { status: 200 }))
+      await action
+      expectQty(expected)
+    }
+    await toggle(10, true, 1)
+    await toggle(20, true, 0)
+    await toggle(10, false, 1)
+    await toggle(20, false, 2)
   })
 
   it('설정에서 메뉴를 삭제해 현재 메뉴 목록에 없어도 주문 스냅샷의 A 2개를 폴링 후 유지한다', async () => {

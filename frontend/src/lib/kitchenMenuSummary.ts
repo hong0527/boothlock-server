@@ -1,5 +1,7 @@
-/** 조리 대상으로 확정된 진행 주문의 메뉴 총 수량. 결제 여부·나감 체크와는 무관하다. */
-export function kitchenMenuSummary(orders: unknown): { menuId: number; name: string; qty: number }[] {
+import type { ServedByOrder } from './servedItems'
+
+/** 진행 주문 중 아직 나감 체크하지 않은 메뉴 수량. 결제 여부와는 무관하다. */
+export function kitchenMenuSummary(orders: unknown, servedByOrder?: ServedByOrder): { menuId: number; name: string; qty: number }[] {
   if (!Array.isArray(orders)) return []
   const quantities = new Map<number, { menuId: number; name: string; qty: number; namedAt: number; orderId: number }>()
   for (const order of orders) {
@@ -12,6 +14,7 @@ export function kitchenMenuSummary(orders: unknown): { menuId: number; name: str
         || !Number.isSafeInteger(item.menuId) || item.menuId <= 0
         || typeof item.menuName !== 'string' || !item.menuName.trim()
         || !Number.isSafeInteger(item.qty) || item.qty <= 0) continue
+      if (servedByOrder?.get(order.orderId)?.has(item.itemId)) continue
       const existing = quantities.get(item.menuId)
       if (!existing) {
         quantities.set(item.menuId, { menuId: item.menuId, name: item.menuName.trim(), qty: item.qty, namedAt, orderId })

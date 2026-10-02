@@ -83,4 +83,27 @@ describe('주방 메뉴 총 수량', () => {
       item('치킨', 2), { ...item('치킨', 3), menuId: 2 },
     ])])).toEqual([{ menuId: 2, name: '치킨', qty: 3 }, { menuId: 1, name: '치킨', qty: 2 }])
   })
+
+  it('미체크 2개 → 1개 나감 → 전부 나감 → 해제를 반영하고 다른 메뉴에는 영향이 없다', () => {
+    const orders = [order([
+      { ...item('치킨', 1), itemId: 1 },
+      { ...item('치킨', 1), itemId: 2 },
+      { ...item('콜라', 3), itemId: 3 },
+    ])]
+    const cola = { menuId: 3, name: '콜라', qty: 3 }
+    const summarize = (ids: number[]) => kitchenMenuSummary(orders, new Map([[1, new Set(ids)]]))
+    expect(summarize([])).toEqual([cola, { menuId: 1, name: '치킨', qty: 2 }])
+    expect(summarize([1])).toEqual([cola, { menuId: 1, name: '치킨', qty: 1 }])
+    expect(summarize([1, 2])).toEqual([cola])
+    expect(summarize([2])).toEqual([cola, { menuId: 1, name: '치킨', qty: 1 }])
+    expect(summarize([])).toEqual([cola, { menuId: 1, name: '치킨', qty: 2 }])
+  })
+
+  it('수량이 여러 개인 item은 체크 시 그 item 수량 전체를 제외하며 주문별 체크를 구분한다', () => {
+    const first = order([{ ...item('치킨', 2), itemId: 1 }])
+    const second = { ...order([{ ...item('치킨', 3), itemId: 2 }]), orderId: 2 }
+    expect(kitchenMenuSummary([first, second], new Map([[1, new Set([1])]])))
+      .toEqual([{ menuId: 1, name: '치킨', qty: 3 }])
+    expect(kitchenMenuSummary([first], new Map([[1, new Set([1])]]))).toEqual([])
+  })
 })

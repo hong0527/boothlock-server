@@ -218,13 +218,14 @@ export default function OrderStatusPage() {
   )
 
   // 진행 목록은 페이지 제한 없이 기존 폴링으로 받는다. 완료·취소 탭을 보아도 같은 기준으로 집계한다.
+  const servedByOrder = useMemo(() => withPendingToggles(servedFromServer, pendingToggles), [servedFromServer, pendingToggles])
   const kitchenSummary = useMemo(() => {
     try {
-      return { menus: kitchenMenuSummary(ordersByStatus.RECEIVED), failed: false }
+      return { menus: kitchenMenuSummary(ordersByStatus.RECEIVED, servedByOrder), failed: false }
     } catch {
       return { menus: [], failed: true }
     }
-  }, [ordersByStatus.RECEIVED])
+  }, [ordersByStatus.RECEIVED, servedByOrder])
   const kitchenMenus = kitchenSummary.menus
   const closeKitchenSummary = () => {
     kitchenSummaryDialog.current?.close()
@@ -319,8 +320,6 @@ export default function OrderStatusPage() {
     }
     return additionalOrderIds([...byId.values()])
   }, [ordersByStatus, olderHistory, openSessionDone])
-
-  const servedByOrder = useMemo(() => withPendingToggles(servedFromServer, pendingToggles), [servedFromServer, pendingToggles])
 
   // "나감" 체크 — 바로 화면에 반영하고 서버에 보낸다. 실패하면 되돌리고 알린다(다음 폴링이 서버 값으로 맞춘다)
   const toggleServed = async (orderId: number, itemId: number, served: boolean) => {
