@@ -563,7 +563,7 @@ export default function OrderStatusPage() {
           >
             {loadingOlder ? '불러오는 중…' : `이전 주문 ${HISTORY_PAGE_SIZE}건 더 보기`}
           </button>
-        )}
+        )}ㅇ
       </div>
 
       <button
@@ -571,7 +571,7 @@ export default function OrderStatusPage() {
         onClick={() => setKitchenSummaryOpen(true)}
         className="fixed right-6 bottom-6 z-40 rounded-xl bg-primary-300 px-5 py-3 font-semibold text-neutral-50 shadow-lg"
       >
-        주방 메뉴 수량
+        주문 메뉴 수량
       </button>
       {kitchenSummaryOpen && (
         <dialog
@@ -582,7 +582,7 @@ export default function OrderStatusPage() {
         >
           <div className="flex max-h-[75dvh] flex-col sm:min-h-[60dvh] sm:max-h-[78dvh]">
           <div className="flex shrink-0 items-center justify-between gap-4 border-b border-neutral-200 px-5 py-5 sm:px-8">
-            <h2 id="kitchen-summary-title" className="text-2xl font-bold">주방 메뉴 수량</h2>
+            <h2 id="kitchen-summary-title" className="text-2xl font-bold">주문 메뉴 수량</h2>
             <button type="button" autoFocus onClick={closeKitchenSummary} className="shrink-0 rounded-lg border border-neutral-300 px-4 py-3 text-base font-semibold">
               닫기
             </button>

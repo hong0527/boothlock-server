@@ -235,9 +235,9 @@ beforeEach(() => {
   }
 })
 
-describe('주방 메뉴 수량 팝업', () => {
+describe('주문 메뉴 수량 팝업', () => {
   const popup = () => collect(render(), p => p['aria-labelledby'] === 'kitchen-summary-title')[0]
-  const open = () => collect(render(), p => !!p.onClick && p.children === '주방 메뉴 수량')[0].onClick!()
+  const open = () => collect(render(), p => !!p.onClick && p.children === '주문 메뉴 수량')[0].onClick!()
 
   it('진행 메뉴만 합산하고, 다른 탭에서도 동일한 기준을 유지하며 추가 조회 없이 닫을 수 있다', async () => {
     await load()
