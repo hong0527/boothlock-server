@@ -563,7 +563,7 @@ export default function OrderStatusPage() {
           >
             {loadingOlder ? '불러오는 중…' : `이전 주문 ${HISTORY_PAGE_SIZE}건 더 보기`}
           </button>
-        )}ㅇ
+        )}
       </div>
 
       <button
