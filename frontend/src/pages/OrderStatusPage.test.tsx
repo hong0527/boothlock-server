@@ -1,5 +1,5 @@
 import { Children, isValidElement, type ReactNode } from 'react'
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFetch } from '../lib/apiFetch'
 import { approveOrder, cancelOrder, completeOrder, confirmOrderPayment, refundDone, restoreOrder } from '../lib/orderActions'
 import { playCallAlert, playOrderAlert, stopAlertSounds, turnAlertsOff, turnAlertsOn, vibrate } from '../lib/staffAlert'
@@ -69,6 +69,7 @@ vi.mock('../lib/staffAlert', () => ({
 }))
 
 type Props = {
+  'aria-labelledby'?: string
   children?: ReactNode
   onClick?: () => void
   onApprove?: (orderId: number) => void
@@ -80,6 +81,7 @@ type Props = {
   onConfirmPayment?: (orderId: number) => void
   order?: OrderSummary
   additionalOrder?: boolean
+  servedItemIds?: ReadonlySet<number>
   // 알림 빠른 전환(AlertSwitch)
   on?: boolean
   onToggle?: () => void
@@ -118,6 +120,11 @@ function renderedOrderNos(): string[] {
   return collect(render(), p => !!p.order).map(p => p.order!.orderNo)
 }
 function cards() { return collect(render(), p => !!p.order) }
+function textContent(node: ReactNode): string {
+  return Children.toArray(node).map(child =>
+    isValidElement<Props>(child) ? textContent(child.props.children) : String(child),
+  ).join('')
+}
 /** 탭 버튼을 누른다 — 라벨로 찾는다. 완료·취소 탭은 누를 때 그 목록을 받으므로 응답 반영까지 한 틱 기다린다 */
 async function clickTab(label: string) {
   const tab = collect(render(), p => {
@@ -226,6 +233,189 @@ beforeEach(() => {
   for (const action of [approveOrder, cancelOrder, completeOrder, confirmOrderPayment, refundDone, restoreOrder]) {
     vi.mocked(action).mockResolvedValue(new Response(null, { status: 200 }))
   }
+})
+
+describe('주방 메뉴 수량 팝업', () => {
+  const popup = () => collect(render(), p => p['aria-labelledby'] === 'kitchen-summary-title')[0]
+  const open = () => collect(render(), p => !!p.onClick && p.children === '주방 메뉴 수량')[0].onClick!()
+
+  it('진행 메뉴만 합산하고, 다른 탭에서도 동일한 기준을 유지하며 추가 조회 없이 닫을 수 있다', async () => {
+    await load()
+    expect(popup()).toBeUndefined()
+    const requestsBefore = vi.mocked(apiFetch).mock.calls.length
+    open()
+    expect(collect(popup().children, p => textContent(p.children) === '3개')).toHaveLength(1)
+    expect(vi.mocked(apiFetch).mock.calls.length).toBe(requestsBefore)
+    await clickTab('완료')
+    expect(collect(popup().children, p => textContent(p.children) === '3개')).toHaveLength(1)
+    collect(popup().children, p => !!p.onClick && p.children === '닫기')[0].onClick!()
+    expect(popup()).toBeUndefined()
+  })
+
+  it('주문이 없으면 빈 상태를 표시한다', async () => {
+    vi.mocked(apiFetch).mockResolvedValue(new Response(JSON.stringify({ orders: [], calls: [] }), { status: 200 }))
+    render()
+    await new Promise(resolve => setTimeout(resolve, 10))
+    open()
+    expect(collect(popup().children, p => p.children === '집계할 진행 메뉴가 없어요.')).toHaveLength(1)
+  })
+})
+
+describe('주방 집계 — 상태 변화 후 즉시 조회와 5초 폴링', () => {
+  let serverOrders: OrderSummary[]
+  let servedItems: { orderId: number; itemIds: number[] }[]
+  let pollTick: () => void
+  const popup = () => collect(render(), p => p['aria-labelledby'] === 'kitchen-summary-title')[0]
+  const expectQty = (qty: number) => {
+    if (qty === 0) {
+      expect(collect(popup().children, p => p.children === '집계할 진행 메뉴가 없어요.')).toHaveLength(1)
+    } else {
+      expect(collect(popup().children, p => textContent(p.children) === `${qty}개`)).toHaveLength(1)
+    }
+  }
+  const menuOrder = (id: number, qty: number, status: OrderStatus = 'RECEIVED'): OrderSummary => ({
+    ...order(`K-${id}`, '2026-10-02T18:00:00', status),
+    items: [{ itemId: id, menuId: 1, menuName: '메뉴', unitPrice: 1000, qty, itemType: 'MENU' }],
+  })
+  const start = async (orders: OrderSummary[], qty: number) => {
+    serverOrders = orders
+    servedItems = []
+    vi.mocked(apiFetch).mockImplementation(async (path) => {
+      if (String(path).endsWith('/served-items')) {
+        return new Response(JSON.stringify({ orders: servedItems }), { status: 200 })
+      }
+      const status = String(path).match(/status=([A-Z_]+)/)?.[1]
+      return new Response(JSON.stringify({ orders: serverOrders.filter(o => o.status === status), calls: [] }), { status: 200 })
+    })
+    const intervals = vi.spyOn(globalThis, 'setInterval')
+    render()
+    // 페이지가 실제로 등록한 5초 콜백을 호출한다. 폴링을 재마운트로 대신하지 않는다.
+    pollTick = intervals.mock.calls.find(([, delay]) => delay === 5000)![0] as () => void
+    collect(render(), p => !!p.onClick && typeof p.children === 'string' && p.children.endsWith('메뉴 수량'))[0].onClick!()
+    await new Promise(resolve => setTimeout(resolve, 10))
+    await vi.waitFor(() => expectQty(qty))
+  }
+  const poll = async (qty: number) => {
+    const requestsBefore = vi.mocked(apiFetch).mock.calls.length
+    pollTick()
+    await vi.waitFor(() => expect(vi.mocked(apiFetch).mock.calls.length).toBe(requestsBefore + 4))
+    await new Promise(resolve => setTimeout(resolve, 10))
+    await vi.waitFor(() => expectQty(qty))
+  }
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('승인 즉시 증가, 완료·취소 처리 즉시 감소, 승인대기 거절은 수량 변화가 없다', async () => {
+    const received = menuOrder(10, 2)
+    const pending = menuOrder(20, 3, 'PENDING_APPROVAL')
+    await start([received, pending], 2)
+    serverOrders = [received, { ...pending, status: 'RECEIVED' }]
+    await cards().find(p => p.order?.orderId === 20)!.onApprove!(20)
+    expectQty(5)
+    serverOrders = [{ ...received, status: 'DONE' }, serverOrders[1]]
+    await cards().find(p => p.order?.orderId === 10)!.onComplete!(10)
+    expectQty(3)
+    serverOrders = [serverOrders[0], { ...serverOrders[1], status: 'CANCELED' }]
+    await cards().find(p => p.order?.orderId === 20)!.onCancel!(20)
+    expectQty(0)
+    serverOrders = [received, pending]
+    await poll(2)
+    serverOrders = [received, { ...pending, status: 'CANCELED' }]
+    await cards().find(p => p.order?.orderId === 20)!.onReject!(20)
+    expectQty(2)
+  })
+
+  it('다른 기기 승인·완료·취소도 다음 5초 폴링에 반영된다', async () => {
+    const pending = menuOrder(10, 4, 'PENDING_APPROVAL')
+    await start([pending], 0)
+    serverOrders = [{ ...pending, status: 'RECEIVED' }]
+    await poll(4)
+    serverOrders = [{ ...pending, status: 'DONE' }]
+    await poll(0)
+    serverOrders = [{ ...pending, status: 'RECEIVED' }]
+    await poll(4)
+    serverOrders = [{ ...pending, status: 'CANCELED' }]
+    await poll(0)
+  })
+
+  it('입금 확인만으로는 남고, 결제 완료의 퇴실까지 성공해 DONE이 되면 빠진다', async () => {
+    const received = menuOrder(10, 4)
+    await start([received], 4)
+    serverOrders = [{ ...received, paymentStatus: 'PAID' }]
+    await poll(4)
+    expect(cards()[0].order?.paymentStatus).toBe('PAID')
+    serverOrders = [{ ...serverOrders[0], status: 'DONE' }]
+    await poll(0)
+  })
+
+  it('테이블 비우기로 진행은 DONE, 승인대기는 CANCELED가 되면 모두 빠진다', async () => {
+    const received = menuOrder(10, 4)
+    const pending = menuOrder(20, 3, 'PENDING_APPROVAL')
+    await start([received, pending], 4)
+    serverOrders = [{ ...received, status: 'DONE' }, { ...pending, status: 'CANCELED' }]
+    await poll(0)
+  })
+
+  it('수량 변경·부분 취소는 다음 폴링에서 남은 항목만 반영한다', async () => {
+    const received = menuOrder(10, 4)
+    await start([received], 4)
+    serverOrders = [{ ...received, items: [{ ...received.items[0], qty: 2 }] }]
+    await poll(2)
+    serverOrders = [{ ...serverOrders[0], items: [
+      ...serverOrders[0].items,
+      { itemId: 20, menuId: 2, menuName: '추가 메뉴', unitPrice: 1000, qty: 3, itemType: 'MENU' },
+    ] }]
+    await poll(2)
+    await vi.waitFor(() => expect(collect(popup().children, p => p.children === '추가 메뉴')).toHaveLength(1))
+    serverOrders = [{ ...serverOrders[0], items: [serverOrders[0].items[0]] }]
+    await poll(2)
+    await vi.waitFor(() => expect(collect(popup().children, p => p.children === '추가 메뉴')).toHaveLength(0))
+  })
+
+  it('자리 이동·합석으로 테이블/세션만 바뀌어도 같은 주문 수량은 중복되지 않는다', async () => {
+    const a = menuOrder(10, 2)
+    const b = { ...menuOrder(20, 3), tableLabel: 'B-1' }
+    await start([a, b], 5)
+    serverOrders = [{ ...a, tableLabel: 'C-1' }, b]
+    await poll(5)
+    await vi.waitFor(() => expect(cards().find(p => p.order?.orderId === 10)!.order?.tableLabel).toBe('C-1'))
+    serverOrders = serverOrders.map(o => ({ ...o, tableLabel: 'B-1', sessionId: b.sessionId }))
+    await poll(5)
+    await vi.waitFor(() => expect(cards().every(p => p.order?.sessionId === b.sessionId)).toBe(true))
+    expect(collect(popup().children, p => p.children === '메뉴')).toHaveLength(1)
+  })
+
+  it('나감 체크를 받아도 수량은 포함하고, 자릿세·기타 항목은 계속 제외한다', async () => {
+    const received = menuOrder(10, 4)
+    await start([received], 4)
+    servedItems = [{ orderId: 10, itemIds: [10] }]
+    serverOrders = [{ ...received, items: [
+      ...received.items,
+      { itemId: 20, menuId: null, menuName: '자릿세', unitPrice: 1000, qty: 5, itemType: 'SEAT_FEE' },
+      { itemId: 30, menuId: null, menuName: '기타', unitPrice: 1000, qty: 6, itemType: 'EXTRA' },
+    ] }]
+    await poll(4)
+    await vi.waitFor(() => expect(cards()[0].servedItemIds?.has(10)).toBe(true))
+    expect(collect(popup().children, p => p.children === '자릿세' || p.children === '기타')).toHaveLength(0)
+  })
+
+  it('설정에서 메뉴를 삭제해 현재 메뉴 목록에 없어도 주문 스냅샷의 A 2개를 폴링 후 유지한다', async () => {
+    const a = menuOrder(10, 2)
+    a.items[0].menuName = '메뉴 A'
+    await start([a], 2)
+    expect(collect(popup().children, p => p.children === '메뉴 A')).toHaveLength(1)
+    const dashboardFetch = vi.mocked(apiFetch).getMockImplementation()!
+    // 메뉴 삭제 후 메뉴 목록은 비었지만 주문 조회에는 주문 당시 스냅샷이 남는다.
+    vi.mocked(apiFetch).mockImplementation((path, init) =>
+      String(path) === '/api/v1/admin/menus'
+        ? Promise.resolve(new Response(JSON.stringify({ menus: [] }), { status: 200 }))
+        : dashboardFetch(path, init),
+    )
+    const menuResponse = await apiFetch('/api/v1/admin/menus')
+    expect(await menuResponse.json()).toEqual({ menus: [] })
+    await poll(2)
+    expect(collect(popup().children, p => p.children === '메뉴 A')).toHaveLength(1)
+    expect(cards()[0].order?.items[0]).toMatchObject({ menuId: 1, menuName: '메뉴 A', qty: 2 })
+  })
 })
 
 describe('주문현황 탭 정렬', () => {

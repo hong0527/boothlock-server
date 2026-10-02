@@ -5,6 +5,7 @@ import { apiFetch } from '../lib/apiFetch'
 import { getAuthToken, getStaff } from '../lib/auth'
 import { additionalOrderIds, orderedForActive, orderedForTab } from '../lib/dashboardOrders'
 import { dashboardPath, HISTORY_PAGE_SIZE } from '../lib/historyPages'
+import { kitchenMenuSummary } from '../lib/kitchenMenuSummary'
 import { alertTitle } from '../lib/newArrivals'
 import { createPollGuard } from '../lib/pollGuard'
 import {
@@ -59,6 +60,12 @@ async function fetchDashboard(status: OrderStatus, options: Parameters<typeof da
 }
 
 export default function OrderStatusPage() {
+  const [kitchenSummaryOpen, setKitchenSummaryOpen] = useState(false)
+  const kitchenSummaryDialog = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    if (kitchenSummaryOpen) kitchenSummaryDialog.current?.showModal()
+  }, [kitchenSummaryOpen])
+
   // 환불 완료는 ADMIN 전용(백엔드 403) — STAFF에게는 눌러도 안 되는 버튼을 보여주지 않는다
   const isAdmin = getStaff()?.role === 'ADMIN'
   const [ordersByStatus, setOrdersByStatus] = useState<OrdersByStatus>({
@@ -209,6 +216,13 @@ export default function OrderStatusPage() {
     () => Object.fromEntries(TABS.map((tab) => [tab.status, ordersByStatus[tab.status].length])) as Record<OrderStatus, number>,
     [ordersByStatus],
   )
+
+  // 진행 목록은 페이지 제한 없이 기존 폴링으로 받는다. 완료·취소 탭을 보아도 같은 기준으로 집계한다.
+  const kitchenMenus = useMemo(() => kitchenMenuSummary(ordersByStatus.RECEIVED), [ordersByStatus.RECEIVED])
+  const closeKitchenSummary = () => {
+    kitchenSummaryDialog.current?.close()
+    setKitchenSummaryOpen(false)
+  }
 
   // 탭별 표시 순서 — 진행 탭은 승인대기 먼저, 각 묶음 안에서는 먼저 들어온 주문이 위로. 근거는 orderedForTab 주석 참고
   // 완료·취소 탭은 첫 페이지 뒤에 "더 보기"로 받은 이전 주문을 잇는다(둘 다 서버 순서 = 최신 먼저)
@@ -519,7 +533,7 @@ export default function OrderStatusPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6 p-10 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 p-10 pb-28 md:grid-cols-2 lg:grid-cols-3">
         {visibleOrders.map((order) => (
           <OrderCard
             key={order.orderId}
@@ -551,6 +565,54 @@ export default function OrderStatusPage() {
           </button>
         )}
       </div>
+
+      <button
+        type="button"
+        onClick={() => setKitchenSummaryOpen(true)}
+        className="fixed right-6 bottom-6 z-40 rounded-xl bg-primary-300 px-5 py-3 font-semibold text-neutral-50 shadow-lg"
+      >
+        주방 메뉴 수량
+      </button>
+      {kitchenSummaryOpen && (
+        <dialog
+          ref={kitchenSummaryDialog}
+          aria-labelledby="kitchen-summary-title"
+          onClose={() => setKitchenSummaryOpen(false)}
+          className="m-auto max-h-[75dvh] w-[calc(100%-1.5rem)] max-w-[540px] overflow-hidden rounded-2xl bg-neutral-50 p-0 text-neutral-900 shadow-xl backdrop:bg-black/40 sm:max-h-[78dvh] sm:w-[58vw]"
+        >
+          <div className="flex max-h-[75dvh] flex-col sm:min-h-[60dvh] sm:max-h-[78dvh]">
+          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-neutral-200 px-5 py-5 sm:px-8">
+            <h2 id="kitchen-summary-title" className="text-2xl font-bold">주방 메뉴 수량</h2>
+            <button type="button" autoFocus onClick={closeKitchenSummary} className="shrink-0 rounded-lg border border-neutral-300 px-4 py-3 text-base font-semibold">
+              닫기
+            </button>
+          </div>
+          <div className="min-h-0 overflow-y-auto px-5 pb-5 sm:px-8 sm:pb-8">
+          {error && <p className="mt-3 text-sm text-red-600">목록 조회 오류로 최신 수량이 아닐 수 있어요. {error}</p>}
+          {kitchenMenus.length === 0 ? (
+            <p className="py-12 text-center text-lg text-neutral-500">집계할 진행 메뉴가 없어요.</p>
+          ) : (
+            <table className="w-full table-fixed text-left">
+              <thead className="sticky top-0 bg-neutral-50">
+                <tr className="border-b border-neutral-200 text-base text-neutral-500">
+                  <th className="py-3 font-medium">메뉴명</th>
+                  <th className="w-28 py-3 text-right font-medium sm:w-36">총 수량</th>
+                </tr>
+              </thead>
+              <tbody>
+                {kitchenMenus.map(({ name, qty }) => (
+                  <tr key={name} className="border-b border-neutral-200">
+                    <td className="break-words py-3 pr-4 text-[20px] leading-snug font-bold sm:py-4 sm:text-[24px]">{name}</td>
+                    <td className="whitespace-nowrap py-3 text-right text-[24px] leading-tight font-extrabold tabular-nums sm:py-4 sm:text-[28px]">{qty.toLocaleString('ko-KR')}<span className="font-normal">개</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          </div>
+          </div>
+        </dialog>
+      )}
     </div>
   )
 }
