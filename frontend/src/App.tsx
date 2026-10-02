@@ -19,6 +19,7 @@ import BoothNamePage from './pages/settings/BoothNamePage'
 import MenuEditPage from './pages/settings/MenuEditPage'
 import MenuListPage from './pages/settings/MenuListPage'
 import SettlementPage from './pages/settings/SettlementPage'
+import SalesTodayPage from './pages/settings/SalesTodayPage'
 import TableQrPage from './pages/settings/TableQrPage'
 import SettingsPage from './pages/SettingsPage'
 import TableHomePage from './pages/TableHomePage'
@@ -58,6 +59,7 @@ function App() {
         <Route path="/settings/table-qr" element={<TableQrPage />} />
         {/* Figma 디자인 없음 (파일럿 스코프 밖 화면) — O19 ADMIN 전용, 백엔드 403으로도 막힘 */}
         <Route path="/settings/settlement" element={<SettlementPage />} />
+        <Route path="/settings/sales" element={<SalesTodayPage />} />
 
         {/* 소비자(손님) 주문 플로우 — API 명세서 C1~C5 */}
         <Route path="/t/:tableToken" element={<TableSessionPage />} />

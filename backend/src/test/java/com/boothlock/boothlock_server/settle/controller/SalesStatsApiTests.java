@@ -30,6 +30,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 
+import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -108,8 +109,48 @@ class SalesStatsApiTests {
         expectStats(request(token, EXPLICIT_DATE.toString()), 0, 0, 0, 0, 1, 4_000, 0, 0);
     }
     @Test
+    void aggregatesItemSalesByTypeAndNameForPaidOrdersOnly() throws Exception {
+        // 결제완료 주문 2건 — 같은 메뉴명은 단가가 달라도 합산, 개별 취소 항목은 제외
+        OrderItemEntity canceledFries = new OrderItemEntity(2L, "감튀", 5_000, 4);
+        canceledFries.cancel();
+        newOrder(boothId, EXPLICIT_DATE, 1, 41_000, PaymentStatus.PAID,
+                PaymentMethod.BANK_TRANSFER, OrderStatus.DONE,
+                new OrderItemEntity(1L, "치킨", 20_000, 1), new OrderItemEntity(2L, "감튀", 5_000, 2),
+                canceledFries, OrderItemEntity.seatFee(3_000, 2), OrderItemEntity.extra(9L, "쿠폰", -2_000, 1));
+        newOrder(boothId, EXPLICIT_DATE, 2, 18_000, PaymentStatus.PAID, PaymentMethod.CASH, OrderStatus.DONE,
+                new OrderItemEntity(1L, "치킨", 18_000, 1));
+        // 미결제·환불 대상 주문의 항목은 판매로 세지 않는다
+        newOrder(boothId, EXPLICIT_DATE, 3, 50_000, PaymentStatus.UNPAID, null, OrderStatus.RECEIVED,
+                new OrderItemEntity(3L, "떡볶이", 10_000, 5));
+        newOrder(boothId, EXPLICIT_DATE, 4, 5_000, PaymentStatus.REFUND_NEEDED,
+                PaymentMethod.CASH, OrderStatus.CANCELED, new OrderItemEntity(2L, "감튀", 5_000, 1));
+
+        // 정렬: 종류(MENU→SEAT_FEE→EXTRA) 안에서 수량 내림차순, 같으면 이름순
+        request(token, EXPLICIT_DATE.toString())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.businessDate").value(EXPLICIT_DATE.toString()))
+                .andExpect(jsonPath("$.itemSales", hasSize(4)))
+                .andExpect(jsonPath("$.itemSales[0].itemType").value("MENU"))
+                .andExpect(jsonPath("$.itemSales[0].name").value("감튀"))
+                .andExpect(jsonPath("$.itemSales[0].qty").value(2))
+                .andExpect(jsonPath("$.itemSales[0].amount").value(10_000))
+                .andExpect(jsonPath("$.itemSales[1].itemType").value("MENU"))
+                .andExpect(jsonPath("$.itemSales[1].name").value("치킨"))
+                .andExpect(jsonPath("$.itemSales[1].qty").value(2))
+                .andExpect(jsonPath("$.itemSales[1].amount").value(38_000))
+                .andExpect(jsonPath("$.itemSales[2].itemType").value("SEAT_FEE"))
+                .andExpect(jsonPath("$.itemSales[2].name").value("자릿세"))
+                .andExpect(jsonPath("$.itemSales[2].qty").value(2))
+                .andExpect(jsonPath("$.itemSales[2].amount").value(6_000))
+                .andExpect(jsonPath("$.itemSales[3].itemType").value("EXTRA"))
+                .andExpect(jsonPath("$.itemSales[3].name").value("쿠폰"))
+                .andExpect(jsonPath("$.itemSales[3].qty").value(1))
+                .andExpect(jsonPath("$.itemSales[3].amount").value(-2_000));
+    }
+    @Test
     void returnsZeroSummaryWhenRequestedDateHasNoOrders() throws Exception {
         expectStats(request(token, EXPLICIT_DATE.toString()), 0, 0, 0, 0, 0, 0, 0, 0);
+        request(token, EXPLICIT_DATE.toString()).andExpect(jsonPath("$.itemSales", hasSize(0)));
     }
     @Test
     void usesCurrentKstBusinessDateWhenDateIsOmitted() throws Exception {
@@ -117,6 +158,7 @@ class SalesStatsApiTests {
         newOrder(boothId, currentBusinessDate, 1, 12_000, PaymentStatus.PAID,
                 PaymentMethod.CASH, OrderStatus.RECEIVED);
         expectStats(request(token, null), 12_000, 0, 12_000, 1, 0, 0, 0, 0);
+        request(token, null).andExpect(jsonPath("$.businessDate").value(currentBusinessDate.toString()));
     }
     @Test
     void rejectsInvalidDate() throws Exception {

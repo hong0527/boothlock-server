@@ -34,6 +34,7 @@
 | v0.6.11 | 2026-09-26 | **C6 직원호출에 `PAYMENT` 사유 신설(명세서 밖, 파일럿 전용) — 결제확인 전용 호출 분리.** 2026-09-23 운영자 시연 피드백 "직원호출 버튼 분리" 항목 선반영(백엔드만, 프론트 버튼 연동은 별도 PR). 쿨다운 판정을 세션 단독 키에서 `(세션, 사유)` 키로 바꿔 **사유별 독립 쿨다운**으로 전환 — `PAYMENT`를 일반 호출과 분리하려는 목적이었지만 HELP·WATER·ETC 서로도 독립된 쿨다운을 갖게 됐다(기존 "사유가 달라도 같은 쿨다운" 규칙 폐기). DB `chk_call_reason` CHECK 제약에 `PAYMENT` 추가. ~~실배포는 H2 `ddl-auto=update`라 마이그레이션 불요~~ — **정정(v0.6.12)**: 실배포는 RDS MySQL 8.0(`ddl-auto=validate`)이라 배포 전 `chk_call_reason` 교체 SQL 실행이 필요하다(배포_운영절차.md §3-1) |
 | v0.6.12 | 2026-09-27 | **승인 워크플로우(O28) 돈 안전 보강.** ① 자동 거절(O6 퇴실·C1 유휴 재스캔)도 O13과 같이 입금된 승인대기를 `REFUND_NEEDED`로 넘긴다 — 예전엔 CANCELED+PAID로 남아 환불 목록에서 빠지고 매출에 잡혔다(O11은 승인대기도 PAID로 만들 수 있다) ② O6 `requireSettled=true`에서 종료할 세션에 승인대기가 남으면 **`409 CHECKOUT_PENDING_APPROVAL`**(`details.pendingOrderCount`)로 전체 롤백 — 손님 결제 안내는 승인대기 금액까지 포함해 이체를 안내하므로 조용히 거절하면 받은 돈과 확정 주문이 어긋난다 ③ O6 응답에 `rejectedPendingCount`(int, 항상 있음) 추가 — '테이블 비우기'가 자동 거절한 승인대기 수 ④ O28 승인이 세션 행을 먼저 잠그고 **종료된 세션이면 `409 INVALID_STATE`** — 퇴실 미결제 집계 뒤에 승인이 끼어 DONE+UNPAID로 `requireSettled`를 우회하던 경합 차단 ⑤ C1 유휴 재스캔이 옛 세션을 종료할 때 그 승인대기도 자동 거절(사유 `"유휴 만료 재스캔으로 자동 거절"`, `canceledBy="SYSTEM"`) ⑥ v0.6.10·v0.6.11 이력의 "H2 ddl-auto=update라 마이그레이션 불요" 문장 정정 |
 | v0.6.13 | 2026-09-27 | **축제 직전 백엔드 보강.** ① **자릿세 유휴 인계 이어받기** — 결제를 끝내고 임계(파일럿 120분) 넘게 폰을 안 만진 일행이 QR을 다시 찍으면 C1이 세션을 바꿔 인원을 또 묻고 자릿세를 한 번 더 붙였다(이중 청구). 이제 C1 유휴 재스캔으로 이어진 앞 세션(같은 테이블, 앞 세션 `ended_at` = 새 세션 `started_at`, 최대 3단계)에 **같은 영업일**의 살아 있는 자릿세가 있으면 새 세션은 이미 낸 것으로 본다 — 자릿세 미부과·`PARTY_SIZE_REQUIRED` 없음, C1 응답 `partySize`도 앞 세션 값을 이어받는다. O6 퇴실 뒤의 새 손님은 그대로 새로 부과 ② **되돌리기**(`POST /admin/orders/{orderId}/restore`) `409 INVALID_STATE` 두 가지 — 환불 대상·환불 완료(`REFUND_NEEDED`·`REFUNDED`) 주문, 종료된 세션의 취소 주문 ③ DB 잠금 대기 초과·데드락·커넥션 획득 실패·연결 끊김·쿼리 시간 초과를 **`503 TEMPORARILY_UNAVAILABLE`**로(예전 500). 클라이언트가 먼저 끊은 요청은 본문 없이 끝낸다 ④ O6 퇴실이 종료 세션의 미확인 직원 호출을 확인 처리하고, O10 `calls`는 열린 세션의 호출만 ⑤ JWT 만료 12시간 → **20시간**(`expiresIn` 72000) ⑥ C1 응답에 **`seatFeeCharged`** 추가(이어받은 자릿세를 주문 확인 미리보기에 반영). O14가 유휴 세션을 끝내고 연 세션은 인계로 잇지 않는다(인원수·자릿세 미승계) |
+| v0.6.14 | 2026-10-02 | **O18 매출 집계에 영업일·항목별 판매 추가(명세서 밖, 파일럿 전용)** — 운영자 요청 "오늘 몇 개 팔렸는지". 응답에 `businessDate`(집계한 영업일, 06:00 KST 경계)와 `itemSales`(결제완료 주문의 미취소 항목을 종류+이름으로 묶은 `{itemType, name, qty, amount}` 배열 — MENU·SEAT_FEE·EXTRA, 종류 안에서 수량 내림차순) 추가. 기존 필드는 그대로. 프론트 설정에 ADMIN 전용 「오늘 판매 현황」(`/settings/sales`) 신설 |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -961,15 +962,22 @@ RECEIVED ├─ 운영자 [완료] O12 ──► DONE (종결)
 
 ```json
 {
+  "businessDate": "2026-09-15",
   "totalSales": 1250000,
   "byMethod": { "BANK_TRANSFER": 1100000, "CASH": 150000 },
   "paidOrderCount": 87,
   "refundNeeded": { "count": 2, "amount": 29000 },
-  "refunded": { "count": 1, "amount": 12000 }
+  "refunded": { "count": 1, "amount": 12000 },
+  "itemSales": [
+    { "itemType": "MENU", "name": "치킨", "qty": 42, "amount": 840000 },
+    { "itemType": "SEAT_FEE", "name": "자릿세", "qty": 120, "amount": 360000 },
+    { "itemType": "EXTRA", "name": "쿠폰", "qty": 3, "amount": -6000 }
+  ]
 }
 ```
 
-- **응답에 `date` 필드는 없다**. 환불 집계는 `refundNeeded`·`refunded` 객체(v0.5의 평면 4필드가 아님)
+- `businessDate`(v0.6.14)는 실제로 집계한 영업일 — `date`를 생략하면 현재 영업일(06:00 KST 경계)이 들어간다. 환불 집계는 `refundNeeded`·`refunded` 객체(v0.5의 평면 4필드가 아님)
+- `itemSales`(v0.6.14): PAID 주문의 **미취소** 항목을 `itemType`+이름으로 묶은 판매 개수·금액. 정렬은 종류(MENU→SEAT_FEE→EXTRA) 안에서 `qty` 내림차순, 같으면 이름순. EXTRA(쿠폰 등)는 `amount`가 음수일 수 있다. 영업일은 결제 시각이 아니라 **주문 생성 시각**으로 정해진다(05:50 주문·06:10 결제면 전 영업일)
 - 집계 기준 `paymentStatus = PAID`. REFUND_NEEDED/REFUNDED는 별도. `date` 영업일 기준, 생략 시 현재 영업일. 형식 오류 `400`
 - **STAFF는 `403`** (코드가 ADMIN만 허용 — v0.5 "STAFF 이상"과 다름)
 
