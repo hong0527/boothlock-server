@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -273,6 +274,38 @@ public interface OrderRepository extends JpaRepository<OrderEntity, Long> {
             @Param("activeSessionOnly") boolean activeSessionOnly,
             @Param("excludeHidden") boolean excludeHidden,
             Limit limit);
+
+    /**
+     * 주문현황 완료·취소 탭 한 페이지의 id만 — 정렬은 searchForDashboard와 같다(createdAt desc, id desc).
+     * (beforeCreatedAt, beforeId) 커서보다 오래된 것만 → offset 없이 이어 받는다. 첫 페이지는 아주 늦은 시각과 Long.MAX_VALUE를 준다.
+     * items를 함께 fetch하지 않아야 Limit이 DB 단계에서 걸린다 — 항목은 findWithItemsByIdIn으로 따로 읽는다(DashboardQueryService.historyPage).
+     * 숨김(hidden) 취소 주문은 searchForDashboard(excludeHidden=true)와 같이 같은 문장에서 뺀다.
+     */
+    @Query("""
+            select o.id from OrderEntity o
+            where o.boothId = :boothId
+              and o.status = :status
+              and o.businessDate = :businessDate
+              and o.hidden = false
+              and (o.createdAt < :beforeCreatedAt or (o.createdAt = :beforeCreatedAt and o.id < :beforeId))
+            order by o.createdAt desc, o.id desc
+            """)
+    List<Long> findHistoryPageIds(
+            @Param("boothId") Long boothId,
+            @Param("status") OrderStatus status,
+            @Param("businessDate") LocalDate businessDate,
+            @Param("beforeCreatedAt") LocalDateTime beforeCreatedAt,
+            @Param("beforeId") Long beforeId,
+            Limit limit);
+
+    /** findHistoryPageIds로 고른 주문들을 항목과 함께 — 같은 정렬로 돌려준다 */
+    @EntityGraph(attributePaths = "items")
+    @Query("""
+            select o from OrderEntity o
+            where o.id in :ids
+            order by o.createdAt desc, o.id desc
+            """)
+    List<OrderEntity> findWithItemsByIdIn(@Param("ids") Collection<Long> ids);
 
     /** O11·O12 조회 — booth 범위로 스코프해 타 부스 주문은 조회 단계에서 404가 되게 한다 (존재 은닉) */
     @EntityGraph(attributePaths = "items")

@@ -4,6 +4,7 @@ import TopNav from '../components/TopNav'
 import { apiFetch } from '../lib/apiFetch'
 import { getAuthToken, getStaff } from '../lib/auth'
 import { additionalOrderIds, orderedForActive, orderedForTab } from '../lib/dashboardOrders'
+import { dashboardPath, HISTORY_PAGE_SIZE } from '../lib/historyPages'
 import { alertTitle } from '../lib/newArrivals'
 import { createPollGuard } from '../lib/pollGuard'
 import {
@@ -51,8 +52,8 @@ type OrdersByStatus = Record<OrderStatus, OrderSummary[]>
 
 // businessDate는 보내지 않는다 — 서버 기본값이 현재 영업일(06:00 경계)이라 새벽에도 전날 영업일 주문이 그대로 보인다.
 // 응답의 calls(미확인 호출)는 status 필터와 무관하게 부스 전체가 실려 온다 — 세 번 중 한 응답에서만 읽으면 된다
-async function fetchDashboard(status: OrderStatus, openSessionsOnly = false): Promise<DashboardResponse> {
-  const res = await apiFetch(`/api/v1/admin/orders?status=${status}${openSessionsOnly ? '&activeSessionOnly=true' : ''}`)
+async function fetchDashboard(status: OrderStatus, options: Parameters<typeof dashboardPath>[1] = {}): Promise<DashboardResponse> {
+  const res = await apiFetch(dashboardPath(status, options))
   if (!res.ok) throw new Error(`주문 목록을 불러오지 못했어요 (${res.status})`)
   return res.json()
 }
@@ -72,6 +73,20 @@ export default function OrderStatusPage() {
   const [openSessionDone, setOpenSessionDone] = useState<OrderSummary[]>([])
   // 완료·취소 탭을 한 번이라도 불러왔는가 — 누른 직후 응답 전에는 건수를 표시하지 않는다(0건으로 오해하지 않게)
   const [loadedHistoryTabs, setLoadedHistoryTabs] = useState<ReadonlySet<OrderStatus>>(() => new Set())
+  // 완료·취소 탭 "이전 주문 더 보기"로 받은 주문. 더 보기를 누르면 그 탭은 스냅샷이 된다 — 첫 페이지 폴링도 멈춘다.
+  // 첫 페이지만 계속 "최신 100건"으로 갱신하면 새 완료 주문에 밀려난 끝부분이 어느 목록에도 없게 되고, 이어 붙이려고
+  // 경계부터 최신까지 폴링하면 저녁 내내 응답이 커진다. 이력을 뒤지는 동안은 자동 갱신 대신 "최신 목록으로"로 돌아온다.
+  // 탭을 옮겨도 스냅샷을 풀고 최신 100건부터 다시 받는다
+  const [olderHistory, setOlderHistory] = useState<OrderSummary[]>([])
+  // 스냅샷인가 — 판정은 폴링 콜백이 읽는 ref로 하고, 화면은 상태로 그린다
+  const historyPausedRef = useRef(false)
+  const [historyPaused, setHistoryPaused] = useState(false)
+  // 첫 페이지가 꽉 찼는가(폴링이 갱신) / 마지막으로 받은 이전 페이지가 꽉 찼는가 — 꽉 찼으면 더 있을 수 있어 "더 보기"를 보인다
+  const [firstPageFull, setFirstPageFull] = useState(false)
+  const [olderHasMore, setOlderHasMore] = useState(true)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  // 더 보기 중복 클릭 판정 — 상태만 보면 같은 렌더 안의 더블클릭이 둘 다 통과한다(pendingRef와 같은 이유)
+  const loadingOlderRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   // 버튼 작업(완료·취소·복구·호출확인) 오류는 따로 둔다 — error는 폴링이 성공할 때마다 지워서, 한데 두면
   // "이미 다른 상태로 바뀌었어요" 같은 안내가 5초 안에 사라져 바쁜 운영자가 못 본다. 다음 작업이 성공하면 지운다
@@ -113,24 +128,29 @@ export default function OrderStatusPage() {
       // 커질수록 폴링이 무거워져(저녁 부하) 그 탭을 보고 있을 때만 받는다
       const viewing = activeTabRef.current
       const historyStatus: OrderStatus | null = viewing === 'ACTIVE' ? null : viewing
+      // 스냅샷(더 보기 이후)이면 이력 탭은 받지 않는다 — historyPausedRef 주석
+      const fetchHistory = historyStatus !== null && !historyPausedRef.current
       const [pendingRes, receivedRes, openDoneRes, historyRes, served] = await Promise.all([
         fetchDashboard('PENDING_APPROVAL'),
         fetchDashboard('RECEIVED'),
-        fetchDashboard('DONE', true),
-        historyStatus ? fetchDashboard(historyStatus) : Promise.resolve(null),
+        fetchDashboard('DONE', { openSessionsOnly: true }),
+        fetchHistory && historyStatus ? fetchDashboard(historyStatus) : Promise.resolve(null),
         // 체크는 보조 정보다 — 이것만 실패했다고 주문 목록까지 "불러오지 못했어요"가 되면 안 된다. 실패하면 직전 값을 둔다
         fetchServedItems().catch(() => null),
       ])
       if (!pollGuard.current.isLatest(runId) || !mountedRef.current) return
+      // 요청 중에 더 보기를 눌러 스냅샷이 됐으면 이 이력 응답은 버린다(더 보기 커서가 가리키는 첫 페이지를 바꾸지 않게)
+      const historyFresh = historyStatus !== null && historyRes !== null && !historyPausedRef.current
       setOrdersByStatus((prev) => ({
         ...prev,
         PENDING_APPROVAL: pendingRes.orders,
         RECEIVED: receivedRes.orders,
-        ...(historyStatus && historyRes ? { [historyStatus]: historyRes.orders } : {}),
+        ...(historyFresh ? { [historyStatus]: historyRes.orders } : {}),
       }))
+      if (historyFresh) setFirstPageFull(historyRes.orders.length >= HISTORY_PAGE_SIZE)
       setOpenSessionDone(openDoneRes.orders)
       if (served) setServedFromServer(served)
-      if (historyStatus && historyRes) {
+      if (historyFresh) {
         setLoadedHistoryTabs((prev) => (prev.has(historyStatus) ? prev : new Set([...prev, historyStatus])))
       }
       // calls(미확인 호출)는 상태 필터와 무관하게 부스 전체가 실려 온다 — 어느 응답에서 읽어도 같다. 승인대기 응답에서 읽는다
@@ -191,25 +211,81 @@ export default function OrderStatusPage() {
   )
 
   // 탭별 표시 순서 — 진행 탭은 승인대기 먼저, 각 묶음 안에서는 먼저 들어온 주문이 위로. 근거는 orderedForTab 주석 참고
+  // 완료·취소 탭은 첫 페이지 뒤에 "더 보기"로 받은 이전 주문을 잇는다(둘 다 서버 순서 = 최신 먼저)
   const visibleOrders = useMemo(
     () =>
       activeTab === 'ACTIVE'
         ? orderedForActive(ordersByStatus.PENDING_APPROVAL, ordersByStatus.RECEIVED)
-        : orderedForTab(activeTab, ordersByStatus[activeTab]),
-    [ordersByStatus, activeTab],
+        : [...orderedForTab(activeTab, ordersByStatus[activeTab]), ...olderHistory],
+    [ordersByStatus, activeTab, olderHistory],
   )
+
+  // 더 보기 버튼 — 첫 페이지(더 보기 전) 또는 마지막으로 받은 이전 페이지(더 보기 후)가 꽉 찼을 때만. 덜 찼으면 그게 끝이다
+  const historyHasMore =
+    activeTab !== 'ACTIVE' &&
+    loadedHistoryTabs.has(activeTab) &&
+    (historyPaused ? olderHasMore : firstPageFull)
+
+  // 이전 주문 더 보기 — 화면 마지막 주문을 커서로 다음 100건. 버튼을 누를 때만 나가고, 누르는 순간 이 탭은 스냅샷이 된다
+  const loadOlder = async () => {
+    if (activeTab === 'ACTIVE' || loadingOlderRef.current) return
+    const tab = activeTab
+    const last = visibleOrders[visibleOrders.length - 1]
+    if (!last) return
+    historyPausedRef.current = true
+    setHistoryPaused(true)
+    loadingOlderRef.current = true
+    setLoadingOlder(true)
+    try {
+      const res = await fetchDashboard(tab, { beforeOrderId: last.orderId })
+      // 그 사이 탭을 옮겼거나 "최신 목록으로"를 눌렀으면 버린다
+      if (activeTabRef.current !== tab || !historyPausedRef.current || !mountedRef.current) return
+      setOlderHistory((prev) => {
+        const seen = new Set(prev.map((o) => o.orderId))
+        return [...prev, ...res.orders.filter((o) => !seen.has(o.orderId))]
+      })
+      setOlderHasMore(res.orders.length >= HISTORY_PAGE_SIZE)
+      setActionError(null)
+    } catch (err) {
+      if (getAuthToken()) setActionError(err instanceof Error ? err.message : '이전 주문을 불러오지 못했어요.')
+    } finally {
+      loadingOlderRef.current = false
+      setLoadingOlder(false)
+    }
+  }
 
   // 완료·취소 건수는 그 탭을 보고 있을 때만 — 그 목록은 볼 때만 받으므로, 다른 탭에서 보이는 숫자는 마지막으로 본 값에 멈춰 틀린다
   const tabCount = (tab: ViewTab) =>
     tab === 'ACTIVE'
       ? counts.PENDING_APPROVAL + counts.RECEIVED
-      : tab === activeTab && loadedHistoryTabs.has(tab) ? counts[tab] : ''
+      : tab === activeTab && loadedHistoryTabs.has(tab) ? counts[tab] + olderHistory.length : ''
+
+  // 스냅샷을 풀고 최신 100건부터 — 탭 이동과 "최신 목록으로" 버튼이 쓴다
+  const resetHistory = () => {
+    historyPausedRef.current = false
+    setHistoryPaused(false)
+    setOlderHistory([])
+    setOlderHasMore(true)
+  }
 
   // 완료·취소 탭으로 가면 그 탭 목록을 바로 받는다(폴링 주기를 기다리지 않게). 이후 그 탭을 보는 동안은 폴링이 같이 받는다
   const selectTab = (tab: ViewTab) => {
     activeTabRef.current = tab
     setActiveTab(tab)
+    resetHistory()
+    setFirstPageFull(false)
     if (tab !== 'ACTIVE') void refetchAll()
+  }
+
+  const backToLatest = () => {
+    resetHistory()
+    void refetchAll()
+  }
+
+  // 스냅샷은 폴링으로 안 바뀐다 — 이 기기에서 한 작업은 이력 카드(첫 페이지·이전 주문)에 직접 반영한다
+  const patchHistoryCards = (patch: (orders: OrderSummary[]) => OrderSummary[]) => {
+    setOrdersByStatus((prev) => ({ ...prev, DONE: patch(prev.DONE), CANCELED: patch(prev.CANCELED) }))
+    setOlderHistory(patch)
   }
 
   // "추가 주문" 배지 — 불러온 주문 전체를 합쳐서 판정한다(activeTab 안에서만 보면 같은 세션의 첫 주문이 다른 탭에 있을 때 놓친다).
@@ -217,9 +293,11 @@ export default function OrderStatusPage() {
   // 같은 주문이 두 목록에 다 있을 수 있어 id로 한 번만 센다. 근거는 additionalOrderIds 주석 참고
   const additionalIds = useMemo(() => {
     const byId = new Map<number, OrderSummary>()
-    for (const order of [...Object.values(ordersByStatus).flat(), ...openSessionDone]) byId.set(order.orderId, order)
+    for (const order of [...Object.values(ordersByStatus).flat(), ...olderHistory, ...openSessionDone]) {
+      byId.set(order.orderId, order)
+    }
     return additionalOrderIds([...byId.values()])
-  }, [ordersByStatus, openSessionDone])
+  }, [ordersByStatus, olderHistory, openSessionDone])
 
   const servedByOrder = useMemo(() => withPendingToggles(servedFromServer, pendingToggles), [servedFromServer, pendingToggles])
 
@@ -273,7 +351,12 @@ export default function OrderStatusPage() {
    * catch가 있어야 하는 이유 — 없으면 망이 끊겼을 때 예외가 그대로 빠져나가 운영자에게 아무 표시도 안 된다.
    * 버튼만 잠깐 흐려졌다 돌아와서 "왜 안 눌리지" 하며 계속 누르게 된다(축제장 와이파이에서 자주 나올 상황).
    */
-  const runOrderAction = async (orderId: number, action: () => Promise<Response>, failMessage: string) => {
+  const runOrderAction = async (
+    orderId: number,
+    action: () => Promise<Response>,
+    failMessage: string,
+    onSuccess?: () => void,
+  ) => {
     if (pendingRef.current.has(orderId)) return
     pendingRef.current.add(orderId)
     setPendingOrderIds(new Set(pendingRef.current))
@@ -286,6 +369,8 @@ export default function OrderStatusPage() {
           // 서버가 준 사유를 그대로 보여준다 — 예: 종료된 세션의 주문 승인은 409인데 재조회해도 승인대기 탭에 그대로 남아,
           // "이미 바뀌었어요"라고만 하면 운영자가 승인을 계속 누른다(그 주문은 거절로만 정리된다)
           const body: { error?: { message?: string } } | null = await res.json().catch(() => null)
+          // 스냅샷은 폴링으로 안 바뀌어 낡은 카드가 남는다 — 최신 목록으로 돌아가 실제 상태를 보여준다
+          if (historyPausedRef.current) resetHistory()
           await refetchAll()
           setActionError(`${failMessage} — ${body?.error?.message ?? '이미 다른 상태로 바뀌었어요.'} 최신 목록을 불러왔어요.`)
           return
@@ -295,10 +380,13 @@ export default function OrderStatusPage() {
         return
       }
       setActionError(null)
+      onSuccess?.()
       await refetchAll()
     } catch {
       if (!getAuthToken()) return
-      // 요청은 서버에 닿았는데 응답만 잃었을 수 있다 — 화면을 실제 상태로 맞춘 뒤 알린다(재조회도 실패하면 끊김 배너가 뜬다)
+      // 요청은 서버에 닿았는데 응답만 잃었을 수 있다 — 화면을 실제 상태로 맞춘 뒤 알린다(재조회도 실패하면 끊김 배너가 뜬다).
+      // 스냅샷이면 최신 목록으로 돌아가야 이력 카드도 실제 상태가 된다
+      if (historyPausedRef.current) resetHistory()
       await refetchAll()
       setActionError(`${failMessage} — 응답을 받지 못했어요. 처리됐을 수 있으니 목록을 확인해 주세요.`)
     } finally {
@@ -331,13 +419,19 @@ export default function OrderStatusPage() {
   // 되돌리기 — 완료·취소된 주문을 진행(RECEIVED)으로 되돌린다. 결제/환불 상태는 건드리지 않는다
   const restoreOrder = (orderId: number) => {
     if (!window.confirm('이 주문을 진행 상태로 복구할까요?')) return
-    return runOrderAction(orderId, () => restoreOrderRequest(orderId), '주문을 복구하지 못했어요')
+    // 되돌린 주문은 이 탭을 떠난다 — 스냅샷에서는 폴링이 지워 주지 않으므로 직접 뺀다
+    return runOrderAction(orderId, () => restoreOrderRequest(orderId), '주문을 복구하지 못했어요', () =>
+      patchHistoryCards((orders) => orders.filter((o) => o.orderId !== orderId)),
+    )
   }
 
   // 환불 완료 — 실제로 돈을 돌려준 뒤 누르는 버튼이라 한 번 더 묻는다. 되돌릴 수 없다.
   const refundDone = (orderId: number) => {
     if (!window.confirm('환불을 완료 처리할까요? 되돌릴 수 없어요.')) return
-    return runOrderAction(orderId, () => refundDoneRequest(orderId), '환불 완료 처리를 하지 못했어요')
+    // 스냅샷에서는 환불필요 표시가 남는다 — 성공하면 그 카드만 환불완료로 바꾼다
+    return runOrderAction(orderId, () => refundDoneRequest(orderId), '환불 완료 처리를 하지 못했어요', () =>
+      patchHistoryCards((orders) => orders.map((o) => (o.orderId === orderId ? { ...o, paymentStatus: 'REFUNDED' } : o))),
+    )
   }
 
   return (
@@ -357,6 +451,8 @@ export default function OrderStatusPage() {
             }`}
           >
             {tab.label} {tabCount(tab.key)}
+            {/* 더 불러올 이전 주문이 있으면 건수 뒤에 + — 지금 숫자는 불러온 만큼이다 */}
+            {tab.key === activeTab && historyHasMore && '+'}
             {/* 진행 탭 안의 승인대기 수 — 다른 탭을 보고 있어도 새로 들어온 승인대기가 눈에 띄게 */}
             {tab.key === 'ACTIVE' && counts.PENDING_APPROVAL > 0 && (
               <span className="rounded-full bg-orange-600 px-2 py-0.5 text-sm leading-[1.2] font-semibold text-neutral-50">
@@ -387,6 +483,14 @@ export default function OrderStatusPage() {
         </p>
       )}
       {error && <p className="px-10 pt-4 text-sm text-red-600">{error}</p>}
+      {historyPaused && activeTab !== 'ACTIVE' && (
+        <p className="flex items-center gap-3 px-10 pt-4 text-sm text-neutral-600">
+          이전 주문을 보는 동안 이 목록은 자동으로 새로고침되지 않아요.
+          <button type="button" className="font-semibold text-neutral-900 underline" onClick={backToLatest}>
+            최신 목록으로
+          </button>
+        </p>
+      )}
 
       {/* 미확인 직원 호출(O10 calls) — 주문 카드와 같은 카드 톤으로 한 줄씩, '확인'을 누르면 O15 */}
       {calls.length > 0 && (
@@ -435,6 +539,16 @@ export default function OrderStatusPage() {
         ))}
         {visibleOrders.length === 0 && !error && (
           <p className="col-span-full py-20 text-center text-neutral-400">해당하는 주문이 없어요.</p>
+        )}
+        {historyHasMore && (
+          <button
+            type="button"
+            onClick={loadOlder}
+            disabled={loadingOlder}
+            className="col-span-full mx-auto rounded-xl border border-neutral-300 bg-neutral-50 px-8 py-4 text-lg leading-[1.2] font-semibold tracking-[-0.04em] text-neutral-900 disabled:opacity-40"
+          >
+            {loadingOlder ? '불러오는 중…' : `이전 주문 ${HISTORY_PAGE_SIZE}건 더 보기`}
+          </button>
         )}
       </div>
     </div>
