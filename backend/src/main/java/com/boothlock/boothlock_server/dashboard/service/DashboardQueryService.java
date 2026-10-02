@@ -5,6 +5,8 @@ import com.boothlock.boothlock_server.dashboard.dto.DashboardResponse;
 import com.boothlock.boothlock_server.dashboard.repository.StaffCallRepository;
 import com.boothlock.boothlock_server.global.domain.OrderStatus;
 import com.boothlock.boothlock_server.global.domain.PaymentStatus;
+import com.boothlock.boothlock_server.global.error.InvalidRequestException;
+import com.boothlock.boothlock_server.global.error.NotFoundException;
 import com.boothlock.boothlock_server.order.domain.OrderEntity;
 import com.boothlock.boothlock_server.order.repository.OrderRepository;
 import com.boothlock.boothlock_server.order.service.OrderNumberingService;
@@ -40,10 +42,13 @@ public class DashboardQueryService {
     private static final Limit DASHBOARD_LIST_LIMIT = Limit.of(3000);
     /**
      * 주문현황 완료·취소 탭(status=DONE·CANCELED, activeSessionOnly 없이)은 최근 100건만 — 운영자가 거의 안 보는 이력 탭이고,
-     * 그 탭을 보는 동안 5초마다 조회하므로 하루 누적이 그대로 실리면 저녁에 그 기기가 무거워진다. 그 이전 건은 q(주문번호)로 찾는다.
+     * 그 탭을 보는 동안 5초마다 조회하므로 하루 누적이 그대로 실리면 저녁에 그 기기가 무거워진다. 그 이전 건은 "이전 주문 더 보기"
+     * (beforeOrderId 커서 — 누르면 그 탭은 자동 갱신을 멈춘다, 프론트 OrderStatusPage)나 q(주문번호)로 찾는다.
      * activeSessionOnly(지금 세션 완료 — 추가 주문 배지·결제 모달)는 범위가 스스로 좁아 여기 해당하지 않는다
      */
     private static final Limit HISTORY_TAB_LIMIT = Limit.of(100);
+    /** 커서 없는 첫 페이지 — JPQL에서 null 파라미터 비교 대신 어떤 주문보다도 늦은 값으로 둔다 */
+    private static final LocalDateTime NO_CURSOR_CREATED_AT = LocalDateTime.of(9999, 1, 1, 0, 0);
 
     private final OrderRepository orderRepository;
     private final StaffCallRepository staffCallRepository;
@@ -73,6 +78,18 @@ public class DashboardQueryService {
     @Transactional(readOnly = true)
     public DashboardResponse getDashboard(String authorization, OrderStatus status, PaymentStatus paymentStatus,
                                            LocalDate businessDate, String q, Long tableId, boolean activeSessionOnly) {
+        return getDashboard(authorization, status, paymentStatus, businessDate, q, tableId, activeSessionOnly, null);
+    }
+
+    /**
+     * beforeOrderId: 완료·취소 탭 "이전 주문 더 보기" 커서 — 그 주문보다 오래된(정렬 createdAt desc, id desc에서 뒤) 100건.
+     * 기준 주문의 위치에서 이어 받으므로 offset처럼 앞 페이지를 읽고 버리지 않는다.
+     * 이력 탭 조회(status=DONE·CANCELED, 다른 필터 없음)에서만 받는다 — 그 밖의 조합은 400.
+     */
+    @Transactional(readOnly = true)
+    public DashboardResponse getDashboard(String authorization, OrderStatus status, PaymentStatus paymentStatus,
+                                           LocalDate businessDate, String q, Long tableId, boolean activeSessionOnly,
+                                           Long beforeOrderId) {
         Long boothId = staffAuthenticator.authenticate(authorization).getBooth().getId();
 
         if (tableId != null) {
@@ -87,20 +104,52 @@ public class DashboardQueryService {
         LocalDate effectiveDate = activeSessionOnly && businessDate == null
                 ? null
                 : resolveBusinessDate(businessDate, LocalDateTime.now(KST_ZONE));
+        boolean history = (status == OrderStatus.DONE || status == OrderStatus.CANCELED) && !activeSessionOnly;
         Limit limit = status == OrderStatus.RECEIVED ? Limit.unlimited()
-                : (status == OrderStatus.DONE || status == OrderStatus.CANCELED) && !activeSessionOnly ? HISTORY_TAB_LIMIT
+                : history ? HISTORY_TAB_LIMIT
                 : DASHBOARD_LIST_LIMIT;
         // excludeHidden=true — 삭제(hidden=true) 처리된 취소 주문을 limit과 같은 쿼리에서 DB 단계부터 뺀다.
         // limit을 먼저 적용하고 나중에(Java에서) hidden을 지우면 hidden 행이 그 자리를 차지해 정상 취소 주문이
         // 밀려날 수 있어(실측됨) DB WHERE절에서 함께 처리한다. O18 매출 집계(SalesStatsService)는 이 메서드를
         // excludeHidden=false로 불러 hidden 여부와 무관하게 전부 보므로 정산·환불 데이터는 영향받지 않는다.
-        List<OrderEntity> orders = orderRepository.searchForDashboard(
-                boothId, status, paymentStatus, effectiveDate, q, tableId, activeSessionOnly, true, limit);
+        // 주문현황 완료·취소 탭(필터 없는 이력 조회)만 id 먼저 자르는 쿼리로 — 같은 상한(HISTORY_TAB_LIMIT)이다
+        boolean historyTab = history && paymentStatus == null && q == null && tableId == null;
+        if (beforeOrderId != null && !historyTab) {
+            throw new InvalidRequestException("beforeOrderId는 완료·취소 목록(status=DONE·CANCELED, 다른 필터 없음)에서만 쓸 수 있습니다.");
+        }
+        List<OrderEntity> orders = historyTab
+                ? historyPage(boothId, status, effectiveDate, beforeOrderId)
+                : orderRepository.searchForDashboard(
+                        boothId, status, paymentStatus, effectiveDate, q, tableId, activeSessionOnly, true, limit);
         List<StaffCallEntity> calls = staffCallRepository.findUnackedByBoothId(boothId);
 
         return new DashboardResponse(
                 orders.stream().map(orderSummaryMapper::toOrderSummary).toList(),
                 calls.stream().map(this::toCallSummary).toList());
+    }
+
+    /**
+     * 완료·취소 탭 한 페이지 — id를 먼저 HISTORY_TAB_LIMIT건만 자르고, 그 id들의 주문을 항목과 함께 읽는다.
+     * searchForDashboard처럼 items 컬렉션 fetch와 Limit을 한 쿼리에 걸면 Hibernate가 DB에서 자르지 못하고
+     * 조건에 맞는 행을 전부 읽은 뒤 메모리에서 자른다(HHH90003004) — 페이지를 넘길 때마다 하루치를 다시 읽게 된다.
+     */
+    private List<OrderEntity> historyPage(Long boothId, OrderStatus status, LocalDate businessDate, Long beforeOrderId) {
+        LocalDateTime beforeCreatedAt = NO_CURSOR_CREATED_AT;
+        long beforeId = Long.MAX_VALUE;
+        if (beforeOrderId != null) {
+            // items를 함께 읽는 findByIdAndBoothId 대신 findById(그래프 없음) — 정렬 키와 영업일만 필요하다
+            OrderEntity cursor = orderRepository.findById(beforeOrderId)
+                    .filter(o -> boothId.equals(o.getBoothId()))
+                    .orElseThrow(() -> new NotFoundException("기준 주문을 찾을 수 없습니다."));
+            beforeCreatedAt = cursor.getCreatedAt();
+            beforeId = cursor.getId();
+            // 영업일은 커서 주문 것을 쓴다 — 05:58에 받은 첫 페이지(전 영업일)의 더 보기를 06:01에 누르면 요청 시각 기준
+            // 영업일(오늘)로는 커서보다 오래된 주문이 없어 "끝"처럼 보인다. 이어 보기는 첫 페이지와 같은 영업일이어야 한다
+            businessDate = cursor.getBusinessDate();
+        }
+        List<Long> ids = orderRepository.findHistoryPageIds(
+                boothId, status, businessDate, beforeCreatedAt, beforeId, HISTORY_TAB_LIMIT);
+        return ids.isEmpty() ? List.of() : orderRepository.findWithItemsByIdIn(ids);
     }
 
     /**

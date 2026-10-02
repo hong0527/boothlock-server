@@ -92,10 +92,13 @@ public class DashboardController {
             @Parameter(description = "특정 테이블의 주문만 (POS 배치도에서 테이블 클릭 시 사용, v0.5 신설)")
             @RequestParam(required = false) Long tableId,
             @Parameter(description = "tableId와 함께 true면 그 테이블의 종료 안 된 세션 주문만 (결제 모달용). tableId 없이 true면 400")
-            @RequestParam(required = false, defaultValue = "false") boolean activeSessionOnly) {
+            @RequestParam(required = false, defaultValue = "false") boolean activeSessionOnly,
+            @Parameter(description = "완료·취소 목록 \"이전 주문 더 보기\" — 화면의 마지막 주문 id. 그보다 오래된 100건을 준다. "
+                    + "status=DONE·CANCELED이고 다른 필터가 없을 때만(아니면 400), 타 부스·없는 주문이면 404")
+            @RequestParam(required = false) Long beforeOrderId) {
         rejectLegacyParam("boothId", legacyBoothId, "부스는 로그인 토큰으로 식별합니다.");
-        return dashboardQueryService.getDashboard(
-                authorization, status, paymentStatus, businessDate, q, tableId, activeSessionOnly);
+        return dashboardQueryService.getDashboard(authorization, status, paymentStatus, businessDate, q, tableId,
+                activeSessionOnly, beforeOrderId);
     }
 
     /** O11 입금 확인 (Must) — UNPAID→PAID, 승인자·승인시각 자동 기록 */

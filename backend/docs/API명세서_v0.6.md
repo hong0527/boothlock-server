@@ -35,6 +35,7 @@
 | v0.6.12 | 2026-09-27 | **승인 워크플로우(O28) 돈 안전 보강.** ① 자동 거절(O6 퇴실·C1 유휴 재스캔)도 O13과 같이 입금된 승인대기를 `REFUND_NEEDED`로 넘긴다 — 예전엔 CANCELED+PAID로 남아 환불 목록에서 빠지고 매출에 잡혔다(O11은 승인대기도 PAID로 만들 수 있다) ② O6 `requireSettled=true`에서 종료할 세션에 승인대기가 남으면 **`409 CHECKOUT_PENDING_APPROVAL`**(`details.pendingOrderCount`)로 전체 롤백 — 손님 결제 안내는 승인대기 금액까지 포함해 이체를 안내하므로 조용히 거절하면 받은 돈과 확정 주문이 어긋난다 ③ O6 응답에 `rejectedPendingCount`(int, 항상 있음) 추가 — '테이블 비우기'가 자동 거절한 승인대기 수 ④ O28 승인이 세션 행을 먼저 잠그고 **종료된 세션이면 `409 INVALID_STATE`** — 퇴실 미결제 집계 뒤에 승인이 끼어 DONE+UNPAID로 `requireSettled`를 우회하던 경합 차단 ⑤ C1 유휴 재스캔이 옛 세션을 종료할 때 그 승인대기도 자동 거절(사유 `"유휴 만료 재스캔으로 자동 거절"`, `canceledBy="SYSTEM"`) ⑥ v0.6.10·v0.6.11 이력의 "H2 ddl-auto=update라 마이그레이션 불요" 문장 정정 |
 | v0.6.13 | 2026-09-27 | **축제 직전 백엔드 보강.** ① **자릿세 유휴 인계 이어받기** — 결제를 끝내고 임계(파일럿 120분) 넘게 폰을 안 만진 일행이 QR을 다시 찍으면 C1이 세션을 바꿔 인원을 또 묻고 자릿세를 한 번 더 붙였다(이중 청구). 이제 C1 유휴 재스캔으로 이어진 앞 세션(같은 테이블, 앞 세션 `ended_at` = 새 세션 `started_at`, 최대 3단계)에 **같은 영업일**의 살아 있는 자릿세가 있으면 새 세션은 이미 낸 것으로 본다 — 자릿세 미부과·`PARTY_SIZE_REQUIRED` 없음, C1 응답 `partySize`도 앞 세션 값을 이어받는다. O6 퇴실 뒤의 새 손님은 그대로 새로 부과 ② **되돌리기**(`POST /admin/orders/{orderId}/restore`) `409 INVALID_STATE` 두 가지 — 환불 대상·환불 완료(`REFUND_NEEDED`·`REFUNDED`) 주문, 종료된 세션의 취소 주문 ③ DB 잠금 대기 초과·데드락·커넥션 획득 실패·연결 끊김·쿼리 시간 초과를 **`503 TEMPORARILY_UNAVAILABLE`**로(예전 500). 클라이언트가 먼저 끊은 요청은 본문 없이 끝낸다 ④ O6 퇴실이 종료 세션의 미확인 직원 호출을 확인 처리하고, O10 `calls`는 열린 세션의 호출만 ⑤ JWT 만료 12시간 → **20시간**(`expiresIn` 72000) ⑥ C1 응답에 **`seatFeeCharged`** 추가(이어받은 자릿세를 주문 확인 미리보기에 반영). O14가 유휴 세션을 끝내고 연 세션은 인계로 잇지 않는다(인원수·자릿세 미승계) |
 | v0.6.14 | 2026-10-02 | **O18 매출 집계에 영업일·항목별 판매 추가(명세서 밖, 파일럿 전용)** — 운영자 요청 "오늘 몇 개 팔렸는지". 응답에 `businessDate`(집계한 영업일, 06:00 KST 경계)와 `itemSales`(결제완료 주문의 미취소 항목을 종류+이름으로 묶은 `{itemType, name, qty, amount}` 배열 — MENU·SEAT_FEE·EXTRA, 종류 안에서 수량 내림차순) 추가. 기존 필드는 그대로. 프론트 설정에 ADMIN 전용 「오늘 판매 현황」(`/settings/sales`) 신설 |
+| v0.6.15 | 2026-10-02 | **O10 완료·취소 탭 이어 보기(명세서 밖, 파일럿 전용)** — `beforeOrderId`(그 주문보다 오래된 100건, "이전 주문 더 보기") 쿼리 추가. `status=DONE`·`CANCELED`이고 다른 필터가 없을 때만(아니면 `400`), 타 부스·없는 주문은 `404`. 정렬(`createdAt desc, id desc`) 기준 커서라 offset처럼 앞 페이지를 읽고 버리지 않는다 |
 
 ## v0.6에서 확정이 필요한 항목 (팀 확인 후 이 절을 지운다)
 
@@ -825,8 +826,9 @@ RECEIVED ├─ 운영자 [완료] O12 ──► DONE (종결)
 | tableId | `12` | 그 테이블의 주문만 — 조회 영업일 범위의 **모든 세션**. 미존재·타 부스·**삭제 테이블은 `404`** |
 | **activeSessionOnly** | `true` | **v0.6 신설.** `tableId`와 함께 true면 그 테이블의 **열린 세션**(`ended_at IS NULL`, `ended_at_key = 0`, 유휴 포함) 주문만 — 결제창이 "지금 앉은 손님" 주문만 보는 수단. 세션이 없으면 빈 목록 200. **`tableId` 없이 true면 부스 전체 테이블의 열린 세션 주문만(테이블-홈 카드용, 2026-09-30 — 이전엔 `400`).** 기본 false. O24 대상 범위와 같은 세션 조건. **v0.6.8: 이때 `businessDate`를 생략하면 영업일로 거르지 않는다** — 06:00을 넘긴 열린 세션의 전 영업일 미결제도 나와 모달 합계가 O24 서버 합계와 같다(거르면 O24가 영원히 409). `businessDate`를 보내면 그 영업일로 거른다 |
 | q | `A3-17` | 주문번호 **부분 검색**(`like %q%`). 조회 영업일 범위 안에서 |
+| beforeOrderId | `2038` | **v0.6.15.** 완료·취소 탭 "이전 주문 더 보기" — 그 주문보다 오래된(정렬 `createdAt desc, id desc`에서 뒤) **100건**. `status=DONE`·`CANCELED`이고 `paymentStatus`·`q`·`tableId`·`activeSessionOnly`가 없을 때만, 아니면 `400`. 타 부스·없는 주문 `404` |
 
-**상한**: `status=RECEIVED` 조회는 무제한. `status=DONE`·`CANCELED`(activeSessionOnly 없이 — 주문현황 완료·취소 탭)는 **최신 100건**(2026-09-30), 그 외(상태 필터 없음·PENDING_APPROVAL·activeSessionOnly 조회)는 **최신 3000건**(2026-09-29, 500→3000)에서 조용히 잘린다 — 그 이전 건은 `q`·`businessDate`로 찾는다. hidden 제외는 상한과 같은 쿼리에서 먼저 적용된다
+**상한**: `status=RECEIVED` 조회는 무제한. `status=DONE`·`CANCELED`(activeSessionOnly 없이 — 주문현황 완료·취소 탭)는 **최신 100건**(2026-09-30), 그 외(상태 필터 없음·PENDING_APPROVAL·activeSessionOnly 조회)는 **최신 3000건**(2026-09-29, 500→3000)에서 조용히 잘린다 — 그 이전 건은 `beforeOrderId`(완료·취소 탭)·`q`·`businessDate`로 찾는다. hidden 제외는 상한과 같은 쿼리에서 먼저 적용된다
 
 **Response 200**
 
